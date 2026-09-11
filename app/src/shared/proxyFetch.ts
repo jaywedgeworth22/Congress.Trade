@@ -2,14 +2,32 @@
  * src/shared/proxyFetch.ts
  *
  * Lightweight proxied fetch client wrapper for Deno and Node environments.
- * When a residential proxy URL (e.g. Tailscale http://100.113.106.39:3128) is provided,
- * outbound HTTP/HTTPS requests are tunneled through the proxy so requests appear
- * from the residential IP (bypassing datacenter anti-bot filters like Imperva).
+ * When a residential proxy URL (e.g. http://10.99.0.2:8888 for the
+ * glinet-mango device on the WireGuard mesh) is provided, outbound
+ * HTTP/HTTPS requests are tunneled through the proxy so requests appear
+ * from the residential IP (bypassing datacenter anti-bot filters like
+ * Imperva).
+ *
+ * Owner 2026-09-09: the Mac is retired from the residential proxy role
+ * (board `ab688ea5`).  The little proxy server is now the GL.iNet Mango
+ * on the Hetzner WireGuard mesh (interface `wg-ct`, peer `10.99.0.2`,
+ * HTTP CONNECT proxy on port 8888).  Configure
+ * `RESIDENTIAL_PROXY_URL=http://10.99.0.2:8888` in Infisical prod env
+ * for `congress-trade` so all server-side scraping + FMP latency probes
+ * bounce through it.
  */
 
 declare const Deno: {
   createHttpClient?: (options: { proxy?: { url: string } }) => unknown;
 } | undefined;
+
+/**
+ * Canonical residential proxy URL.  The Mango HTTP CONNECT proxy is
+ * reachable from the Hetzner server directly via the `wg-ct` WireGuard
+ * mesh; no NAT dance is needed.  The user can still override via the
+ * `RESIDENTIAL_PROXY_URL` / `RESIDENTIAL_PROXY_HOST` Infisical keys.
+ */
+export const DEFAULT_RESIDENTIAL_PROXY_URL = 'http://10.99.0.2:8888';
 
 const clientCache = new Map<string, unknown>();
 
@@ -81,17 +99,30 @@ export function formatProxyUrl(opts: {
 
 /**
  * Helper to resolve the effective residential proxy URL from Env or process.env.
+ * Falls back to {@link DEFAULT_RESIDENTIAL_PROXY_URL} when nothing is configured
+ * so the server-side Senate / House / FMP probes always have a path.
+ *
+ * Pass `{ allowDefault: false }` to ask the *other* question — "did an operator
+ * explicitly configure a residential proxy?" — which is what health and
+ * observability surfaces need.  Without that distinction the Mango fallback
+ * makes every "configured" check unconditionally true, so a missed
+ * `RESIDENTIAL_PROXY_URL` in Coolify becomes undetectable — the exact
+ * misconfiguration the fallback exists to survive.  Egress paths keep the
+ * default (always have a residential route); diagnostics opt out of it.
  */
-export function resolveResidentialProxyUrl(env?: {
-  RESIDENTIAL_PROXY_URL?: string;
-  SENATE_PROXY_URL?: string;
-  HTTP_PROXY?: string;
-  HTTPS_PROXY?: string;
-  RESIDENTIAL_PROXY_HOST?: string;
-  RESIDENTIAL_PROXY_PORT?: string | number;
-  RESIDENTIAL_PROXY_USERNAME?: string;
-  RESIDENTIAL_PROXY_PASSWORD?: string;
-}): string | undefined {
+export function resolveResidentialProxyUrl(
+  env?: {
+    RESIDENTIAL_PROXY_URL?: string;
+    SENATE_PROXY_URL?: string;
+    HTTP_PROXY?: string;
+    HTTPS_PROXY?: string;
+    RESIDENTIAL_PROXY_HOST?: string;
+    RESIDENTIAL_PROXY_PORT?: string | number;
+    RESIDENTIAL_PROXY_USERNAME?: string;
+    RESIDENTIAL_PROXY_PASSWORD?: string;
+  },
+  opts?: { allowDefault?: boolean },
+): string | undefined {
   const direct =
     env?.RESIDENTIAL_PROXY_URL?.trim() ||
     env?.SENATE_PROXY_URL?.trim() ||
@@ -110,5 +141,14 @@ export function resolveResidentialProxyUrl(env?: {
     return formatProxyUrl({ host, port, username, password });
   }
 
-  return undefined;
+  // Nothing explicitly configured.  Diagnostics ask with
+  // `allowDefault: false` because they need to report the *absence* of
+  // configuration rather than the effective egress path.
+  if (opts?.allowDefault === false) return undefined;
+
+  // Last-resort fallback so the FMP latency probe and Senate / House
+  // scrapers always have a residential path when nothing is configured.
+  // The Mango HTTP CONNECT proxy is the only res-IP bounce in the fleet
+  // since the Mac residential-proxy was retired (board `ab688ea5`).
+  return DEFAULT_RESIDENTIAL_PROXY_URL;
 }

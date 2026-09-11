@@ -262,9 +262,19 @@ export interface FetchSenatePtrFilingsOptions {
   politeDelayMs?: number;
   /** KV namespace for caching the Senate eFD session (Strategy B) */
   kv?: any;
-  /** Optional Oracle/microservice relay URL (e.g. http://oracle-host:8788). */
+  /**
+   * @deprecated Mac scout relay URL (e.g. https://scout.jays.services) — the
+   * Mac scout was retired 2026-09-09 (board `ba810d46`).  Kept as a typed
+   * option only so historical callers continue to type-check; the value
+   * is **ignored** at runtime.  Server now fetches directly from the
+   * Senate eFD, with residential-IP bounce via the GL.iNet Mango HTTP
+   * CONNECT proxy at `http://10.99.0.2:8888`.
+   */
   relayUrl?: string;
-  /** Shared bearer for Mac scout.jays.services POST /fetch-ptr and /fetch-doc. */
+  /**
+   * @deprecated Companion bearer for the (retired) Mac scout relay.  See
+   * `relayUrl` — also ignored.
+   */
   relaySecret?: string;
   /** Optional proxy URL for routing Senate requests. */
   proxyUrl?: string;
@@ -390,42 +400,20 @@ export async function fetchSenatePtrFilings(
   const proxyUrl = opts.proxyUrl ?? resolveResidentialProxyUrl();
   const effectiveFetch = proxyUrl ? createProxiedFetch(proxyUrl, fetchImpl) : fetchImpl;
 
-  // Prefer the primary relay microservice (scout.jays.services named tunnel) when configured.
-  // Direct/proxied fetch is used when the relay is not configured or when the relay is unreachable.
+  // Owner 2026-09-09: the Mac scout relay (`https://scout.jays.services`)
+  // is retired (board `ba810d46`).  The Senate relay fallback at the
+  // bottom of this function used to point there; it is now a no-op.
+  // The server fetches directly from the Senate eFD, bouncing through
+  // the Mango HTTP CONNECT proxy at `http://10.99.0.2:8888` for the
+  // residential IP.  If a misconfigured deployment still has
+  // `SENATE_RELAY_URL` set, we warn and ignore it rather than try a
+  // dead endpoint.
   const relayUrl = opts.relayUrl ?? (typeof process !== 'undefined' ? process.env?.SENATE_RELAY_URL : undefined);
-  const relaySecret = opts.relaySecret ?? (typeof process !== 'undefined' ? process.env?.SENATE_RELAY_SECRET : undefined);
   if (relayUrl) {
-    try {
-      const res = await trackedFetch(`${relayUrl.replace(/\/$/, '')}/fetch-ptr`, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          accept: 'application/json',
-          ...senateRelayAuthHeaders(relaySecret),
-        },
-        body: JSON.stringify({
-          submitted_start_date: formatSenateDate(since),
-          submitted_end_date: formatSenateDate(now),
-          pageSize,
-        }),
-        signal: opts.signal,
-      }, { service: 'filing-discovery', operation: 'search-senate-filings-relay' }, fetchImpl);
-
-      if (res.ok) {
-        const json = (await res.json()) as { data?: unknown };
-        const rows = Array.isArray(json.data) ? (json.data as string[][]) : [];
-        return parseSenateRows(rows);
-      }
-      if (!isSenateRelayUnreachable(res)) {
-        throw new Error(`senate relay POST /fetch-ptr -> HTTP ${res.status}`);
-      }
-      await res.body?.cancel().catch(() => {});
-      console.warn(`senate relay unreachable (HTTP ${res.status}); falling back to direct eFD`);
-    } catch (err) {
-      if (opts.signal?.aborted) throw err;
-      if (err instanceof Error && err.message.startsWith('senate relay POST')) throw err;
-      console.warn('senate relay failed; falling back to direct eFD:', (err as Error).message);
-    }
+    console.warn(
+      `senateSource: SENATE_RELAY_URL=${relayUrl} is configured but the Mac scout relay has been retired (2026-09-09). ` +
+      'Ignoring and fetching directly from the Senate eFD via the Mango residential proxy.',
+    );
   }
 
   let session: SenateSession | null = null;

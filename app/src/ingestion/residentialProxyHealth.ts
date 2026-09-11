@@ -5,10 +5,11 @@
  */
 
 import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
-import { resolveResidentialProxyUrl } from '../shared/proxyFetch.ts';
+import { DEFAULT_RESIDENTIAL_PROXY_URL, resolveResidentialProxyUrl } from '../shared/proxyFetch.ts';
 import type { Env } from '../shared/types.ts';
 
 export interface ResidentialProxyHealthResult {
+  /** An operator explicitly set a residential proxy env. */
   configured: boolean;
   proxyUrl?: string;
   reachable: boolean;
@@ -17,6 +18,10 @@ export interface ResidentialProxyHealthResult {
   uptime?: number;
   latencyMs?: number;
   error?: string;
+  /** Proxy URL outbound traffic will actually use when nothing is configured. */
+  effectiveProxyUrl?: string;
+  /** True when `configured` is false but the Mango fallback still applies. */
+  usingDefault?: boolean;
 }
 
 /**
@@ -27,14 +32,24 @@ export async function probeResidentialProxyHealth(
   fetchImpl: typeof fetch = globalThis.fetch,
   timeoutMs = 5000,
 ): Promise<ResidentialProxyHealthResult> {
+  // `allowDefault: false`: this is a diagnostic, so "configured" must mean an
+  // operator actually set a proxy env — not that `resolveResidentialProxyUrl`
+  // handed back the Mango fallback.  Resolving with the default here would
+  // make `configured` permanently true and send a live request to the Mango
+  // device on every call, including from unit tests that pass no fetch mock.
   const proxyUrl = typeof proxyUrlOrEnv === 'string'
     ? proxyUrlOrEnv
-    : resolveResidentialProxyUrl(proxyUrlOrEnv);
+    : resolveResidentialProxyUrl(proxyUrlOrEnv, { allowDefault: false });
 
   if (!proxyUrl) {
     return {
       configured: false,
       reachable: false,
+      // Egress still has a path — `resolveResidentialProxyUrl` falls back to
+      // the Mango proxy — so surface what traffic will actually use while
+      // still reporting the missing configuration.
+      effectiveProxyUrl: DEFAULT_RESIDENTIAL_PROXY_URL,
+      usingDefault: true,
     };
   }
 

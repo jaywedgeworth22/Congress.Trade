@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   createProxiedFetch,
+  DEFAULT_RESIDENTIAL_PROXY_URL,
   getDenoHttpClient,
   resolveResidentialProxyUrl,
 } from '../proxyFetch.ts';
@@ -50,8 +51,13 @@ describe('proxyFetch', () => {
     ).toBe('http://proxy.internal:8080');
   });
 
-  it('returns undefined if no proxy url or host is set', () => {
-    expect(resolveResidentialProxyUrl({})).toBeUndefined();
-    expect(resolveResidentialProxyUrl({ RESIDENTIAL_PROXY_PORT: '8888' })).toBeUndefined();
+  it('returns the Mango default if no proxy url or host is set', () => {
+    // The Mango HTTP CONNECT proxy on the WireGuard mesh is the only
+    // residential-IP bounce in the fleet since the Mac residential-proxy
+    // retired (board `ab688ea5`).  Falling back to it keeps the FMP
+    // latency probe + Senate/House scrapers from running datacentred
+    // when an env was missed at deploy time.
+    expect(resolveResidentialProxyUrl({})).toBe(DEFAULT_RESIDENTIAL_PROXY_URL);
+    expect(resolveResidentialProxyUrl({ RESIDENTIAL_PROXY_PORT: '8888' })).toBe(DEFAULT_RESIDENTIAL_PROXY_URL);
   });
 });

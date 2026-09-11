@@ -273,16 +273,21 @@ describe('GET /api/ingest/scout-plan + POST latency-payload + raw', () => {
     expect(body.notes.join(' ')).toMatch(/R2/);
   });
 
-  it('accepts scout latency payloads', async () => {
+  it('rejects scout latency payloads with 410 Gone (scout retired 2026-09-09)', async () => {
+    // The Mac scout that POSTed here is retired and the server probes FMP
+    // itself now.  The route stays mounted so an in-flight Mac client gets a
+    // clean, explanatory 410 rather than a 500 — and, importantly, so a stray
+    // payload can no longer write latency observations into KV.
     const res = await authPost('/latency-payload', 'ingest-secret', {
       provider: 'fmp',
       fmpPathId: 'stable',
       chamberJson: { house: [{ name: 'A' }], senate: [] },
     });
-    expect(res.status).toBe(200);
-    expect(ingestScoutLatencyPayload).toHaveBeenCalledTimes(1);
-    const body = (await res.json()) as { ok: boolean; upserted: number };
-    expect(body).toMatchObject({ ok: true, upserted: 2 });
+    expect(res.status).toBe(410);
+    expect(ingestScoutLatencyPayload).not.toHaveBeenCalled();
+    const body = (await res.json()) as { ok: boolean; deprecated: boolean; error: string };
+    expect(body).toMatchObject({ ok: false, deprecated: true });
+    expect(body.error).toMatch(/retired/);
   });
 
   it('stores residential raw bytes in R2 for a known filing', async () => {
