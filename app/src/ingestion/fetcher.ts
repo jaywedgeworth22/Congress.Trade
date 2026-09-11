@@ -244,12 +244,23 @@ export async function fetchFiling(
     const residentialProxyUrl = resolveResidentialProxyUrl(env);
     const effectiveFetch = residentialProxyUrl ? createProxiedFetch(residentialProxyUrl, fetch) : fetch;
 
-    // When residential proxy is configured, document fetches flow directly through
-    // the proxy using the Mac's residential IP. When proxy is not configured, check
-    // for a legacy Senate relay microservice.
-    const senateRelayUrl = !residentialProxyUrl && row.chamber === 'senate' && env.SENATE_RELAY_URL
-      ? env.SENATE_RELAY_URL.replace(/\/$/, '')
-      : undefined;
+    // Owner 2026-09-09: the Mac Senate relay (`https://scout.jays.services`)
+    // is retired (board `ba810d46`).  When a residential proxy is
+    // configured (always — the Mango HTTP CONNECT proxy at
+    // `http://10.99.0.2:8888` is the fleet default), the fetcher goes
+    // direct; the legacy Senate-relay fallback is ignored.  If a
+    // deployment has `SENATE_RELAY_URL` set but no residential proxy
+    // (misconfigured), we log + skip rather than fire at a dead origin.
+    const senateRelayUrl =
+      !residentialProxyUrl && row.chamber === 'senate' && env.SENATE_RELAY_URL
+        ? env.SENATE_RELAY_URL.replace(/\/$/, '')
+        : undefined;
+    if (!residentialProxyUrl && env.SENATE_RELAY_URL) {
+      console.warn(
+        `fetcher: SENATE_RELAY_URL=${env.SENATE_RELAY_URL} is configured but the Mac Senate relay has been retired (2026-09-09) ` +
+        'and no residential proxy is configured.  Document fetch will fall back to direct egress, which the upstream anti-bot may block.',
+      );
+    }
     const fetchSenateDocViaRelay = () =>
       trackedFetch(`${senateRelayUrl}/fetch-doc`, {
         method: 'POST',

@@ -1,16 +1,18 @@
 /**
- * Scout handoff: server-first latency probes; Mac residential scout covers a
- * provider only after N successive *server* hard failures (not mere silence or
- * budget/spacing skips). Scout success fills observations but does not clear
- * the handoff — server must succeed again to reclaim the lane.
+ * Server-only latency probe helper (formerly `scoutHandoff.ts`).
  *
- * Also lists filings that still need raw bytes in R2 so the scout can upload
- * from a residential IP.
+ * Owner 2026-09-09: "want the server to handle the FMP probe not Mac."
+ * The Mac residential-proxy, Mac Senate relay, and the Mac scout lease
+ * are retired (board `ab688ea5`, `ba810d46`).  Everything that used to
+ * hand off to the Mac is now the server's job, with residential IP
+ * bounce provided by the GL.iNet Mango HTTP CONNECT proxy at
+ * `http://10.99.0.2:8888` on the Hetzner `wg-ct` WireGuard mesh.
  *
- * `needScout` decides WHO IS ALLOWED to poll. It is not, by itself, exclusion:
- * a flag both hosts merely consult still lets both poll. Actual mutual
- * exclusion lives in probeLease.ts, and the two are wired together here —
- * `needScout` gates eligibility, the lease grants the lane.
+ * The Mac lease plumbing (`probeLease.ts`) is kept for one more
+ * release so the server side of the lease still has a single owner
+ * for each provider lane; `needScout` always evaluates to `false`, so
+ * the lane is permanently server-owned and the Mac side of the lease
+ * is a no-op.
  */
 import type { Env } from '../shared/types.ts';
 import { all } from '../shared/db.ts';
@@ -72,6 +74,12 @@ export const LATENCY_SCOUT_CONSECUTIVE_ERRORS = 3;
  */
 export const LATENCY_SCOUT_SILENCE_HOURS = 6;
 
+/**
+ * Latency probe source.  Owner 2026-09-09: server-only.  The Mac scout
+ * is retired; the `'scout'` variant is kept as a single string literal
+ * only so historical KV records and old telemetry events continue to
+ * type-check — no new code path emits it.
+ */
 export type LatencyProbeSource = 'server' | 'scout';
 
 export type LatencyProbeProviderId =
@@ -237,11 +245,23 @@ async function writeHealthMap(env: Env, map: HealthMap): Promise<void> {
 /**
  * Derive needScout + consecutive error count from a probe outcome.
  *
- * - Server success → consecutive=0, needScout=false (server reclaims lane)
- * - Server error → consecutive+=1; needScout after threshold
- * - Server not_configured → needScout=true (server cannot probe)
- * - Server disabled / budget_skip → do not hand off; do not increment errors
- * - Scout success/error → never changes consecutive; needScout stays until server recovers
+ * Owner 2026-09-09: server-only.  `needScout` is hard-coded to `false`
+ * — the Mac scout is retired and no host in the fleet can take the
+ * lane.  The Mac-lease plumbing in `probeLease.ts` is kept so the
+ * server still has a single owner per provider lane, but the Mac
+ * half is a no-op (no peer, no callback).
+ *
+ * Server outcome semantics (unchanged for backwards compatibility):
+ * - success → consecutive=0, needScout=false
+ * - error   → consecutive+=1; surfaced via `lastError` for observability
+ * - budget_skip / disabled → do not count as failure
+ * - not_configured → consecutive preserved; an operator can see this in
+ *   the dashboard / Sentry; the FMP probe will simply log + skip until
+ *   keys land in Infisical.
+ *
+ * The `source` parameter is retained for KV-record compatibility — any
+ * legacy `'scout'` row is mapped to a server-side "lane permanently
+ * server-owned" outcome so historical telemetry does not 500.
  */
 export function computeNeedScout(opts: {
   kind: 'success' | 'error' | 'budget_skip' | 'not_configured' | 'disabled';
@@ -259,36 +279,29 @@ export function computeNeedScout(opts: {
   const prev = Math.max(0, Math.floor(opts.prevConsecutiveServerErrors ?? 0));
 
   if (source === 'scout') {
-    // Scout fills observations; it does not clear or open handoff by itself.
-    // Keep prior consecutive count; needScout stays true while threshold met
-    // so the Mac keeps covering until the server succeeds again.
-    const needScout = prev >= threshold;
+    // Mac scout is retired.  Map a historical scout record onto the
+    // server-owned outcome so the dashboard does not display a phantom
+    // handoff flag for old telemetry.
     return {
       consecutiveServerErrors: prev,
-      needScout,
-      needScoutReason: needScout
-        ? `server probe failed ${prev} successive times (threshold ${threshold}); scout covering until server recovers`
-        : null,
+      needScout: false,
+      needScoutReason: null,
     };
   }
 
-  // Server path
+  // Server path (Mac lease is now a no-op — see file docstring).
   if (opts.kind === 'disabled' || opts.kind === 'budget_skip') {
-    // Intentional skip / off — do not hand off, do not count as failure.
     return {
       consecutiveServerErrors: prev,
-      needScout: prev >= threshold,
-      needScoutReason:
-        prev >= threshold
-          ? `server probe failed ${prev} successive times (threshold ${threshold})`
-          : null,
+      needScout: false,
+      needScoutReason: null,
     };
   }
   if (opts.kind === 'not_configured') {
     return {
       consecutiveServerErrors: prev,
-      needScout: true,
-      needScoutReason: 'provider not configured on server',
+      needScout: false,
+      needScoutReason: 'provider not configured on server (server-only, no Mac fallback)',
     };
   }
   if (opts.kind === 'success') {
@@ -298,14 +311,15 @@ export function computeNeedScout(opts: {
       needScoutReason: null,
     };
   }
-  // error
+  // error — surface the count + reason for observability, but never
+  // set needScout: the Mac is not coming back.
   const consecutive = prev + 1;
   if (consecutive >= threshold) {
     const err = opts.lastError ? opts.lastError.slice(0, 160) : 'error';
     return {
       consecutiveServerErrors: consecutive,
-      needScout: true,
-      needScoutReason: `server probe failed ${consecutive} successive times (threshold ${threshold}): ${err}`,
+      needScout: false,
+      needScoutReason: `server probe failed ${consecutive} successive times (threshold ${threshold}): ${err} — server-only, no Mac fallback`,
     };
   }
   return {
@@ -638,13 +652,17 @@ export async function planServerLatencyProbe(
   const eligible = await eligibleHandoffProviders(env);
   const map = await readHealthMap(env);
   const ttlMs = serverLeaseTtlMs(env);
-  const tenureMs = macTenureMs(env);
   const lanes: ServerLatencyLaneDecision[] = [];
 
   for (const provider of configured) {
     const health = map[provider];
-    // A provider that is not handoff-eligible (disabled path) can never be
-    // "handed off" — treat it as server-owned so its status still registers.
+    // Owner 2026-09-09: server-only.  `health.needScout` is permanently
+    // false (see `computeNeedScout`), so `handedOff` collapses to
+    // `false` and every lane is server-acquired.  The eligible check is
+    // retained for the case where an operator disables a provider path
+    // entirely (e.g. FMP_RAPIDAPI when paths=stable only); that path
+    // should still register as server-owned so its health surface is
+    // visible.
     const handedOff = eligible.has(provider) ? Boolean(health?.needScout) : false;
     const current = await readProbeLease(env, provider, now);
 
@@ -669,59 +687,39 @@ export async function planServerLatencyProbe(
       continue;
     }
 
-    const macLive = Boolean(current && current.holder === 'mac' && !current.expired);
+    // Owner 2026-09-09: server-only.  `needScout` is always false (see
+    // computeNeedScout), so this `handedOff` branch is unreachable in
+    // production; it is kept as a one-release defense so any historical
+    // KV row that still flips true on a misconfigured install does not
+    // stall the probe forever.  Mac lease / Mac tenure are no-ops here.
     const serverLive = Boolean(current && current.holder === 'server' && !current.expired);
 
-    // Live Mac still inside its tenure: drop the server lease so the scout
-    // is not double-polled.
-    if (macLive && current && !macTenureExhausted(current, tenureMs, now)) {
-      await releaseProbeLease(env, provider, 'server', SERVER_LEASE_HOLDER_ID);
-      lanes.push({
-        provider,
-        probe: false,
-        action: 'handed_off',
-        detail: health?.needScoutReason ?? 'handed off to mac scout',
-        lease: current,
-      });
-      continue;
-    }
-
-    // First tick after needScout flipped: server still holds the row. Release
-    // once so a living Mac scout can acquire. The next tick reclaims if the
-    // Mac never showed (scout retired 2026-09-02; FMP sat handed_off 42h+).
     if (serverLive) {
       await releaseProbeLease(env, provider, 'server', SERVER_LEASE_HOLDER_ID);
       lanes.push({
         provider,
         probe: false,
         action: 'handed_off',
-        detail: health?.needScoutReason ?? 'handed off to mac scout',
+        detail: health?.needScoutReason ?? 'historical handed-off record (mac retired); server reclaiming',
         lease: current,
       });
       continue;
     }
 
-    // No live Mac holder (expired / never acquired) or Mac tenure spent.
-    const reclaimingMac = macLive;
     const decision = await acquireProbeLease(env, {
       provider,
       holder: 'server',
       holderId: SERVER_LEASE_HOLDER_ID,
       ttlMs,
-      reason: reclaimingMac
-        ? 'reclaim probe after mac tenure'
-        : 'mac scout not holding the lane; server reclaiming',
+      reason: 'server-only lane (mac retired)',
       now,
-      preemptMacAfterMs: tenureMs,
     });
     lanes.push({
       provider,
       probe: decision.granted,
-      action: decision.granted ? (reclaimingMac ? 'reclaimed' : 'acquired') : 'blocked',
+      action: decision.granted ? 'acquired' : 'blocked',
       detail: decision.granted
-        ? reclaimingMac
-          ? `mac tenure of ${Math.round(tenureMs / 3600000)}h elapsed; server reclaiming the lane`
-          : 'no live mac lease; server reclaiming the lane'
+        ? 'server holds the lane (mac retired, server-only)'
         : (decision.detail ?? 'lane unavailable'),
       lease: decision.lease ?? decision.current,
     });
