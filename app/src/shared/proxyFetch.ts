@@ -101,17 +101,28 @@ export function formatProxyUrl(opts: {
  * Helper to resolve the effective residential proxy URL from Env or process.env.
  * Falls back to {@link DEFAULT_RESIDENTIAL_PROXY_URL} when nothing is configured
  * so the server-side Senate / House / FMP probes always have a path.
+ *
+ * Pass `{ allowDefault: false }` to ask the *other* question — "did an operator
+ * explicitly configure a residential proxy?" — which is what health and
+ * observability surfaces need.  Without that distinction the Mango fallback
+ * makes every "configured" check unconditionally true, so a missed
+ * `RESIDENTIAL_PROXY_URL` in Coolify becomes undetectable — the exact
+ * misconfiguration the fallback exists to survive.  Egress paths keep the
+ * default (always have a residential route); diagnostics opt out of it.
  */
-export function resolveResidentialProxyUrl(env?: {
-  RESIDENTIAL_PROXY_URL?: string;
-  SENATE_PROXY_URL?: string;
-  HTTP_PROXY?: string;
-  HTTPS_PROXY?: string;
-  RESIDENTIAL_PROXY_HOST?: string;
-  RESIDENTIAL_PROXY_PORT?: string | number;
-  RESIDENTIAL_PROXY_USERNAME?: string;
-  RESIDENTIAL_PROXY_PASSWORD?: string;
-}): string | undefined {
+export function resolveResidentialProxyUrl(
+  env?: {
+    RESIDENTIAL_PROXY_URL?: string;
+    SENATE_PROXY_URL?: string;
+    HTTP_PROXY?: string;
+    HTTPS_PROXY?: string;
+    RESIDENTIAL_PROXY_HOST?: string;
+    RESIDENTIAL_PROXY_PORT?: string | number;
+    RESIDENTIAL_PROXY_USERNAME?: string;
+    RESIDENTIAL_PROXY_PASSWORD?: string;
+  },
+  opts?: { allowDefault?: boolean },
+): string | undefined {
   const direct =
     env?.RESIDENTIAL_PROXY_URL?.trim() ||
     env?.SENATE_PROXY_URL?.trim() ||
@@ -129,6 +140,11 @@ export function resolveResidentialProxyUrl(env?: {
   if (host) {
     return formatProxyUrl({ host, port, username, password });
   }
+
+  // Nothing explicitly configured.  Diagnostics ask with
+  // `allowDefault: false` because they need to report the *absence* of
+  // configuration rather than the effective egress path.
+  if (opts?.allowDefault === false) return undefined;
 
   // Last-resort fallback so the FMP latency probe and Senate / House
   // scrapers always have a residential path when nothing is configured.

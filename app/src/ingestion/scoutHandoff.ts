@@ -652,6 +652,7 @@ export async function planServerLatencyProbe(
   const eligible = await eligibleHandoffProviders(env);
   const map = await readHealthMap(env);
   const ttlMs = serverLeaseTtlMs(env);
+  const tenureMs = macTenureMs(env);
   const lanes: ServerLatencyLaneDecision[] = [];
 
   for (const provider of configured) {
@@ -667,20 +668,30 @@ export async function planServerLatencyProbe(
     const current = await readProbeLease(env, provider, now);
 
     if (!handedOff) {
+      // A live Mac-held row can only be stale now that the scout is retired
+      // (nothing renews it any more).  `preemptMacAfterMs` is what lets the
+      // server take such a lane back once the tenure window is spent; without
+      // it a leftover Mac row blocks the probe for the whole lease TTL and the
+      // provider goes silent — the 2026-09-02 failure this lane already had
+      // once.  Preemption cannot double-poll: the Mac no longer probes.
+      const macLive = Boolean(current && current.holder === 'mac' && !current.expired);
       const decision = await acquireProbeLease(env, {
         provider,
         holder: 'server',
         holderId: SERVER_LEASE_HOLDER_ID,
         ttlMs,
-        reason: 'server healthy',
+        reason: macLive ? 'reclaim probe after mac tenure (mac retired)' : 'server healthy',
         now,
+        preemptMacAfterMs: tenureMs,
       });
       lanes.push({
         provider,
         probe: decision.granted,
-        action: decision.granted ? 'acquired' : 'blocked',
+        action: decision.granted ? (macLive ? 'reclaimed' : 'acquired') : 'blocked',
         detail: decision.granted
-          ? 'server holds the lane'
+          ? macLive
+            ? `mac tenure of ${Math.round(tenureMs / 3600000)}h elapsed; server reclaiming the lane`
+            : 'server holds the lane'
           : (decision.detail ?? 'lane unavailable'),
         lease: decision.lease ?? decision.current,
       });
@@ -706,6 +717,10 @@ export async function planServerLatencyProbe(
       continue;
     }
 
+    // Same reasoning as the server-owned branch above: a historical
+    // `needScout` row must not combine with a leftover Mac lease to stall the
+    // provider past the tenure window.
+    const macLive = Boolean(current && current.holder === 'mac' && !current.expired);
     const decision = await acquireProbeLease(env, {
       provider,
       holder: 'server',
@@ -713,11 +728,12 @@ export async function planServerLatencyProbe(
       ttlMs,
       reason: 'server-only lane (mac retired)',
       now,
+      preemptMacAfterMs: tenureMs,
     });
     lanes.push({
       provider,
       probe: decision.granted,
-      action: decision.granted ? 'acquired' : 'blocked',
+      action: decision.granted ? (macLive ? 'reclaimed' : 'acquired') : 'blocked',
       detail: decision.granted
         ? 'server holds the lane (mac retired, server-only)'
         : (decision.detail ?? 'lane unavailable'),

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   parseCsrfMiddlewareToken,
   parseReportLink,
@@ -243,66 +243,18 @@ describe('fetchSenatePtrFilings', () => {
     expect(out.map((f) => f.pipelineDocId)).toEqual(['S-a', 'S-b', 'S-c']);
   });
 
-  it('prefers the Mac relay over direct eFD (Imperva 403s the box)', async () => {
-    const urls: string[] = [];
-    const bodies: any[] = [];
-    const fetchImpl = async (
+  // The Mac scout relay (`https://scout.jays.services`) is retired as of
+  // 2026-09-09 (board `ba810d46`). `relayUrl` / `relaySecret` survive as
+  // @deprecated options so old callers still type-check, but both are ignored
+  // at runtime: the search goes straight to the eFD, with the residential IP
+  // supplied by the Mango HTTP CONNECT proxy.
+  function directEfdFetch(urls: string[], docId = 'direct-1') {
+    return async (
       input: Parameters<typeof fetch>[0],
-      init?: Parameters<typeof fetch>[1],
-    ): Promise<Response> => {
-      urls.push(String(input));
-      if (init?.body) bodies.push(JSON.parse(String(init.body)));
-      return new Response(JSON.stringify({ data: [senateRow('relay-1')] }), {
-        headers: { 'content-type': 'application/json' },
-      });
-    };
-
-    const out = await fetchSenatePtrFilings(
-      {
-        relayUrl: 'https://hetzner-relay.example.com',
-        pageSize: 100,
-      },
-      fetchImpl,
-    );
-
-    expect(urls).toEqual(['https://hetzner-relay.example.com/fetch-ptr']);
-    expect(bodies[0].pageSize).toBe(100);
-    expect(out).toHaveLength(1);
-    expect(out[0].pipelineDocId).toBe('S-relay-1');
-  });
-
-  it('sends SENATE_RELAY_SECRET as Bearer on /fetch-ptr', async () => {
-    let auth: string | null = null;
-    const fetchImpl = async (
-      _input: Parameters<typeof fetch>[0],
-      init?: Parameters<typeof fetch>[1],
-    ): Promise<Response> => {
-      const headers = new Headers(init?.headers);
-      auth = headers.get('authorization');
-      return new Response(JSON.stringify({ data: [senateRow('auth-1')] }), {
-        headers: { 'content-type': 'application/json' },
-      });
-    };
-
-    await fetchSenatePtrFilings(
-      { relayUrl: 'https://scout.jays.services', relaySecret: 'relay-test-secret' },
-      fetchImpl,
-    );
-
-    expect(auth).toBe('Bearer relay-test-secret');
-  });
-
-  it('falls back to direct eFD when the named-tunnel relay returns 502', async () => {
-    const urls: string[] = [];
-    const fetchImpl = async (
-      input: Parameters<typeof fetch>[0],
-      init?: Parameters<typeof fetch>[1],
+      _init?: Parameters<typeof fetch>[1],
     ): Promise<Response> => {
       const url = String(input);
       urls.push(url);
-      if (url.endsWith('/fetch-ptr')) {
-        return new Response('error code: 502', { status: 502, headers: { 'content-type': 'text/plain' } });
-      }
       if (url.endsWith('/search/')) {
         return new Response(
           `<form><input type="hidden" name="csrfmiddlewaretoken" value="csrf-hidden"></form>`,
@@ -313,13 +265,16 @@ describe('fetchSenatePtrFilings', () => {
         return new Response('', { status: 302, headers: { 'set-cookie': 'sessionid=sess; Path=/' } });
       }
       if (url.endsWith('/search/report/data/')) {
-        return new Response(JSON.stringify({ data: [senateRow('direct-1')], recordsFiltered: 1 }), {
+        return new Response(JSON.stringify({ data: [senateRow(docId)], recordsFiltered: 1 }), {
           headers: { 'content-type': 'application/json' },
         });
       }
       throw new Error(`unexpected URL: ${url}`);
     };
+  }
 
+  it('ignores a stale relayUrl and searches the eFD directly', async () => {
+    const urls: string[] = [];
     const out = await fetchSenatePtrFilings(
       {
         relayUrl: 'https://scout.jays.services',
@@ -327,20 +282,65 @@ describe('fetchSenatePtrFilings', () => {
         now: new Date('2026-06-30T23:59:59.000Z'),
         politeDelayMs: 0,
       },
-      fetchImpl,
+      directEfdFetch(urls),
     );
 
-    expect(urls[0]).toBe('https://scout.jays.services/fetch-ptr');
+    expect(urls.some((u) => u.endsWith('/fetch-ptr'))).toBe(false);
     expect(urls.some((u) => u.endsWith('/search/report/data/'))).toBe(true);
     expect(out.map((f) => f.pipelineDocId)).toEqual(['S-direct-1']);
   });
 
-  it('does not fall back on a mirrored upstream 404 from the relay', async () => {
+  it('never sends the retired relay bearer to the eFD', async () => {
+    // relaySecret is a fleet credential scoped to the relay. Now that requests
+    // land on senate.gov, it must not ride along on any of them.
+    const auths: Array<string | null> = [];
+    const fetchImpl = async (
+      input: Parameters<typeof fetch>[0],
+      init?: Parameters<typeof fetch>[1],
+    ): Promise<Response> => {
+      auths.push(new Headers(init?.headers).get('authorization'));
+      return directEfdFetch([])(input, init);
+    };
+
+    await fetchSenatePtrFilings(
+      {
+        relayUrl: 'https://scout.jays.services',
+        relaySecret: 'relay-test-secret',
+        since: new Date('2026-06-30T00:00:00.000Z'),
+        now: new Date('2026-06-30T23:59:59.000Z'),
+        politeDelayMs: 0,
+      },
+      fetchImpl,
+    );
+
+    expect(auths.length).toBeGreaterThan(0);
+    expect(auths.every((a) => a === null)).toBe(true);
+  });
+
+  it('warns that a configured relayUrl is being ignored', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await fetchSenatePtrFilings(
+      {
+        relayUrl: 'https://scout.jays.services',
+        since: new Date('2026-06-30T00:00:00.000Z'),
+        now: new Date('2026-06-30T23:59:59.000Z'),
+        politeDelayMs: 0,
+      },
+      directEfdFetch([]),
+    );
+
+    expect(
+      warn.mock.calls.some(([msg]) => /scout.jays.services/.test(String(msg)) && /retired/.test(String(msg))),
+    ).toBe(true);
+    warn.mockRestore();
+  });
+
+  it('surfaces a direct eFD 404 rather than a relay error', async () => {
     const fetchImpl = async (): Promise<Response> =>
       new Response(JSON.stringify({ error: 'not found' }), { status: 404 });
 
     await expect(
       fetchSenatePtrFilings({ relayUrl: 'https://scout.jays.services', politeDelayMs: 0 }, fetchImpl),
-    ).rejects.toThrow(/senate relay POST \/fetch-ptr -> HTTP 404/);
+    ).rejects.toThrow(/senate GET \/search\/ -> HTTP 404/);
   });
 });

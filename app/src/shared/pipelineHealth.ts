@@ -866,7 +866,13 @@ export async function checkPipelineHealth(env: Env, now = new Date()): Promise<P
     senateRelay = null;
   }
 
-  const residentialProxyConfigured = Boolean(resolveResidentialProxyUrl(env));
+  // `allowDefault: false` so this stays a real signal.  It sits beside
+  // `senateRelay.configured`, which is an explicit-env check; resolving with
+  // the Mango fallback would pin it to true forever and hide a missed
+  // `RESIDENTIAL_PROXY_URL` in Coolify.
+  const residentialProxyConfigured = Boolean(
+    resolveResidentialProxyUrl(env, { allowDefault: false }),
+  );
 
   const signals: PipelineSignals = {
     outboxPending,
