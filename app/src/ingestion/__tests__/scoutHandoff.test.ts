@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
   computeNeedScout,
+  LATENCY_PROBE_HEALTH_KV_KEY,
   LATENCY_SCOUT_CONSECUTIVE_ERRORS,
   recordLatencyProbeOutcome,
   buildScoutPlan,
@@ -134,6 +135,40 @@ describe('recordLatencyProbeOutcome + plan', () => {
     kvStore.clear();
   });
 
+  it('does not resurrect needScout when reading a pre-retirement KV row', async () => {
+    // `computeNeedScout` never writes `needScout: true` any more, but the read
+    // path normalizes every row it loads.  If that normalizer re-derived
+    // handoff from the error count, a legacy row — or any provider three
+    // errors into an outage — would flip back to true on the next read and
+    // route the lane down the retired-Mac branch.
+    kvStore.set(
+      LATENCY_PROBE_HEALTH_KV_KEY,
+      JSON.stringify({
+        fmp: {
+          provider: 'fmp',
+          lastAttemptAt: '2026-09-01T00:00:00.000Z',
+          lastSuccessAt: null,
+          lastError: 'HTTP_403',
+          lastFetchedRows: 0,
+          lastSource: 'scout',
+          consecutiveServerErrors: 5,
+          needScout: true,
+          needScoutReason: 'server probe failed 5 successive times (threshold 3)',
+          updatedAt: '2026-09-01T00:00:00.000Z',
+        },
+      }),
+    );
+
+    const out = await recordLatencyProbeOutcome(env, 'fmp', {
+      kind: 'budget_skip',
+      now: new Date('2026-09-10T12:00:00.000Z'),
+    });
+
+    expect(out.needScout).toBe(false);
+    // The streak itself survives — it is what the dashboard shows.
+    expect(out.consecutiveServerErrors).toBe(5);
+  });
+
   it('accumulates successive server errors without ever setting needScout', async () => {
     const t0 = new Date('2026-08-11T12:00:00.000Z');
     const e1 = await recordLatencyProbeOutcome(env, 'fmp', {
@@ -193,7 +228,10 @@ describe('recordLatencyProbeOutcome + plan', () => {
     expect(map.fmp?.consecutiveServerErrors).toBe(0);
   });
 
-  it('buildScoutPlan hints secondary FMP key when covering FMP', async () => {
+  it('buildScoutPlan no longer puts FMP on the scout after a server-error streak', async () => {
+    // The plan is the Mac's work list, and the Mac is retired: a server-error
+    // streak keeps the lane server-owned instead of handing FMP over, so there
+    // is nothing to cover and no secondary-key hint to give.
     for (let i = 0; i < 3; i++) {
       await recordLatencyProbeOutcome(env, 'fmp', {
         kind: 'error',
@@ -202,9 +240,8 @@ describe('recordLatencyProbeOutcome + plan', () => {
       });
     }
     const plan = await buildScoutPlan(env, new Date('2026-08-11T13:10:00.000Z'));
-    expect(plan.fmpPreferSecondaryKey).toBe(true);
-    expect(plan.latencyNeedScout.some((h) => h.provider === 'fmp')).toBe(true);
-    expect(plan.notes.some((n) => /successive server errors/i.test(n))).toBe(true);
+    expect(plan.latencyNeedScout.some((h) => h.provider === 'fmp')).toBe(false);
+    expect(plan.fmpPreferSecondaryKey).toBe(false);
   });
 
   it('never hands off fmp_rapidapi when RapidAPI path is not enabled (default stable-only)', async () => {

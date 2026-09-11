@@ -180,11 +180,18 @@ function normalizeHealth(
       /scout silence/i.test(reason) ||
       /no observations yet/i.test(reason) ||
       /no successful server probe yet/i.test(reason));
+  // Owner 2026-09-09: `computeNeedScout` never writes `needScout: true` any
+  // more.  This normalizer runs on every *read*, so it preserves a stored flag
+  // (a pre-retirement row still has to be representable, which is what keeps
+  // the defensive branch in `planServerLatencyProbe` reachable) but must no
+  // longer *derive* one.  Re-deriving from the error count undid the write
+  // path: any provider three errors into an outage flipped back to handed-off
+  // on the next read, and the planner then released the server's lease to wait
+  // for a Mac that is never coming.  Reasons are still derived — the dashboard
+  // surfaces the streak and the not-configured state as observability.
   let needScout = Boolean(raw.needScout) && !legacySilence;
   let needScoutReason = legacySilence ? null : reason;
-  // Reconcile with consecutive count (source of truth for handoff).
   if (consecutive >= LATENCY_SCOUT_CONSECUTIVE_ERRORS) {
-    needScout = true;
     needScoutReason =
       needScoutReason && /successive/i.test(needScoutReason)
         ? needScoutReason
@@ -193,9 +200,9 @@ function normalizeHealth(
     needScout = false;
     needScoutReason = null;
   }
-  // not_configured is sticky until a server success / reconfigure.
+  // not_configured stays visible until a server success / reconfigure. It no
+  // longer forces handoff: there is no host to hand off to.
   if (reason && /not configured/i.test(reason)) {
-    needScout = true;
     needScoutReason = reason;
   }
   return {
@@ -414,11 +421,15 @@ export async function refreshLatencySilenceFromDb(
     const consecutive = prev.consecutiveServerErrors;
     const stickyNotConfigured =
       !!prev.needScoutReason && /not configured/i.test(prev.needScoutReason);
-    const needScout =
-      stickyNotConfigured || consecutive >= LATENCY_SCOUT_CONSECUTIVE_ERRORS;
+    // Same rule as `normalizeHealth`: preserve what is stored, never derive a
+    // new handoff.  This refresh writes the map straight back to KV, so
+    // deriving here would persist a resurrected flag rather than just display
+    // one.
+    const overThreshold = consecutive >= LATENCY_SCOUT_CONSECUTIVE_ERRORS;
+    const needScout = prev.needScout;
     const needScoutReason = stickyNotConfigured
       ? prev.needScoutReason
-      : needScout
+      : overThreshold
         ? `server probe failed ${consecutive} successive times (threshold ${LATENCY_SCOUT_CONSECUTIVE_ERRORS})`
         : null;
     map[provider] = {
