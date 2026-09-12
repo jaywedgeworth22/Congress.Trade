@@ -9432,6 +9432,21 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
          created_at TEXT NOT NULL
        )`,
       `CREATE INDEX IF NOT EXISTS idx_dead_letter_created ON dead_letter_events(created_at)`,
+      // 0087_latency_price_snapshots.sql
+      `CREATE TABLE IF NOT EXISTS latency_price_snapshots (
+         trade_hash TEXT NOT NULL,
+         ticker TEXT NOT NULL,
+         provider TEXT NOT NULL,
+         event TEXT NOT NULL,
+         due_at TEXT NOT NULL,
+         captured_at TEXT,
+         price REAL,
+         source TEXT,
+         error TEXT,
+         created_at TEXT NOT NULL,
+         PRIMARY KEY (trade_hash, provider, event)
+       )`,
+      `CREATE INDEX IF NOT EXISTS idx_latency_price_due ON latency_price_snapshots (captured_at, due_at)`,
       // 0025_amendment_trump_deprecation.sql — soft-deprecate unamended Trump report rows superseded by amendment.
       `UPDATE transactions
           SET deprecated_at = '2026-07-28T17:00:00.000Z',
