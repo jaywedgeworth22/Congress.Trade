@@ -632,7 +632,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .benchmark-lineup { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; align-items:end; }
   .benchmark-lineup label { display:block; min-width:0; }
   .benchmark-lineup select { display:block; width:100%; margin-top:4px; }
-  @media (max-width:720px) {
+  @media (max-width:768px) {
     .benchmark-lineup { grid-template-columns:1fr; }
     .benchmark-toolbar > * { flex:1 1 150px; }
   }
@@ -3148,7 +3148,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
    The base 720px query (which hides .split, #trTickers td.est, .asset-cell
    .muted and abbreviates to "pol(s)") runs AFTER this block. Re-assert only the
    safe, width-neutral pieces; drop chrome that only makes sense with hover. */
-@media (max-width: 720px), (orientation: landscape) and (max-width: 950px) and (max-height: 520px) {
+@media (max-width: 768px), (orientation: landscape) and (max-width: 950px) and (max-height: 520px) {
   #view-trends .section::before,
   #view-trends .grid-cards .card::before { box-shadow: none; }
   #view-trends .ccard .chip,
@@ -3162,7 +3162,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   #view-trends .card .v .est-money,
   #view-trends .card .v small { color: inherit !important; }
 
-  @media (max-width: 720px), (hover: none) and (pointer: coarse) {
+  @media (max-width: 768px), (hover: none) and (pointer: coarse) {
     /* Keep the compact 52px header.  The old 14px 22px padding here made
        --ct-header-h (52px) lie, so sticky filters slid through the logo. */
     header.top { padding: 6px 10px 0; background: var(--panel); -webkit-backdrop-filter: none; backdrop-filter: none; }
@@ -3179,7 +3179,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   html.phone-chrome .acct-mobile { display: inline-flex !important; }
   html.phone-chrome .brand { margin-left: 1ch; }
   html.phone-chrome .brand-logo { width:280px; max-width:100%; height:auto; }
-  @media (max-width: 720px), (hover: none) and (pointer: coarse) {
+  @media (max-width: 768px), (hover: none) and (pointer: coarse) {
     .acct-desktop { display: none; }
     .acct-mobile { display: inline-flex; }
     .acct-mobile-menu {
@@ -3247,12 +3247,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <a class="brand" href="/?view=trends" aria-label="Congress.Trade - home" onclick="event.preventDefault(); showView('trends'); window.scrollTo({ top: 0 });">
     <img class="brand-logo" id="brandLogo" src="/assets/brand-logo-light.png?v=20" data-src-dark="/assets/brand-logo-dark.png?v=20" data-src-light="/assets/brand-logo-light.png?v=20" alt="Congress.Trade" width="1670" height="334" decoding="async" /></a>
   <nav class="tabs" role="tablist" aria-label="Primary views">
-    <a href="/?view=trends" data-view="trends" data-mobile="Trends" data-icon="📈" class="active" id="tab-trends" role="tab" aria-selected="true" aria-current="page" aria-controls="view-trends">Trends</a>
-    <a href="/?view=trades" data-view="trades" data-mobile="Trades" data-icon="☰" id="tab-trades" role="tab" aria-selected="false" aria-controls="view-trades">Trades</a>
-    <a href="/?view=people" data-view="people" data-mobile="Directory" data-icon="👥" id="tab-people" role="tab" aria-selected="false" aria-controls="view-people">Directory</a>
-    <a href="/?view=review" data-view="review" data-mobile="Review" data-icon="✓" id="tab-review" role="tab" aria-selected="false" aria-controls="view-review" data-admin-tab="true" title="Review Queue" hidden>Review Queue <span class="tab-count-badge" id="reviewTabBadge" hidden></span></a>
-    <a href="/?view=subs" data-view="subs" data-mobile="Delivery" data-icon="🔔" id="tab-subs" role="tab" aria-selected="false" aria-controls="view-subs">Delivery</a>
-    <a href="/?view=admin" data-view="admin" data-mobile="Admin" data-icon="⚙" id="tab-admin" role="tab" aria-selected="false" aria-controls="view-admin" data-admin-tab="true" title="Admin · Cadence" hidden>Admin · Cadence <span class="tab-count-badge" id="adminTabBadge" hidden></span></a>
+    <a href="/?view=trends" data-view="trends" data-mobile="Trends" data-icon="📈" class="active" id="tab-trends" role="tab" aria-selected="true" aria-current="page" aria-controls="view-trends" aria-label="Trends">Trends</a>
+    <a href="/?view=trades" data-view="trades" data-mobile="Trades" data-icon="☰" id="tab-trades" role="tab" aria-selected="false" aria-controls="view-trades" aria-label="Trades">Trades</a>
+    <a href="/?view=people" data-view="people" data-mobile="Directory" data-icon="👥" id="tab-people" role="tab" aria-selected="false" aria-controls="view-people" aria-label="Directory">Directory</a>
+    <a href="/?view=review" data-view="review" data-mobile="Review" data-icon="✓" id="tab-review" role="tab" aria-selected="false" aria-controls="view-review" data-admin-tab="true" title="Review Queue" aria-label="Review Queue" hidden>Review Queue <span class="tab-count-badge" id="reviewTabBadge" hidden></span></a>
+    <a href="/?view=subs" data-view="subs" data-mobile="Delivery" data-icon="🔔" id="tab-subs" role="tab" aria-selected="false" aria-controls="view-subs" aria-label="Delivery">Delivery</a>
+    <a href="/?view=admin" data-view="admin" data-mobile="Admin" data-icon="⚙" id="tab-admin" role="tab" aria-selected="false" aria-controls="view-admin" data-admin-tab="true" title="Admin · Cadence" aria-label="Admin · Cadence" hidden>Admin · Cadence <span class="tab-count-badge" id="adminTabBadge" hidden></span></a>
   </nav>
   <div id="acct" class="acct"></div>
   <!-- Shared filter row (Trades + Trends).  Owner punch list #9 merged the
@@ -3644,9 +3644,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </div>
       <div class="table-wrap people-table-wrap" id="peopleTableWrap"><table id="peopleTable" class="people-table">
         <thead><tr id="peopleHead">
-          <th scope="col" class="col-fill" data-sort="name" aria-sort="none" tabindex="0" role="button" title="Sort by name"><button type="button" class="th-sort-btn" onclick="sortPeopleDirectory('name')">Politician <span class="sort-ind" aria-hidden="true"></span></button></th>
-          <th scope="col" class="col-fit" data-sort="chamber" aria-sort="none" tabindex="0" role="button" title="Sort by branch, party, state"><button type="button" class="th-sort-btn" onclick="sortPeopleDirectory('chamber')">Branch • Party • State <span class="sort-ind" aria-hidden="true"></span></button></th>
-          <th scope="col" class="col-num" data-sort="trades" aria-sort="none" tabindex="0" role="button" title="Sort by trade count (all time)"><button type="button" class="th-sort-btn" onclick="sortPeopleDirectory('trades')">Trades <span class="sort-ind" aria-hidden="true"></span></button></th>
+          <th scope="col" class="col-fill" data-sort="name" aria-sort="none"><button type="button" class="th-sort-btn" onclick="sortPeopleDirectory('name')" title="Sort by name">Politician <span class="sort-ind" aria-hidden="true"></span></button></th>
+          <th scope="col" class="col-fit" data-sort="chamber" aria-sort="none"><button type="button" class="th-sort-btn" onclick="sortPeopleDirectory('chamber')" title="Sort by branch, party, state">Branch • Party • State <span class="sort-ind" aria-hidden="true"></span></button></th>
+          <th scope="col" class="col-num" data-sort="trades" aria-sort="none"><button type="button" class="th-sort-btn" onclick="sortPeopleDirectory('trades')" title="Sort by trade count (all time)">Trades <span class="sort-ind" aria-hidden="true"></span></button></th>
         </tr></thead>
         <tbody id="peopleBody"><tr><td colspan="3" class="state">Loading directory…</td></tr></tbody>
       </table></div>
@@ -3725,7 +3725,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     </div>
     <div class="section" id="subsManage">
       <h3>Delivery</h3>
-      <p class="sub" id="subsManageSub">Create signed webhook or SSE deliveries for your account.&nbsp; Secrets are shown once at creation; webhook consumers dedupe on <code>docId</code>.&nbsp; Pause stops events without removing the delivery; Delete removes it permanently.&nbsp; Edit filters anytime (Premium).</p>
+      <p class="sub" id="subsManageSub">Create signed webhook or SSE deliveries for your account.&nbsp; Secrets are shown once at creation; webhook consumers dedupe on <code>X-Subscription-Id</code> + <code>X-Tx-Id</code>.&nbsp; Pause stops events without removing the delivery; Delete removes it permanently.&nbsp; Edit filters anytime (Premium).</p>
       <div id="subsGate" class="note" role="status" aria-live="polite" style="margin:12px 0;padding:12px;border:1px solid var(--border, #ddd);border-radius:8px">
         Sign in with Google to manage Delivery. Creating a delivery also requires Premium.
       </div>
@@ -5194,25 +5194,25 @@ function lagCellHtml(r) {
 }
 var TRADES_COLS = [
   { id: 'traded', label: 'Date', sort: 'txdate', def: true, cls: 'muted', tip: 'Date the trade was executed.', cell: function (r) { return dateCellHtml(r.txdate); } },
-  { id: 'type', label: 'Type', sort: 'type', def: true, tip: 'Reported transaction type.', cell: function (r) { return actionBadge(r.type); } },
-  { id: 'member', label: 'Politician', sort: 'member', def: true, tip: 'Politician who filed the disclosure.', cell: memberCellHtml },
-  { id: 'asset', label: 'Asset', sort: 'asset', def: true, tip: 'Asset name as reported; hover truncated names to see the full text.', cell: assetCellHtml },
-  { id: 'amount', label: 'Amount', sort: 'min', def: true, tip: 'STOCK Act bracket - an estimate, not an exact figure.', cell: amountCellHtml },
-  { id: 'sector', label: 'Sector', sort: 'refSector', def: false, cls: 'muted', tip: 'Cross-referenced sector (FMP / SEC EDGAR). Blank until the asset is enriched.', cell: function (r) { return clipTextHtml(r.refSector); } },
-  { id: 'country', label: 'Country', sort: 'refCountry', def: false, defAdmin: true, cls: 'muted', tip: 'Country of issue from enriched reference data.', cell: function (r) { return clipTextHtml(r.refCountry); } },
+  { id: 'type', label: 'Type', sort: null, def: true, tip: 'Reported transaction type.', cell: function (r) { return actionBadge(r.type); } },
+  { id: 'member', label: 'Politician', sort: null, def: true, tip: 'Politician who filed the disclosure.', cell: memberCellHtml },
+  { id: 'asset', label: 'Asset', sort: null, def: true, tip: 'Asset name as reported; hover truncated names to see the full text.', cell: assetCellHtml },
+  { id: 'amount', label: 'Amount', sort: null, def: true, tip: 'STOCK Act bracket - an estimate, not an exact figure.', cell: amountCellHtml },
+  { id: 'sector', label: 'Sector', sort: null, def: false, cls: 'muted', tip: 'Cross-referenced sector (FMP / SEC EDGAR). Blank until the asset is enriched.', cell: function (r) { return clipTextHtml(r.refSector); } },
+  { id: 'country', label: 'Country', sort: null, def: false, defAdmin: true, cls: 'muted', tip: 'Country of issue from enriched reference data.', cell: function (r) { return clipTextHtml(r.refCountry); } },
   { id: 'imported', label: 'Imported', sort: 'imported', def: true, cls: 'muted', tier: 'admin', tip: 'When Congress.Trade imported each filing.', cell: function (r) { return dateTimeCellHtml(r.imported, 'When Congress.Trade imported each filing'); } },
   { id: 'latency', label: 'Latency', sort: null, def: true, cls: 'latency', tier: 'admin', tip: 'First detected time and extraction latency for primary rows.', cell: function (r) { return rowLatencyHtml(r); } },
-  { id: 'conf', label: 'Confidence', sort: 'conf', def: false, defAdmin: true, tier: 'admin', tip: 'Parser confidence after validation penalties.', cell: function (r) { return '<span class="conf ' + confClass(r.conf) + '">~' + (r.conf * 100).toFixed(0) + '%</span>'; } },
+  { id: 'conf', label: 'Confidence', sort: null, def: false, defAdmin: true, tier: 'admin', tip: 'Parser confidence after validation penalties.', cell: function (r) { return '<span class="conf ' + confClass(r.conf) + '">~' + (r.conf * 100).toFixed(0) + '%</span>'; } },
   { id: 'published', label: 'Seen', sort: 'published', def: false, cls: 'muted', tip: 'When Congress.Trade first learned about this trade. See "Imported" for when we finished storing it, and "Official Filed" for the source\\u2019s own disclosure date.', cell: seenCellHtml },
-  { id: 'lag', label: 'Lag', sort: 'lag', def: false, tip: 'Days between the trade and the filing (STOCK Act limit: 45).', cell: lagCellHtml },
-  { id: 'owner', label: 'Owner', sort: 'owner', def: false, cls: 'muted', tip: 'Beneficial owner code reported on the filing.', cell: function (r) { return clipTextHtml(ownerLabel(r.owner)); } },
-  { id: 'filed', label: 'Official Filed', sort: 'filed', def: false, cls: 'muted', tip: 'Official disclosure/report date. Historical rows may not include it yet.', cell: filedCellHtml },
-  { id: 'chamber', label: 'Chamber', sort: 'chamber', def: false, cls: 'muted', tip: 'House or Senate source chamber.', cell: function (r) { return clipTextHtml(ownerLabel(r.chamber)); } },
+  { id: 'lag', label: 'Lag', sort: null, def: false, tip: 'Days between the trade and the filing (STOCK Act limit: 45).', cell: lagCellHtml },
+  { id: 'owner', label: 'Owner', sort: null, def: false, cls: 'muted', tip: 'Beneficial owner code reported on the filing.', cell: function (r) { return clipTextHtml(ownerLabel(r.owner)); } },
+  { id: 'filed', label: 'Official Filed', sort: null, def: false, cls: 'muted', tip: 'Official disclosure/report date. Historical rows may not include it yet.', cell: filedCellHtml },
+  { id: 'chamber', label: 'Chamber', sort: null, def: false, cls: 'muted', tip: 'House or Senate source chamber.', cell: function (r) { return clipTextHtml(ownerLabel(r.chamber)); } },
   { id: 'notes', label: 'Notes', sort: null, def: false, cls: 'muted', tip: 'How we cleaned or filled the asset name (concise plain English).', cell: function (r) {
     var n = plainCleaningNote(r.cleaningNote || '');
     return clipTextHtml(n, '—', n);
   } },
-  { id: 'source', label: 'Source', sort: 'source', def: false, defAdmin: false, tier: 'admin', tip: 'Row provenance: primary official pipeline or historical seed import.', cell: function (r) { return clipTextHtml(sourceLabel(r.source), '—', sourceTitle(r.source)); } }
+  { id: 'source', label: 'Source', sort: null, def: false, defAdmin: false, tier: 'admin', tip: 'Row provenance: primary official pipeline or historical seed import.', cell: function (r) { return clipTextHtml(sourceLabel(r.source), '—', sourceTitle(r.source)); } }
 ];
 var COL_HIDDEN_KEY = 'feed-cols-hidden-v4';
 var COL_ORDER_KEY = 'feed-cols-order-v3';
@@ -5499,19 +5499,6 @@ function applySearchToServerParams(p, q) {
   // If nothing classified, send whole string as memberName so server still narrows
   if (!tickerHint && !nameBits.length) p.set('memberName', raw);
 }
-function makeTradesFilterMatcher() {
-  var q = tradesSearchQuery();
-  var ty = selectedSideParam('qSideGroup'), chs = chipSel('qChamber');
-  // Mirror the server's semantics: no HSP selection (empty param) = all
-  // branches, including unresolved-chamber rows. Explicit chips filter exactly.
-  var chDefault = chamberParam('qChamber') === '';
-  var sides = ty ? ty.split(',') : [];
-  return function (r) {
-    if (!chDefault && chs.indexOf(r.chamber) < 0) return false;
-    if (sides.length && sides.indexOf(r.type) < 0) return false;
-    return tradeRowMatchesSearch(r, q);
-  };
-}
 // See the .row-open-btn CSS comment above for why this exists: a real,
 // named control dropped into a clickable table row's first cell, invisible
 // at rest and popped into view on keyboard focus.
@@ -5519,7 +5506,7 @@ function rowOpenBtnHtml(attrName, attrValue, label) {
   return '<button type="button" class="row-open-btn" ' + attrName + '="' + esc(attrValue) + '">' + esc(label) + '</button>';
 }
 function renderTrades() {
-  var matchesActiveFilters = makeTradesFilterMatcher();
+  
   var body = el('tradesBody');
   var cards = el('tradesCards');
   var cols = visibleCols();
@@ -5538,7 +5525,7 @@ function renderTrades() {
     // De-duplicated default (#1453): primary + historic seed rows can double
     // count the same real-world trade — Primary Only hides the seed copies.
     if (primaryOnly && r.source === 'seed_dataset') return false;
-    return matchesActiveFilters(r);
+    return true;
   });
   rows = sortRows(rows);
   if (rows.length === 0) {
@@ -6152,7 +6139,7 @@ function syncFilterUrl() {
       if (kv[1] && !(kv[0] === 'fw' && kv[1] === '90d')) u.searchParams.set(kv[0], kv[1]);
       else u.searchParams.delete(kv[0]);
     });
-    window.history.replaceState({}, '', u.pathname + u.search + u.hash);
+    window.history.pushState({ view: b.dataset.view }, '', u.pathname + u.search + u.hash);
   } catch (e) {}
 }
 function restoreFiltersFromUrl() {
@@ -8492,8 +8479,10 @@ function editInfisicalSecret(btn) {
     '<option value="app"' + (scope === 'app' ? ' selected' : '') + '>app</option>' +
     '<option value="shared"' + (scope === 'shared' ? ' selected' : '') + '>shared</option>' +
     '</select>' +
+    '<form style="display:contents" onsubmit="event.preventDefault(); updateInfisicalSecret(&quot;' + key + '&quot;);">' +
     '<input type="password" id="secret-val-' + key + '" class="input sm" placeholder="New Value" style="max-width:140px; margin:0;" />' +
-    '<button class="btn sm" onclick="updateInfisicalSecret(&quot;' + key + '&quot;)">Save</button>' +
+    '<button class="btn sm" type="submit">Save</button>' +
+    '</form>' +
     '<button class="btn ghost sm" onclick="loadDiagnostics()">Cancel</button>' +
   '</div>';
   var input = el('secret-val-' + key);
@@ -12993,6 +12982,7 @@ function startCheckout() {
     return;
   }
   if (!ME.user) {
+    try { sessionStorage.setItem('ct-checkout-intent', selectedPlan); } catch (e) {}
     closePricing(); openLogin(); el('loginMsg').textContent = 'Sign in to start your Premium trial.';
     return;
   }
@@ -13158,7 +13148,16 @@ function handleAuthQueryParams() {
   var p = new URLSearchParams(window.location.search);
   var login = p.get('login'), checkout = p.get('checkout');
   var billing = p.get('billing');
-  if (login === 'ok') showToast('Signed in.');
+  if (login === 'ok') {
+    showToast('Signed in.');
+    try {
+      var intent = sessionStorage.getItem('ct-checkout-intent');
+      if (intent === 'monthly' || intent === 'annual') {
+        sessionStorage.removeItem('ct-checkout-intent');
+        window.__pendingCheckoutIntent = intent;
+      }
+    } catch (e) {}
+  }
   else if (login === 'error') showToast('Sign-in failed — please try again.', true);
   else if (login === 'expired') showToast('That sign-in session expired.  Try Google or Apple again.', true);
   else if (login === 'unverified') showToast('Sign-in failed.  Verify your email with Google first.', true);
@@ -13206,6 +13205,38 @@ function handleAuthQueryParams() {
   }, true);
   window.addEventListener('scroll', closeTip, true);
 }());
+
+
+window.addEventListener('popstate', function (e) {
+  var urlParams = new URLSearchParams(window.location.search);
+  var view = urlParams.get('view') || 'trends';
+  var btn = document.querySelector('nav.tabs a[data-view="' + view + '"]');
+  if (btn) {
+    document.querySelectorAll('nav.tabs a').forEach(function (x) { x.classList.remove('active'); x.setAttribute('aria-selected', 'false'); x.removeAttribute('aria-current'); });
+    document.querySelectorAll('.view').forEach(function (v) { v.classList.remove('active'); v.setAttribute('aria-hidden', 'true'); });
+    btn.classList.add('active');
+    btn.setAttribute('aria-selected', 'true');
+    btn.setAttribute('aria-current', 'page');
+    if (TAB_PAGE_TITLES[view]) setDocumentTitle(TAB_PAGE_TITLES[view]);
+    try { localStorage.setItem('ct-active-tab', view); } catch (e) {}
+    document.documentElement.setAttribute('data-view', view);
+    var viewEl = el('view-' + view);
+    if (viewEl) { viewEl.classList.add('active'); viewEl.setAttribute('aria-hidden', 'false'); }
+    if (view === 'trades') {
+      requestAnimationFrame(function () {
+        syncTradesTableWidth();
+      });
+    }
+  }
+  
+  if (typeof restoreFiltersFromUrl === 'function') {
+    restoreFiltersFromUrl();
+  }
+  
+  if (view === 'trades' && typeof fetchPage === 'function') {
+    fetchPage();
+  }
+});
 
 /* ============================ TABS + BOOT ============================ */
 function showView(name, scrollId) {
@@ -14011,6 +14042,10 @@ function resolveViewId(raw) {
 // Load user identity/permissions, then restore the saved tab so admin-gated tabs fallback properly if needed
 applyAdminVisibility(); // anon default: html.ct-admin off until /auth/me says otherwise
 loadMe().then(function () {
+  if (window.__pendingCheckoutIntent && ME.user) {
+    selectedPlan = window.__pendingCheckoutIntent;
+    startCheckout();
+  }
   if (canUseAdmin()) loadReview(); // account state + admin tab visibility
   if (canUseAdmin()) loadPollConfig(); // poll-mode KPI — session-based admin resolved after boot
   loadExtractionIncident();
