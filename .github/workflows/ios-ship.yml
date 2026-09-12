@@ -191,7 +191,7 @@ jobs:
           bash "$GITHUB_WORKSPACE/scripts/ios-appstore-gm-prepare.sh"
 
       - name: Report runtime ios-fleet drift (advisory)
-        if: steps.gate.outputs.should_ship == '1' && hashFiles('/Users/jay/apps/ios-fleet/ship-testflight.sh') != ''
+        if: steps.gate.outputs.should_ship == '1'
         run: |
           set -uo pipefail
           if out="$(bash "$GITHUB_WORKSPACE/scripts/ios-fleet/check-drift.sh" 2>&1)"; then
