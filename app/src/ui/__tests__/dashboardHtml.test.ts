@@ -247,10 +247,10 @@ describe('DASHBOARD_HTML', () => {
     // The former "Live Feed" tab is now labelled "Trades" — canonical id is
     // now "trades" too (owner follow-up batch #25), not the pre-rename "feed".
     expect(DASHBOARD_HTML).toContain('data-view="trades" data-mobile="Trades"');
-    expect(DASHBOARD_HTML).toContain('aria-controls="view-trades">Trades</a>');
+    expect(DASHBOARD_HTML).toContain('aria-controls="view-trades" aria-label="Trades">Trades</a>');
     // People tab is Directory (owner rename); view id stays "people" for deep links.
     expect(DASHBOARD_HTML).toContain('data-view="people" data-mobile="Directory"');
-    expect(DASHBOARD_HTML).toContain('aria-controls="view-people">Directory</a>');
+    expect(DASHBOARD_HTML).toContain('aria-controls="view-people" aria-label="Directory">Directory</a>');
     // Trends is warmed on boot since it is the landing view.
     expect(DASHBOARD_HTML).toContain('loadTrends(); // Trends is the default landing view');
   });
