@@ -337,7 +337,7 @@ export function parseHouseSearchHtml(html: string, defaultYear: string): HouseFi
 }
 
 /** Build the POST body for the House live member search. */
-export function buildHouseSearchBody(year: number | string): URLSearchParams {
+export function buildHouseSearchBody(year: number | string, offset: number = 0, limit: number = 100): URLSearchParams {
   const body = new URLSearchParams();
   // Empty name => all members; FilingYear scopes to the requested year. The form
   // exposes a few more fields (State/District) that we intentionally leave blank.
@@ -345,6 +345,13 @@ export function buildHouseSearchBody(year: number | string): URLSearchParams {
   body.set('FilingYear', String(year));
   body.set('State', '');
   body.set('District', '');
+  body.set('FilingType', 'P'); // Periodic
+  
+  // DataTables API pagination offset traversal
+  body.set('draw', '1');
+  body.set('start', String(offset));
+  body.set('length', String(limit));
+  
   return body;
 }
 
@@ -465,19 +472,47 @@ export async function pollHouseLiveSearch(
         ? `${effectiveProxyUrl}${encodeURIComponent(HOUSE_SEARCH_RESULT)}`
         : HOUSE_SEARCH_RESULT;
 
-      const res = await trackedFetch(postTargetUrl, {
-        method: 'POST',
-        headers: postHeaders,
-        body: buildHouseSearchBody(year).toString(),
-        signal: opts.signal,
-      }, { service: 'filing-discovery', operation: 'search-house-filings' }, fetchImpl);
+      let allFilings: HouseFiling[] = [];
+      const seenDocIds = new Set<string>();
+      let offset = 0;
+      const limit = 100;
+      
+      while (true) {
+        const res = await trackedFetch(postTargetUrl, {
+          method: 'POST',
+          headers: postHeaders,
+          body: buildHouseSearchBody(year, offset, limit).toString(),
+          signal: opts.signal,
+        }, { service: 'filing-discovery', operation: 'search-house-filings' }, fetchImpl);
 
-      if (!res.ok) {
-        throw new Error(`house live search -> HTTP ${res.status}`);
+        if (!res.ok) {
+          throw new Error(`house live search -> HTTP ${res.status}`);
+        }
+
+        const html = await res.text();
+        const pageFilings = parseHouseSearchHtml(html, String(year));
+        
+        let newItems = 0;
+        for (const f of pageFilings) {
+          if (!seenDocIds.has(f.docId)) {
+            seenDocIds.add(f.docId);
+            allFilings.push(f);
+            newItems++;
+          }
+        }
+        
+        // If the server ignores offset and returns the whole set, newItems will be 0 on the second iteration
+        if (newItems === 0 || pageFilings.length < limit) {
+          break;
+        }
+        
+        offset += limit;
+        if (baseDelay > 0) {
+          await delay(baseDelay, opts.signal);
+        }
       }
-
-      const html = await res.text();
-      return parseHouseSearchHtml(html, String(year));
+      
+      return allFilings;
     } catch (err) {
       if (opts.signal?.aborted) throw err;
       lastError = err as Error;
