@@ -109,6 +109,15 @@ jobs:
               ;;
           esac
 
+      - name: Assert XcodeGen drift
+        run: |
+          cd clients/ios
+          xcrun xcodegen generate
+          git diff --exit-code CongressTrade.xcodeproj || {
+            echo "::error::XcodeGen project drifted. Run 'xcrun xcodegen' locally and commit the result."
+            exit 1
+          }
+
       - name: Build CongressTrade (generic iOS device, unsigned)
         run: |
           xcodebuild build \
