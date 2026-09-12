@@ -62,6 +62,16 @@ struct PoliticianDetailView: View {
                                 ].compactMap { $0 }.joined(separator: " · "))
                                     .font(.subheadline)
                                     .foregroundStyle(.secondary)
+                                
+                                let memberConflicts = store.conflicts.filter { $0.bioguideId == memberId }
+                                if !memberConflicts.isEmpty {
+                                    HStack {
+                                        ForEach(Array(Set(memberConflicts.map { $0.committeeCode })).sorted(), id: \.self) { code in
+                                            StatusPill(text: code, color: .orange, icon: "exclamationmark.triangle.fill", compact: true)
+                                        }
+                                    }
+                                    .padding(.top, 4)
+                                }
                             }
                         }
                         .padding(.top, 16)

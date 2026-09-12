@@ -180,6 +180,8 @@ struct TrendsView: View {
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
                     .presentationCornerRadius(18)
+                    .presentationContentInteraction(.resizes)
+                    .iPadFullWidthSheet()
             }
             .sheet(item: $selectedPolitician) { target in
                 PoliticianDetailView(
@@ -190,6 +192,8 @@ struct TrendsView: View {
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
                     .presentationCornerRadius(18)
+                    .presentationContentInteraction(.resizes)
+                    .iPadFullWidthSheet()
             }
         }
     }
