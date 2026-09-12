@@ -50,7 +50,7 @@ const UnknownRowsEnvelopeSchema = z.object({
   rows: z.array(z.unknown()),
 });
 
-function parseResponse<T>(schema: z.ZodType<T>, value: unknown, label: string): T {
+function parseResponse<Schema extends z.ZodTypeAny>(schema: Schema, value: unknown, label: string): z.infer<Schema> {
   const result = schema.safeParse(value);
   if (!result.success) {
     throw new Error(`Invalid ${label} response: ${result.error.message}`);
