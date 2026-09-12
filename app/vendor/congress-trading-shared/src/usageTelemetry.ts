@@ -93,7 +93,7 @@ export const UsageTelemetryMetadataSchema = z.record(
   for (const [rawKey, rawValue] of Object.entries(metadata).slice(0, 50)) {
     const key = rawKey.trim().slice(0, 80);
     if (!key) continue;
-    clean[key] = typeof rawValue === "string" ? rawValue.slice(0, 500) : rawValue;
+    clean[key] = typeof rawValue === "string" ? rawValue.slice(0, 500) : (rawValue as string | number | boolean | null);
   }
   return clean;
 });
