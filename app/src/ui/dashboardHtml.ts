@@ -3653,9 +3653,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <p class="note" id="peopleCount"></p>
       <div class="table-wrap people-table-wrap" id="assetsTableWrap" style="display:none"><table id="assetsTable" class="people-table">
         <thead><tr id="assetsHead">
-          <th scope="col" class="col-fill" data-sort="name" aria-sort="none" tabindex="0" role="button" onclick="sortAssetsDirectory('name')" title="Sort by asset">Asset <span class="sort-ind" aria-hidden="true"></span></th>
-          <th scope="col" class="col-num" data-sort="trades" aria-sort="none" tabindex="0" role="button" onclick="sortAssetsDirectory('trades')" title="Sort by trade count (all time)">Trades <span class="sort-ind" aria-hidden="true"></span></th>
-          <th scope="col" class="col-num" data-sort="members" aria-sort="none" tabindex="0" role="button" onclick="sortAssetsDirectory('members')" title="Sort by politician count (all time)">Politicians <span class="sort-ind" aria-hidden="true"></span></th>
+          <th scope="col" class="col-fill" data-sort="name" aria-sort="none"><button type="button" class="th-sort-btn" onclick="sortAssetsDirectory('name')" title="Sort by asset">Asset <span class="sort-ind" aria-hidden="true"></span></button></th>
+          <th scope="col" class="col-num" data-sort="trades" aria-sort="none"><button type="button" class="th-sort-btn" onclick="sortAssetsDirectory('trades')" title="Sort by trade count (all time)">Trades <span class="sort-ind" aria-hidden="true"></span></button></th>
+          <th scope="col" class="col-num" data-sort="members" aria-sort="none"><button type="button" class="th-sort-btn" onclick="sortAssetsDirectory('members')" title="Sort by politician count (all time)">Politicians <span class="sort-ind" aria-hidden="true"></span></button></th>
         </tr></thead>
         <tbody id="assetsBody"><tr><td colspan="3" class="state">Loading directory…</td></tr></tbody>
       </table></div>
