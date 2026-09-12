@@ -772,7 +772,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('function handleTradesOpenEvent(');
     expect(DASHBOARD_HTML).toContain('function handleEntityOpenEvent(');
     expect(DASHBOARD_HTML).toContain("document.addEventListener('click'");
-    expect(DASHBOARD_HTML).toContain('@media (max-width: 720px)');
+    expect(DASHBOARD_HTML).toContain('@media (max-width: 768px)');
     expect(DASHBOARD_HTML).toContain('(orientation: landscape) and (max-width: 950px)');
     expect(DASHBOARD_HTML).toContain('env(safe-area-inset-bottom)');
     expect(DASHBOARD_HTML).toContain('grid-template-columns: minmax(0, 1fr)');
@@ -3502,7 +3502,7 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
     expect(DASHBOARD_HTML).toContain('function lastTradesPage(');
   });
 
-  it('gives mobile (<=720px) a hamburger menu instead of the theme-toggle/Sign-In/Upgrade cluster', () => {
+  it('gives mobile (<=768px) a hamburger menu instead of the theme-toggle/Sign-In/Upgrade cluster', () => {
     expect(DASHBOARD_HTML).toContain('.acct-desktop { display: none; }');
     expect(DASHBOARD_HTML).toContain('.acct-mobile { display: inline-flex; }');
     expect(DASHBOARD_HTML).toContain('class="acct-desktop"');
@@ -3773,8 +3773,8 @@ describe('design convergence — filter chrome + card restyle (issue #1529)', ()
     expect(document.querySelector('#tradesCountMsgTop')).not.toBeNull();
   });
 
-  it('keeps the ≤720px hamburger-swap and ≤768px table/card-swap breakpoints distinct', () => {
-    expect(DASHBOARD_HTML).toContain('@media (max-width: 720px), (hover: none) and (pointer: coarse)');
+  it('keeps the ≤768px hamburger-swap and ≤768px table/card-swap breakpoints distinct', () => {
+    expect(DASHBOARD_HTML).toContain('@media (max-width: 768px), (hover: none) and (pointer: coarse)');
     expect(DASHBOARD_HTML).toContain('.acct-desktop { display: none; }');
     expect(DASHBOARD_HTML).toContain('.acct-mobile { display: inline-flex; }');
     expect(DASHBOARD_HTML).toContain('@media (max-width: 768px), (orientation: landscape) and (max-width: 950px) and (max-height: 520px), (hover: none) and (pointer: coarse)');
@@ -4485,7 +4485,7 @@ describe('MONET web punch list 2 (LANE W1)', () => {
   it('#5 tightens the mobile bottom clearance and guarantees the footer clears the fixed tab bar', () => {
     // General <=768px clearance: 86px -> 70px (nav.tabs is ~60px tall).
     expect(DASHBOARD_HTML).toContain('padding-bottom: calc(70px + env(safe-area-inset-bottom)); }');
-    // The <=720px block used a `padding:` SHORTHAND that silently reset
+    // The <=768px block used a `padding:` SHORTHAND that silently reset
     // padding-bottom to 22px for nearly every phone (a real regression, not
     // just "overshoot") — it now re-asserts the same 70px explicitly.
     expect(DASHBOARD_HTML).toContain('main { padding: 0 14px; padding-bottom: calc(70px + env(safe-area-inset-bottom)); }');
@@ -6552,9 +6552,9 @@ describe('web chrome column + Trends flow rows (owner 2026-09-08)', () => {
     // (no header-height jump for the sticky filter offset).
     expect(DASHBOARD_HTML).toContain('alt="Congress.Trade" width="1670" height="334" decoding="async" />');
     // Both phone blocks carry the reset: the <=768px grid header and the
-    // <=720px / coarse-pointer block (anchored on their neighbouring rules).
+    // <=768px / coarse-pointer block (anchored on their neighbouring rules).
     // Phones (owner 2026-09-08: larger there too): the wordmark fills the
-    // brand cell up to 280px; the <=768px grid block, the <=720px / coarse
+    // brand cell up to 280px; the <=768px grid block, the <=768px / coarse
     // block and phone-chrome all carry it.
     expect(DASHBOARD_HTML).toContain('    .brand-logo { width:280px; max-width:100%; height:auto; }\n    /* Replace the theme-toggle');
     expect(DASHBOARD_HTML).toContain("control keeps its own column, so it never gets squeezed off. */\n    .brand-logo { width:280px; max-width:100%; height:auto; }");
@@ -6598,7 +6598,7 @@ describe('Committee Sector Conflicts table (owner 2026-09-08)', () => {
   it('uses a fixed-layout colgroup so the committee text cannot balloon the table', () => {
     expect(DASHBOARD_HTML).toContain('<table class="conflicts-table" id="tableTrConflicts">');
     expect(DASHBOARD_HTML).toContain('<colgroup><col class="c-pol"><col class="c-com"><col class="c-sec"><col class="c-ast"><col class="c-side"><col class="c-est"></colgroup>');
-    expect(DASHBOARD_HTML).toContain('#view-trends .conflicts-table { table-layout: fixed; width: 100%; min-width: 720px; }');
+    expect(DASHBOARD_HTML).toContain('#view-trends .conflicts-table { table-layout: fixed; width: 100%; min-width: 768px; }');
     expect(DASHBOARD_HTML).toContain('#view-trends .conflicts-table .c-pol { width: 23%; }');
     expect(DASHBOARD_HTML).toContain('#view-trends .conflicts-table .c-com { width: 32%; }');
     expect(DASHBOARD_HTML).toContain('#view-trends .conflicts-table .c-sec { width: 17%; }');
