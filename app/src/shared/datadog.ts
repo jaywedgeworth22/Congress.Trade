@@ -92,7 +92,7 @@ export async function tryInitDdTracer(backend: DatadogBackendConfig): Promise<Dd
   if (activeTracer) return activeTracer;
   try {
     const mod = await import('npm:dd-trace');
-    const tracer = (mod.default || mod) as DdTracer;
+    const tracer = (mod.default || mod) as unknown as DdTracer;
     const proc = (globalThis as any).process;
     if (proc?.env) {
       if (backend.agentUrl) {
