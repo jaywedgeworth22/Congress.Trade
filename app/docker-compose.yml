@@ -46,7 +46,6 @@ services:
     environment:
       - DENO_KV_PATH=/data/congress-trade/kv.sqlite
       - PORT=5000
-      - CT_COST_PROFILE=paid
       - CT_TICK_DEADLINE_MS=120000
     # deno:alpine ships wget, not curl. Coolify/cmd healthchecks that call
     # /usr/bin/curl mark the stack exited:unhealthy → public 502 even when
