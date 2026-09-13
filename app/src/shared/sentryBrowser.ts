@@ -100,12 +100,13 @@ export function renderSentryBrowserScript(env: SentryBrowserInput | undefined): 
   ];
   if (resolved.feedbackEnabled) {
     integrations.push(
-      "Sentry.feedbackIntegration({colorScheme:'light',autoInject:true,showBranding:false,buttonLabel:'Report a problem',submitButtonLabel:'Send',formTitle:'Report a problem'})",
+      "Sentry.feedbackIntegration({colorScheme:'light',autoInject:false,showBranding:false,buttonLabel:'Report a Problem',submitButtonLabel:'Send',formTitle:'Report a Problem'})",
     );
   }
   return [
     '<script>',
     '(function(){',
+    'window.openSentryFeedback=function(){try{var f=window.Sentry&&window.Sentry.getFeedback&&window.Sentry.getFeedback();if(f&&f.createForm){f.createForm().then(function(form){form.appendToDom();form.open();}).catch(function(){});}}catch(e){}};',
     'var n=document.createElement("script");',
     'n.async=1;n.crossOrigin="anonymous";',
     'n.src=' + jsonLiteral(resolved.scriptSrc) + ';',

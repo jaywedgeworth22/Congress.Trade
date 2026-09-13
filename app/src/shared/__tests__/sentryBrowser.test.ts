@@ -34,6 +34,9 @@ describe('sentry browser loader', () => {
     const html = renderSentryBrowserScript({ SENTRY_DSN: DSN });
     expect(html).toContain('replaysSessionSampleRate":0.1');
     expect(html).toContain('feedbackIntegration');
+    expect(html).toContain('autoInject:false');
+    expect(html).toContain("formTitle:'Report a Problem'");
+    expect(html).toContain('window.openSentryFeedback=function');
     expect(html).toContain('maskAllText:true');
   });
 
