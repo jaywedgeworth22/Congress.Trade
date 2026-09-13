@@ -152,6 +152,8 @@ const libsqlClient = createClient({
 
 // Execute connection pragmas for performance and concurrency resilience
 async function initSqlite(client: typeof libsqlClient) {
+  await client.execute("PRAGMA journal_mode = WAL;").catch(() => {});
+  await client.execute("PRAGMA foreign_keys = ON;").catch(() => {});
   await client.execute("PRAGMA busy_timeout = 10000;").catch(() => {});
   await client.execute("PRAGMA synchronous = NORMAL;").catch(() => {});
   await client.execute("PRAGMA cache_size = -64000;").catch(() => {});
