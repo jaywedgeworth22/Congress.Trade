@@ -4012,6 +4012,7 @@ ${speedProofSectionHtml(true)}
       <a href="/beta" target="_blank" rel="noopener noreferrer">iOS Beta</a>
       <a href="/api/feed.xml" rel="alternate" type="application/rss+xml">RSS</a>
       <a href="mailto:support@congress.trade">Support</a>
+      <a href="#" onclick="if(window.openSentryFeedback){window.openSentryFeedback();}else if(window.Sentry&amp;&amp;window.Sentry.getFeedback){try{window.Sentry.getFeedback().createForm().then(function(f){f.appendToDom();f.open();});}catch(e){}}return false;">Report a Problem</a>
     </span>
   </footer>
 </main>
