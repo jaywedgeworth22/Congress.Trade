@@ -344,8 +344,8 @@ export async function buildPremiumRoster(env: Env): Promise<PremiumRosterRespons
       const customerId = customerIdOf(live);
       members.push({
         userId: live.metadata?.userId ?? null,
-        email: customerEmail(live) || 'Stripe Customer (No Local Account)',
-        name: customerName(live),
+        email: customerEmail(live.customer) || 'Stripe Customer (No Local Account)',
+        name: customerName(live.customer),
         plan: planLabel(null),
         billing: stripeBilling(status),
         source: 'Stripe',

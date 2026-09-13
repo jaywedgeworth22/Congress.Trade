@@ -89,7 +89,7 @@ export function buildBillingRouter(): Hono<{ Bindings: Env }> {
 
   // --- GET /billing/status ------------------------------------------------
   r.get('/status', async (c) => {
-    const user = await getCurrentUser(c);
+    const user = await getCurrentUserFromRequest(c);
     return c.json({
       ...(await billingCapabilitiesAsync(c.env)),
       hasCustomer: Boolean(user?.stripeCustomerId),
@@ -99,7 +99,7 @@ export function buildBillingRouter(): Hono<{ Bindings: Env }> {
 
   // --- POST /billing/checkout ---------------------------------------------
   r.post('/checkout', async (c) => {
-    const user = await getCurrentUser(c);
+    const user = await getCurrentUserFromRequest(c);
     if (!user) return c.json({ error: 'sign in to subscribe', needLogin: true }, 401);
     if (!(await checkoutConfiguredAsync(c.env))) return c.json({ error: 'checkout not configured' }, 503);
 
@@ -163,7 +163,7 @@ export function buildBillingRouter(): Hono<{ Bindings: Env }> {
   // Grant through the ledger only, with the same verify + revoke-resurrect
   // checks as redeem_apple_purchase / anonymous redeem.
   r.post('/apple/confirm', async (c) => {
-    const user = await getCurrentUser(c);
+    const user = await getCurrentUserFromRequest(c);
     if (!user) return c.json({ error: 'sign in to subscribe', needLogin: true }, 401);
     let body: Record<string, unknown>;
     try {
