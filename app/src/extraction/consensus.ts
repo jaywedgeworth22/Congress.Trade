@@ -233,11 +233,27 @@ function voteField(
     }
     bloc.models.push(model);
   }
+  
+  const isPlaceholderKey = (k: string) =>
+    field === 'amount' && (!k || k === '|' || k === 'N/A' || k === '-' || k === 'UNKNOWN');
+  let hasValid = false;
+  let invalidVotes = 0;
+  for (const [key, bloc] of blocs.entries()) {
+    if (!isPlaceholderKey(key)) {
+      hasValid = true;
+    } else {
+      invalidVotes += bloc.models.length;
+    }
+  }
 
   // Largest bloc, ties broken by sorted vote key for determinism.
   let top: { rawValue: FieldValue; models: string[] } | null = null;
   let secondVotes = 0;
-  for (const [, bloc] of [...blocs].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))) {
+  
+  const sortedBlocs = [...blocs.entries()].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  for (const [key, bloc] of sortedBlocs) {
+    if (hasValid && isPlaceholderKey(key)) continue; // exclude from winning
+    
     if (!top || bloc.models.length > top.models.length) {
       secondVotes = top ? top.models.length : 0;
       top = { rawValue: bloc.rawValue, models: bloc.models };
@@ -245,8 +261,11 @@ function voteField(
       secondVotes = bloc.models.length;
     }
   }
+  
   const topVotes = top ? top.models.length : 0;
-  const hasMajority = topVotes * 2 > total;
+  const effectiveTotal = hasValid ? total - invalidVotes : total;
+  
+  const hasMajority = topVotes * 2 > effectiveTotal;
   const uniquePlurality = topVotes >= 2 && topVotes > secondVotes;
   const allowPlurality =
     field === 'assetName'
@@ -266,7 +285,7 @@ function voteField(
     return {
       value: top.rawValue,
       votes: topVotes,
-      total,
+      total: effectiveTotal,
       dissenters,
       unanimous: topVotes === total,
     };
@@ -276,7 +295,7 @@ function voteField(
   const dissenters = present
     .map((p) => ({ model: p.model, value: rawFieldValue(p.tx, field) }))
     .sort(byModel);
-  return { value: null, votes: topVotes, total, dissenters, unanimous: false };
+  return { value: null, votes: topVotes, total: effectiveTotal, dissenters, unanimous: false };
 }
 
 /**

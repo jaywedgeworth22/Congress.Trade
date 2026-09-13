@@ -70,7 +70,7 @@ const TICKER_SUFFIX_RE = new RegExp(String.raw`\((${TICKER_PATTERN})\)\s*$`);
 // in the surrounding boilerplate (legal prose is full of "<digit> <word>"
 // sequences — e.g. "5 U.S.C. app. section 101 et seq." — that would
 // otherwise be indistinguishable from a real row's leading "# ").
-const TABLE_HEADER_RE = /#\s*DESCRIPTION\s+TYPE\s+DATE\s+NOTIFICATION\s+RECEIVED\s+OVER\s+30\s+DAYS\s+AGO\s+AMOUNT/i;
+const TABLE_HEADER_RE = /#\s*[\.,:;]?\s*DESCRIPTION\s+TYPE\s+DATE\s+NOTIFICATION\s+RECEIVED\s+OVER\s+30\s+DAYS\s+AGO\s+AMOUNT/i;
 
 // One flat transaction row, scanned globally over the (whitespace-normalized,
 // header-anchored) document text rather than split by line — see the module
@@ -84,7 +84,7 @@ const TABLE_HEADER_RE = /#\s*DESCRIPTION\s+TYPE\s+DATE\s+NOTIFICATION\s+RECEIVED
 // anchor (e.g. scanning without TABLE_HEADER_RE found) fails fast instead of
 // swallowing hundreds of characters of prose to reach a later real row.
 const ROW_RE =
-  /(?<![\d,.])\d{1,3}\s+(.{1,200}?)\s+(Purchase|Sale|Exchange)\s+(\d{1,2}\/\d{1,2}\/\d{2,4})\s+(?:Yes|No)\s+(\$[\d,]+(?:\.\d+)?(?:\s*(?:-|–|—|to)\s*\$?[\d,]+(?:\.\d+)?|\s*\+)?)/gi;
+  /(?<![\d,.])\d{1,3}[\.,:;]?\s+(.{1,200}?)\s+(Purchase|Sale|Exchange)\s+(\d{1,2}\/\d{1,2}\/\d{2,4})\s+(?:Yes|No)\s+(\$[\d,]+(?:\.\d+)?(?:\s*(?:-|–|—|to)\s*\$?[\d,]+(?:\.\d+)?|\s*\+)?)/gi;
 
 const TX_TYPE_MAP: Record<string, TxType> = {
   purchase: 'B',

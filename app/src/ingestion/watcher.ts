@@ -394,7 +394,7 @@ export async function insertFilingIfNew(
         ],
       );
       upgradedProviderSeed = (upgrade.meta?.changes ?? 0) > 0;
-    } else if (existingRow && existingRow.ingest_status === 'not_found') {
+    } else if (existingRow && (existingRow.ingest_status === 'not_found' || existingRow.ingest_status === 'failed')) {
       // Unblock official filings that collided with prior frontier-probe phantoms
       // (observed 2026-07-30 sequential burst H-2026-20035076..20035975, e.g.
       // Cisneros H-2026-20035190, Taylor H-2026-20035146 / H-2026-20035392).
@@ -417,7 +417,7 @@ export async function insertFilingIfNew(
               source_updated_at = NULL,
               error = NULL
         WHERE doc_id = ?
-          AND ingest_status = 'not_found'
+          AND ingest_status IN ('not_found', 'failed')
           AND raw_object_key IS NULL`,
         [
           f.chamber,

@@ -361,4 +361,22 @@ describe('buildConsensusRows', () => {
     expect(summary.models).toEqual(['m1', 'm2']);
     expect(summary.perFieldAgreementPct.amount).toBe(0);
   });
+
+  it('does not allow null/placeholder amounts to defeat a valid extraction (#2364)', () => {
+    const valid = tx({ amountMin: 1001, amountMax: 15000 });
+    const nullAmount1 = tx({ amountMin: null, amountMax: null });
+    const nullAmount2 = tx({ amountMin: null, amountMax: null });
+    const runs = [
+      run('m1', [valid]),
+      run('m2', [nullAmount1]),
+      run('m3', [nullAmount2]),
+    ];
+    const { rows } = buildConsensusRows(runs);
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
+    expect(row.fields.amount.value).toEqual({ amountMin: 1001, amountMax: 15000 });
+    expect(row.fields.amount.votes).toBe(1);
+    expect(row.fields.amount.total).toBe(1);
+    expect(row.rowConsensus).toBe('majority');
+  });
 });
