@@ -92,13 +92,14 @@ is configured.  `ADMIN_OPEN_IN_DEV="true"` is local-only, and
 `SENTRY_ENVIRONMENT` / `USAGE_MONITOR_ENVIRONMENT` in `wrangler.toml` `[vars]`
 must be overridden in `.dev.vars` or the run is treated as production.
 
-### Cost profile
+### Tick profile
 
-Live production is **`CT_COST_PROFILE=paid`** (cron `* * * * *` on
-`GET /api/health` → `costProfile`).  The `free` profile (15-minute ticks,
-tiny drains) was sized for retired Deno Deploy free-tier quotas.  Do not
-flip prod back to `free` to "save Deploy quota."  `CT_*` names are the
-operator knobs; leftover `DENO_*` aliases are local-test only.
+Live production always uses aggressive knobs (cron `* * * * *` on
+`GET /api/health` → `costProfile.name=live`).  The old `free` / `balanced` /
+`paid` names described retired Deno Deploy quotas and are ignored if still
+set.  Optional Infisical overrides: `CT_CRON_SCHEDULE`, `CT_DRAIN_LIMIT`,
+`CT_DRAIN_CLAIM_SIZE`, `CT_OUTBOX_LIMIT`.  Do not duplicate those in Coolify
+env.
 
 ## 3a. Sentry
 
