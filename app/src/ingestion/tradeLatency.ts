@@ -4262,7 +4262,6 @@ export async function runDisclosureLatencyProbe(
       }),
     );
   }
-  await tickLatencyPriceSnapshots(env, now, effectiveFetch);
   return {
     enabled: true,
     fetchedRows: runs.reduce((sum, r) => sum + r.fetchedRows, 0),

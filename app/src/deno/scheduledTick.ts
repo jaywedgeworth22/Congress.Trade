@@ -309,6 +309,20 @@ export async function runMaintenancePipeline(
   const throwIfAborted = () => {
     if (options.signal?.aborted) throw tickAbortError();
   };
+  const deadlineFetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    throwIfAborted();
+    const reqAbort = new AbortController();
+    const timeoutId = setTimeout(() => reqAbort.abort(new Error('upstream fetch timeout')), 15000);
+    const signals: AbortSignal[] = [reqAbort.signal];
+    if (options.signal) signals.push(options.signal);
+    if (init?.signal) signals.push(init.signal);
+    try {
+      return await fetch(input, { ...init, signal: AbortSignal.any(signals) });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  };
+
   const runLane = async <T>(
     lane: MaintenanceLane,
     run: () => Promise<T>,
@@ -402,13 +416,13 @@ export async function runMaintenancePipeline(
       await runLane('disclosure_latency', () =>
         runLeasedLatencyProbe(
           env,
-          (providers) => runDisclosureLatencyProbe(env, now, fetch, { providers }),
+          (providers) => runDisclosureLatencyProbe(env, now, deadlineFetch, { providers }),
           now,
         ),
       );
       await runLane('latency_price_snapshots', async () => {
         const { runLatencyPriceSnapshotTick } = await import('../ingestion/latencyPriceSnapshots.ts');
-        return runLatencyPriceSnapshotTick(env, now, fetch);
+        return runLatencyPriceSnapshotTick(env, now, deadlineFetch, options.signal);
       });
     }
     if (options.includeDailyJobs !== false) {
