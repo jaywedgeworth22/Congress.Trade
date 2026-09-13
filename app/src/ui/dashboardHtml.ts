@@ -1321,9 +1321,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      scroll (measured: 995px committee cell in a 1238px card, names squeezed
      to 97px).  Committees render one per line, clamped to two, with a
      "+N more" tail. ---- */
-  /* 720px floor: phones scroll the card horizontally (the table used to be
+  /* 768px floor: phones scroll the card horizontally (the table used to be
      1442px there) while ticker, side pill and dollar figure stay whole. */
-  #view-trends .conflicts-table { table-layout: fixed; width: 100%; min-width: 720px; }
+  #view-trends .conflicts-table { table-layout: fixed; width: 100%; min-width: 768px; }
   #view-trends .conflicts-table .c-pol { width: 23%; }
   #view-trends .conflicts-table .c-com { width: 32%; }
   #view-trends .conflicts-table .c-sec { width: 17%; }
@@ -3247,12 +3247,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   <a class="brand" href="/?view=trends" aria-label="Congress.Trade - home" onclick="event.preventDefault(); showView('trends'); window.scrollTo({ top: 0 });">
     <img class="brand-logo" id="brandLogo" src="/assets/brand-logo-light.png?v=20" data-src-dark="/assets/brand-logo-dark.png?v=20" data-src-light="/assets/brand-logo-light.png?v=20" alt="Congress.Trade" width="1670" height="334" decoding="async" /></a>
   <nav class="tabs" role="tablist" aria-label="Primary views">
-    <a href="/?view=trends" data-view="trends" data-mobile="Trends" data-icon="📈" class="active" id="tab-trends" role="tab" aria-selected="true" aria-current="page" aria-controls="view-trends" aria-label="Trends">Trends</a>
-    <a href="/?view=trades" data-view="trades" data-mobile="Trades" data-icon="☰" id="tab-trades" role="tab" aria-selected="false" aria-controls="view-trades" aria-label="Trades">Trades</a>
-    <a href="/?view=people" data-view="people" data-mobile="Directory" data-icon="👥" id="tab-people" role="tab" aria-selected="false" aria-controls="view-people" aria-label="Directory">Directory</a>
-    <a href="/?view=review" data-view="review" data-mobile="Review" data-icon="✓" id="tab-review" role="tab" aria-selected="false" aria-controls="view-review" data-admin-tab="true" title="Review Queue" aria-label="Review Queue" hidden>Review Queue <span class="tab-count-badge" id="reviewTabBadge" hidden></span></a>
-    <a href="/?view=subs" data-view="subs" data-mobile="Delivery" data-icon="🔔" id="tab-subs" role="tab" aria-selected="false" aria-controls="view-subs" aria-label="Delivery">Delivery</a>
-    <a href="/?view=admin" data-view="admin" data-mobile="Admin" data-icon="⚙" id="tab-admin" role="tab" aria-selected="false" aria-controls="view-admin" data-admin-tab="true" title="Admin · Cadence" aria-label="Admin · Cadence" hidden>Admin · Cadence <span class="tab-count-badge" id="adminTabBadge" hidden></span></a>
+    <a href="/?view=trends" data-view="trends" data-mobile="Trends" data-icon="📈" class="active" id="tab-trends" role="tab" aria-selected="true" aria-current="page" aria-controls="view-trends">Trends</a>
+    <a href="/?view=trades" data-view="trades" data-mobile="Trades" data-icon="☰" id="tab-trades" role="tab" aria-selected="false" aria-controls="view-trades">Trades</a>
+    <a href="/?view=people" data-view="people" data-mobile="Directory" data-icon="👥" id="tab-people" role="tab" aria-selected="false" aria-controls="view-people">Directory</a>
+    <a href="/?view=review" data-view="review" data-mobile="Review" data-icon="✓" id="tab-review" role="tab" aria-selected="false" aria-controls="view-review" data-admin-tab="true" title="Review Queue" hidden>Review Queue <span class="tab-count-badge" id="reviewTabBadge" hidden></span></a>
+    <a href="/?view=subs" data-view="subs" data-mobile="Delivery" data-icon="🔔" id="tab-subs" role="tab" aria-selected="false" aria-controls="view-subs">Delivery</a>
+    <a href="/?view=admin" data-view="admin" data-mobile="Admin" data-icon="⚙" id="tab-admin" role="tab" aria-selected="false" aria-controls="view-admin" data-admin-tab="true" title="Admin · Cadence" hidden>Admin · Cadence <span class="tab-count-badge" id="adminTabBadge" hidden></span></a>
   </nav>
   <div id="acct" class="acct"></div>
   <!-- Shared filter row (Trades + Trends).  Owner punch list #9 merged the
@@ -3644,18 +3644,18 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </div>
       <div class="table-wrap people-table-wrap" id="peopleTableWrap"><table id="peopleTable" class="people-table">
         <thead><tr id="peopleHead">
-          <th scope="col" class="col-fill" data-sort="name" aria-sort="none"><button type="button" class="th-sort-btn" onclick="sortPeopleDirectory('name')" title="Sort by name">Politician <span class="sort-ind" aria-hidden="true"></span></button></th>
-          <th scope="col" class="col-fit" data-sort="chamber" aria-sort="none"><button type="button" class="th-sort-btn" onclick="sortPeopleDirectory('chamber')" title="Sort by branch, party, state">Branch • Party • State <span class="sort-ind" aria-hidden="true"></span></button></th>
-          <th scope="col" class="col-num" data-sort="trades" aria-sort="none"><button type="button" class="th-sort-btn" onclick="sortPeopleDirectory('trades')" title="Sort by trade count (all time)">Trades <span class="sort-ind" aria-hidden="true"></span></button></th>
+          <th scope="col" class="col-fill" data-sort="name" aria-sort="none" title="Sort by name"><button type="button" class="th-sort-btn" onclick="sortPeopleDirectory('name')">Politician <span class="sort-ind" aria-hidden="true"></span></button></th>
+          <th scope="col" class="col-fit" data-sort="chamber" aria-sort="none" title="Sort by branch, party, state"><button type="button" class="th-sort-btn" onclick="sortPeopleDirectory('chamber')">Branch • Party • State <span class="sort-ind" aria-hidden="true"></span></button></th>
+          <th scope="col" class="col-num" data-sort="trades" aria-sort="none" title="Sort by trade count (all time)"><button type="button" class="th-sort-btn" onclick="sortPeopleDirectory('trades')">Trades <span class="sort-ind" aria-hidden="true"></span></button></th>
         </tr></thead>
         <tbody id="peopleBody"><tr><td colspan="3" class="state">Loading directory…</td></tr></tbody>
       </table></div>
       <p class="note" id="peopleCount"></p>
       <div class="table-wrap people-table-wrap" id="assetsTableWrap" style="display:none"><table id="assetsTable" class="people-table">
         <thead><tr id="assetsHead">
-          <th scope="col" class="col-fill" data-sort="name" aria-sort="none"><button type="button" class="th-sort-btn" onclick="sortAssetsDirectory('name')" title="Sort by asset">Asset <span class="sort-ind" aria-hidden="true"></span></button></th>
-          <th scope="col" class="col-num" data-sort="trades" aria-sort="none"><button type="button" class="th-sort-btn" onclick="sortAssetsDirectory('trades')" title="Sort by trade count (all time)">Trades <span class="sort-ind" aria-hidden="true"></span></button></th>
-          <th scope="col" class="col-num" data-sort="members" aria-sort="none"><button type="button" class="th-sort-btn" onclick="sortAssetsDirectory('members')" title="Sort by politician count (all time)">Politicians <span class="sort-ind" aria-hidden="true"></span></button></th>
+          <th scope="col" class="col-fill" data-sort="name" aria-sort="none" tabindex="0" role="button" onclick="sortAssetsDirectory('name')" title="Sort by asset">Asset <span class="sort-ind" aria-hidden="true"></span></th>
+          <th scope="col" class="col-num" data-sort="trades" aria-sort="none" tabindex="0" role="button" onclick="sortAssetsDirectory('trades')" title="Sort by trade count (all time)">Trades <span class="sort-ind" aria-hidden="true"></span></th>
+          <th scope="col" class="col-num" data-sort="members" aria-sort="none" tabindex="0" role="button" onclick="sortAssetsDirectory('members')" title="Sort by politician count (all time)">Politicians <span class="sort-ind" aria-hidden="true"></span></th>
         </tr></thead>
         <tbody id="assetsBody"><tr><td colspan="3" class="state">Loading directory…</td></tr></tbody>
       </table></div>
@@ -5199,10 +5199,10 @@ var TRADES_COLS = [
   { id: 'asset', label: 'Asset', sort: null, def: true, tip: 'Asset name as reported; hover truncated names to see the full text.', cell: assetCellHtml },
   { id: 'amount', label: 'Amount', sort: null, def: true, tip: 'STOCK Act bracket - an estimate, not an exact figure.', cell: amountCellHtml },
   { id: 'sector', label: 'Sector', sort: null, def: false, cls: 'muted', tip: 'Cross-referenced sector (FMP / SEC EDGAR). Blank until the asset is enriched.', cell: function (r) { return clipTextHtml(r.refSector); } },
-  { id: 'country', label: 'Country', sort: null, def: false, defAdmin: true, cls: 'muted', tip: 'Country of issue from enriched reference data.', cell: function (r) { return clipTextHtml(r.refCountry); } },
+  { id: 'country', label: 'Country', sort: 'refCountry', def: false, defAdmin: true, cls: 'muted', tip: 'Country of issue from enriched reference data.', cell: function (r) { return clipTextHtml(r.refCountry); } },
   { id: 'imported', label: 'Imported', sort: 'imported', def: true, cls: 'muted', tier: 'admin', tip: 'When Congress.Trade imported each filing.', cell: function (r) { return dateTimeCellHtml(r.imported, 'When Congress.Trade imported each filing'); } },
   { id: 'latency', label: 'Latency', sort: null, def: true, cls: 'latency', tier: 'admin', tip: 'First detected time and extraction latency for primary rows.', cell: function (r) { return rowLatencyHtml(r); } },
-  { id: 'conf', label: 'Confidence', sort: null, def: false, defAdmin: true, tier: 'admin', tip: 'Parser confidence after validation penalties.', cell: function (r) { return '<span class="conf ' + confClass(r.conf) + '">~' + (r.conf * 100).toFixed(0) + '%</span>'; } },
+  { id: 'conf', label: 'Confidence', sort: 'conf', def: false, defAdmin: true, tier: 'admin', tip: 'Parser confidence after validation penalties.', cell: function (r) { return '<span class="conf ' + confClass(r.conf) + '">~' + (r.conf * 100).toFixed(0) + '%</span>'; } },
   { id: 'published', label: 'Seen', sort: 'published', def: false, cls: 'muted', tip: 'When Congress.Trade first learned about this trade. See "Imported" for when we finished storing it, and "Official Filed" for the source\\u2019s own disclosure date.', cell: seenCellHtml },
   { id: 'lag', label: 'Lag', sort: null, def: false, tip: 'Days between the trade and the filing (STOCK Act limit: 45).', cell: lagCellHtml },
   { id: 'owner', label: 'Owner', sort: null, def: false, cls: 'muted', tip: 'Beneficial owner code reported on the filing.', cell: function (r) { return clipTextHtml(ownerLabel(r.owner)); } },
@@ -5212,7 +5212,7 @@ var TRADES_COLS = [
     var n = plainCleaningNote(r.cleaningNote || '');
     return clipTextHtml(n, '—', n);
   } },
-  { id: 'source', label: 'Source', sort: null, def: false, defAdmin: false, tier: 'admin', tip: 'Row provenance: primary official pipeline or historical seed import.', cell: function (r) { return clipTextHtml(sourceLabel(r.source), '—', sourceTitle(r.source)); } }
+  { id: 'source', label: 'Source', sort: 'source', def: false, defAdmin: false, tier: 'admin', tip: 'Row provenance: primary official pipeline or historical seed import.', cell: function (r) { return clipTextHtml(sourceLabel(r.source), '—', sourceTitle(r.source)); } }
 ];
 var COL_HIDDEN_KEY = 'feed-cols-hidden-v4';
 var COL_ORDER_KEY = 'feed-cols-order-v3';
