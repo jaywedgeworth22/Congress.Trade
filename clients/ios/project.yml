@@ -134,6 +134,8 @@ targets:
         aps-environment: production
         com.apple.developer.applesignin:
           - Default
+        com.apple.developer.associated-domains:
+          - applinks:congress.trade
 
   CongressTradeTests:
     type: bundle.unit-test

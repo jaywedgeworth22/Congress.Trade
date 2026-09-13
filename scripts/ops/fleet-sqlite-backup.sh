@@ -361,7 +361,13 @@ r2_receipt_ok_today() {
 for app in congress socratic usage-monitor; do
   dir="$ROOT/$app"; [ -d "$dir" ] || continue
   files=$(ls -1 "$dir" 2>/dev/null | grep "$STAMP" || true)
-  [ -n "$files" ] || continue
+  if [ -z "$files" ]; then
+    if [ "$app" = "congress" ] && { [ "$(date -u +%u)" = "7" ] || [ "${FLEET_BACKUP_FORCE_WEEKLY:-0}" = "1" ]; }; then
+      printf '{"ok":false,"reason":"local_backup_failed","checkedAt":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        > /data/congress-trade/.r2-archive-status.json || true
+    fi
+    continue
+  fi
   if rclone copy "$dir" "b2:${B2_BUCKET[$app]}/hetzner/" --include "*${STAMP}*" --transfers 2 -q; then
     echo "[fleet-backup] B2 offsite OK: $app ($STAMP)"
     prune_b2_sets "$app" "${B2_BUCKET[$app]}" "$STAMP" || true
