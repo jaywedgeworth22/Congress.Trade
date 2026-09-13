@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
 # Consistent SQLite snapshots for fleet apps + optional off-host copy.
 # Complements Hetzner daily host backups (RPO ~24h host-level).
-# This script aims for app-level RPO of ~hours and clean .backup files.
+# This script aims for app-level RPO of ~hours and complete dumps.
 #
 # Hardening (2026-09-06, board e1f66898):
 #   1) in-script flock -n single-flight (same path as the host cron wrapper)
 #   2) local retention only counts/deletes COMPLETE dumps (.sha256 present, no
 #      .db-journal sidecar); incomplete files never occupy KEEP_COUNT slots
-#   3) timeout around sqlite3 .backup (FLEET_BACKUP_TIMEOUT, default 30m)
+#   3) timeout around sqlite3 VACUUM INTO (FLEET_BACKUP_TIMEOUT, default 30m)
+# Hardening (2026-09-12, board cbed4f30 / 93c48e00):
+#   4) VACUUM INTO instead of sqlite3 .backup — online backup never converges on
+#      the ~11 GB ST DB under continuous writers
+#   5) a timed-out or failed dump ALERTS and returns non-zero (never return 0)
 # Host install after merge: /usr/local/sbin/fleet-sqlite-backup.sh on
 # fleet-hetzner-nbg1 (apply on top of the UUID-pinned host copy; do not
 # overwrite wholesale).  Not a Coolify image bake.
@@ -30,16 +34,42 @@ dump_is_complete() {
   [ ! -e "${f}-journal" ]
 }
 
+# VACUUM INTO runs in ONE read transaction so concurrent writers cannot
+# restart it (sqlite3 .backup restarts from page 1 on every writer
+# checkpoint and never finishes an ~11 GB live DB).
 sqlite_backup_with_timeout() {
   local src="$1" dest="$2"
   local tmo="${FLEET_BACKUP_TIMEOUT:-30m}"
+  rm -f "$dest"
   if command -v timeout >/dev/null 2>&1; then
-    timeout -k 30s "$tmo" sqlite3 "$src" ".backup '$dest'"
+    timeout -k 30s "$tmo" sqlite3 "$src" "VACUUM INTO '$dest'"
   elif command -v gtimeout >/dev/null 2>&1; then
-    gtimeout -k 30s "$tmo" sqlite3 "$src" ".backup '$dest'"
+    gtimeout -k 30s "$tmo" sqlite3 "$src" "VACUUM INTO '$dest'"
   else
-    echo "[fleet-backup] WARN timeout(1) missing; sqlite3 .backup has no bound"
-    sqlite3 "$src" ".backup '$dest'"
+    echo "[fleet-backup] WARN timeout(1) missing; sqlite3 VACUUM INTO has no bound"
+    sqlite3 "$src" "VACUUM INTO '$dest'"
+  fi
+}
+
+# Optional host webhook (Infisical/host env).  Never embed a secret here.
+fleet_backup_alert() {
+  local msg="$1"
+  echo "[fleet-backup] ALERT $msg" >&2
+  if [ -n "${FLEET_BACKUP_ALERT_URL:-}" ]; then
+    python3 - "$FLEET_BACKUP_ALERT_URL" "$msg" <<'PY'
+import json, sys, urllib.request
+url, msg = sys.argv[1], sys.argv[2]
+req = urllib.request.Request(
+    url,
+    data=json.dumps({"text": "fleet-backup: " + msg}).encode(),
+    headers={"content-type": "application/json"},
+    method="POST",
+)
+try:
+    urllib.request.urlopen(req, timeout=10).read()
+except Exception:
+    pass
+PY
   fi
 }
 
@@ -57,22 +87,25 @@ backup_one() {
   local dest="$dest_dir/${name}-${STAMP}.db"
   if command -v sqlite3 >/dev/null 2>&1; then
     if ! sqlite_backup_with_timeout "$src" "$dest"; then
-      echo "[fleet-backup] FAIL $name sqlite3 .backup timed out or failed (timeout=${FLEET_BACKUP_TIMEOUT}): $src"
+      echo "[fleet-backup] FAIL $name sqlite3 VACUUM INTO timed out or failed (timeout=${FLEET_BACKUP_TIMEOUT}): $src"
       rm -f "$dest" "${dest}-journal" "${dest}-wal" "${dest}.sha256"
-      return 0
+      fleet_backup_alert "$name VACUUM INTO timed out or failed (timeout=${FLEET_BACKUP_TIMEOUT})"
+      return 1
     fi
   else
-    # online-safe-ish copy if sqlite3 missing
-    cp -a "$src" "$dest"
-    [ -f "${src}-wal" ] && cp -a "${src}-wal" "${dest}-wal" || true
+    echo "[fleet-backup] FAIL $name sqlite3 CLI missing; refusing a torn cp of a live DB"
+    fleet_backup_alert "$name sqlite3 CLI missing"
+    return 1
   fi
   # integrity + checksum: sha256 is the completeness marker for retention
   if sqlite3 "$dest" "PRAGMA integrity_check;" | head -1 | grep -qx ok; then
     echo "[fleet-backup] OK $name -> $dest ($(du -h "$dest" | awk '{print $1}'))"
     sha256sum "$dest" > "${dest}.sha256"
   else
-    echo "[fleet-backup] WARN $name integrity not clean: $dest"
-    rm -f "${dest}.sha256"
+    echo "[fleet-backup] FAIL $name integrity not clean: $dest"
+    rm -f "${dest}.sha256" "$dest"
+    fleet_backup_alert "$name integrity_check failed"
+    return 1
   fi
 }
 
@@ -179,6 +212,7 @@ if ! flock -n 9; then
 fi
 
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+BACKUP_FAILED=0
 LOG="/var/log/fleet-backup/sqlite-${STAMP}.log"
 mkdir -p "$ROOT" /var/log/fleet-backup
 exec > >(tee -a "$LOG") 2>&1
@@ -187,21 +221,21 @@ echo "[fleet-backup] start $STAMP"
 # Socratic: Coolify docker volume
 SOCRATIC_VOL=$(docker volume ls -q | grep -E 'socratic.*prod-app-data|prod-app-data' | head -1 || true)
 if [ -n "$SOCRATIC_VOL" ] && [ -f "/var/lib/docker/volumes/${SOCRATIC_VOL}/_data/app.db" ]; then
-  backup_one "socratic-app" "/var/lib/docker/volumes/${SOCRATIC_VOL}/_data/app.db" "$ROOT/socratic"
+  backup_one "socratic-app" "/var/lib/docker/volumes/${SOCRATIC_VOL}/_data/app.db" "$ROOT/socratic" || BACKUP_FAILED=1
 else
   # try live container path via docker cp
   C=$(docker ps --format '{{.Names}}' | grep -E 'socratic-app|socratic' | head -1 || true)
   if [ -n "$C" ]; then
     tmp="/tmp/socratic-app.db"
     docker cp "$C:/app/data/app.db" "$tmp"
-    backup_one "socratic-app" "$tmp" "$ROOT/socratic"
+    backup_one "socratic-app" "$tmp" "$ROOT/socratic" || BACKUP_FAILED=1
     rm -f "$tmp"
   else
     echo "[fleet-backup] SKIP socratic (no volume/container)"
   fi
 fi
 
-backup_one "congress-trade" "/data/congress-trade/db.sqlite" "$ROOT/congress"
+backup_one "congress-trade" "/data/congress-trade/db.sqlite" "$ROOT/congress" || BACKUP_FAILED=1
 # Deno KV is not pure sqlite recovery the same way; still copy for best-effort
 if [ -f /data/congress-trade/kv.sqlite ]; then
   mkdir -p "$ROOT/congress"
@@ -209,11 +243,11 @@ if [ -f /data/congress-trade/kv.sqlite ]; then
   echo "[fleet-backup] copied congress kv"
 fi
 
-backup_one "usage-monitor" "/data/prod.db" "$ROOT/usage-monitor"
+backup_one "usage-monitor" "/data/prod.db" "$ROOT/usage-monitor" || BACKUP_FAILED=1
 # Coolify also mounts UM volume - find it
 UM_VOL=$(docker volume ls -q | grep -E 'usage-data|usage-monitor' | head -1 || true)
 if [ -n "$UM_VOL" ] && [ -f "/var/lib/docker/volumes/${UM_VOL}/_data/prod.db" ]; then
-  backup_one "usage-monitor-vol" "/var/lib/docker/volumes/${UM_VOL}/_data/prod.db" "$ROOT/usage-monitor"
+  backup_one "usage-monitor-vol" "/var/lib/docker/volumes/${UM_VOL}/_data/prod.db" "$ROOT/usage-monitor" || BACKUP_FAILED=1
 fi
 
 # retention: drop incomplete dumps first, then age-based (default 7d) AND
@@ -333,6 +367,8 @@ for app in congress socratic usage-monitor; do
     prune_b2_sets "$app" "${B2_BUCKET[$app]}" "$STAMP" || true
   else
     echo "[fleet-backup] B2 offsite FAIL: $app"
+    fleet_backup_alert "B2 offsite FAIL: $app"
+    BACKUP_FAILED=1
   fi
   # Weekly R2 leg: Sundays, or FLEET_BACKUP_FORCE_WEEKLY=1 for manual/out-of-cycle proof runs.
   if [ "$(date -u +%u)" = "7" ] || [ "${FLEET_BACKUP_FORCE_WEEKLY:-0}" = "1" ]; then
@@ -368,6 +404,7 @@ for app in congress socratic usage-monitor; do
         fi
       else
         echo "[fleet-backup] R2 weekly FAIL: $app"
+        fleet_backup_alert "R2 weekly FAIL: $app"
         if [ "$app" = "congress" ]; then
           printf '{"ok":false,"reason":"rclone_failed","checkedAt":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             > /data/congress-trade/.r2-archive-status.json || true
@@ -378,3 +415,10 @@ for app in congress socratic usage-monitor; do
     fi
   fi
 done
+
+if [ "${BACKUP_FAILED:-0}" != "0" ]; then
+  echo "[fleet-backup] FAIL one or more dumps or offsite copies failed" >&2
+  printf '{"ok":false,"reason":"dump_or_offsite_failed","checkedAt":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    > /data/congress-trade/.r2-archive-status.json || true
+  exit 1
+fi

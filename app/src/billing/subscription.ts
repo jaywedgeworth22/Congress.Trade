@@ -47,7 +47,9 @@ export interface StripeSubscriptionEventOrder {
   type:
     | 'customer.subscription.created'
     | 'customer.subscription.updated'
-    | 'customer.subscription.deleted';
+    | 'customer.subscription.deleted'
+    | 'charge.refunded'
+    | 'charge.dispute.created';
 }
 
 interface RawStripeSubscription {
@@ -141,7 +143,11 @@ export async function linkCustomerToUser(
 }
 
 function eventPriority(type: StripeSubscriptionEventOrder['type']): number {
-  if (type === 'customer.subscription.deleted') return 3;
+  if (
+    type === 'customer.subscription.deleted'
+    || type === 'charge.refunded'
+    || type === 'charge.dispute.created'
+  ) return 3;
   if (type === 'customer.subscription.updated') return 2;
   return 1;
 }

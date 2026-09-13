@@ -40,6 +40,7 @@ import {
   applySubscription,
   applyRetrievedStripeSubscription,
   endSubscription,
+  getUserByStripeCustomerId,
   subscriptionIdFromInvoice,
 } from './subscription.ts';
 import {
@@ -393,6 +394,20 @@ export function buildBillingRouter(): Hono<{ Bindings: Env }> {
               });
             }
           }
+          break;
+        }
+        case 'charge.refunded':
+        case 'charge.dispute.created': {
+          const customerId = stripeObjectId(obj?.customer);
+          if (!customerId) break;
+          const user = await getUserByStripeCustomerId(c.env, customerId);
+          const subscriptionId = user?.stripeSubscriptionId ?? null;
+          if (!user || !subscriptionId) break;
+          await endSubscription(c.env, customerId, subscriptionId, {
+            id: event.id,
+            created: event.created,
+            type: event.type,
+          }, user.id);
           break;
         }
         case 'customer.subscription.deleted': {

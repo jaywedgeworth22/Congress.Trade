@@ -57,8 +57,9 @@ Effort logs are standardized across all apps: protocol at
   Deno KV lives alongside at `/data/congress-trade/kv.sqlite`.
   **Deno Deploy is retired.**  Do not deploy there, do not set production secrets
   there, and do not treat Deploy free-tier quotas as the live cost model.
-  Production is Coolify paid (`CT_COST_PROFILE=paid`, cron `* * * * *` on
-  `/api/health`).  **Turso is retired.**  The `TURSO_*` env names are leftovers
+  Production is Coolify with aggressive minute ticks (cron `* * * * *` on
+  `/api/health`; the old free/paid cost-profile names are gone).  Secrets
+  come from Infisical, not Coolify env duplicates.  **Turso is retired.**  The `TURSO_*` env names are leftovers
   that now point at the local SQLite file.
   **The historical Oracle host is DECOMMISSIONED** — it is gone, not just idle.  Do not ssh to it, do not diagnose "the box is
   down" against it, and treat any doc/script that still names it as historical.  See
