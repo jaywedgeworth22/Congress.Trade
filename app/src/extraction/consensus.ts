@@ -234,7 +234,8 @@ function voteField(
     bloc.models.push(model);
   }
   
-  const isPlaceholderKey = (k: string) => !k || k === '|' || k === 'N/A' || k === '-' || k === 'UNKNOWN';
+  const isPlaceholderKey = (k: string) =>
+    field === 'amount' && (!k || k === '|' || k === 'N/A' || k === '-' || k === 'UNKNOWN');
   let hasValid = false;
   let invalidVotes = 0;
   for (const [key, bloc] of blocs.entries()) {
@@ -284,7 +285,7 @@ function voteField(
     return {
       value: top.rawValue,
       votes: topVotes,
-      total,
+      total: effectiveTotal,
       dissenters,
       unanimous: topVotes === total,
     };
@@ -294,7 +295,7 @@ function voteField(
   const dissenters = present
     .map((p) => ({ model: p.model, value: rawFieldValue(p.tx, field) }))
     .sort(byModel);
-  return { value: null, votes: topVotes, total, dissenters, unanimous: false };
+  return { value: null, votes: topVotes, total: effectiveTotal, dissenters, unanimous: false };
 }
 
 /**
