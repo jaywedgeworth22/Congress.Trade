@@ -305,6 +305,8 @@ struct TickerDetailView: View {
                     seedPhotoUrl: target.photoUrl
                 )
                 .presentationDetents([.medium, .large])
+                .presentationContentInteraction(.resizes)
+                .iPadFullWidthSheet()
             }
             .toolbar {
                 ToolbarItem(placement: AppToolbarPlacement.trailing) {

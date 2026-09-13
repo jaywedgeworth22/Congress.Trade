@@ -1552,7 +1552,7 @@ struct TradeDisclosureAlertsToggle: View {
             .disabled(!store.signedIn)
 
             if !store.signedIn {
-                Text("Push alerts are a Premium feature.")
+                Text("Sign in to enable push alerts on this device.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

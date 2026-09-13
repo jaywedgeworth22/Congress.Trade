@@ -375,6 +375,8 @@ struct AssetDirectoryView: View {
                     .presentationDetents([.medium, .large])
                     .presentationDragIndicator(.visible)
                     .presentationCornerRadius(18)
+                    .presentationContentInteraction(.resizes)
+                    .iPadFullWidthSheet()
             }
             // Same invalidation rule as PeopleDirectoryView: narrowing or
             // reordering can strand the current page past the new result count.
