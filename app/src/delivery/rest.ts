@@ -1499,13 +1499,7 @@ export async function serveDocumentPdf(c: Context<{ Bindings: Env }>) {
   // with a session that simply isn't Premium (that stays gated).
   const premium = user ? await isPremiumUserAsync(c.env, user) : await hasAnonymousDeviceEntitlement(c);
   if (!premium) {
-    if (documentPdfGateWantsJson({
-      authorization: c.req.header('authorization'),
-      accept: c.req.header('accept'),
-    })) {
-      return c.json(documentPdfUpgradePayload(), 402);
-    }
-    return c.redirect('/pricing?feature=pdf', 302);
+    return c.json(documentPdfUpgradePayload(), 402);
   }
 
   const docId = c.req.param('docId');
