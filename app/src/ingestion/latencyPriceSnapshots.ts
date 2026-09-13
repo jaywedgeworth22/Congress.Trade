@@ -315,6 +315,7 @@ export async function captureDueLatencyPriceSnapshots(
   env: Env,
   now = new Date(),
   fetchImpl: typeof fetch = fetch,
+  signal?: AbortSignal,
 ): Promise<CaptureResult> {
   const nowIso = now.toISOString();
 
@@ -401,6 +402,7 @@ export async function captureDueLatencyPriceSnapshots(
     }
 
     for (const rows of groups.values()) {
+      if (signal?.aborted) break;
       const ticker = rows[0]!.ticker;
       const dueTimes = rows.map((r) => Date.parse(r.due_at)).filter((n) => Number.isFinite(n));
       if (!dueTimes.length) continue;
@@ -558,8 +560,9 @@ export async function runLatencyPriceSnapshotTick(
   env: Env,
   now = new Date(),
   fetchImpl: typeof fetch = fetch,
+  signal?: AbortSignal,
 ): Promise<{ scheduled: number } & CaptureResult> {
   const scheduled = await scheduleMissingLatencyPriceSnapshots(env, now);
-  const captured = await captureDueLatencyPriceSnapshots(env, now, fetchImpl);
+  const captured = await captureDueLatencyPriceSnapshots(env, now, fetchImpl, signal);
   return { scheduled: scheduled.scheduled, ...captured };
 }
