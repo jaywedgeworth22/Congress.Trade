@@ -162,15 +162,16 @@ describe('GET /documents/:docId/pdf (APPSTORECOMPLIANCE-01/02)', () => {
     expect(await res.json()).toEqual(upgrade);
   });
 
-  it('still 302s a browser HTML navigation without Bearer to the web paywall', async () => {
+  it('returns 402 JSON for a browser HTML navigation without Bearer (no Stripe redirect)', async () => {
     const app = buildRestRouter();
     const res = await app.request(
       'http://localhost/documents/H-2026-1/pdf',
       { headers: { accept: 'text/html,application/xhtml+xml,*/*;q=0.8' } },
       pdfEnv(),
     );
-    expect(res.status).toBe(302);
-    expect(res.headers.get('location') ?? '').toMatch(/\/pricing\?feature=pdf/);
+    expect(res.status).toBe(402);
+    expect(res.headers.get('location')).toBeNull();
+    expect(await res.json()).toEqual(documentPdfUpgradePayload());
   });
 
   it('serves the stored PDF for Premium and never redirects to the government source', async () => {
