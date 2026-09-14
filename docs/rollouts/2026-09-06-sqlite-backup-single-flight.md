@@ -81,8 +81,12 @@ line keeps form 1), the wrong comment is replaced, and FX's VACUUM INTO script i
 repo so git matches the host again.  Manual runs without the env var still take the default lock and
 therefore skip while a cron run holds the wrapper lock, which is the intended single-flight.
 
-**Host state.**  `/usr/local/sbin/fleet-sqlite-backup.sh` = this PR's script (earlier copies kept as
-`.bak-fx-20260912` and `.bak-claude-20260913`).  Cron line:
+**Host state.**  `/usr/local/sbin/fleet-sqlite-backup.sh` is still FX's 2026-09-12 copy (sha256
+`300ee5e1…`, the pre-FX copy kept as `.bak-fx-20260912`) running under the interim cron form, which is
+sufficient on its own.  Installing this PR's script is the open follow-up (ssh to the host failed with
+255 on 2026-09-14 03:40Z after a successful probe): `scp scripts/ops/fleet-sqlite-backup.sh coolify:/tmp/`
+then `cp -a` the live file to `.bak-claude-20260913`, `install -m 755 -o root -g root`, `bash -n`, and
+compare `sha256sum` with the repo file.  Cron line:
 `15 */6 * * * root flock -n /var/lock/fleet-sqlite-backup.lock -c "FLEET_BACKUP_LOCKFILE=/var/lock/fleet-sqlite-backup.inner.lock FLEET_BACKUP_KEEP_DAYS=2 FLEET_BACKUP_KEEP_COUNT=2 B2_KEEP_SETS=2 /usr/local/sbin/fleet-sqlite-backup.sh"`.
 The "UUID-pinned greps" caveat in the follow-ups above is historical: the host copy has carried the
 sanitized volume and container greps since PR #2171, and this PR's script is the host copy.
