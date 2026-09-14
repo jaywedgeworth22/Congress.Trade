@@ -1,10 +1,10 @@
 # Rollout Note: 2026-09-13 Full Audit Remediation
 
 ## Summary
-Full remediation and production deployment for all 5 issues filed during the comprehensive September 2026 codebase and operations audit:
+Remediation and production deployment for the September 2026 codebase and operations audit issues (#2364–#2368). Four of the five issues are fully remediated; the remaining Autopilot per-document spend ceiling from #2364 is tracked under Follow-ups.
 1. **Issue #2364 (PR #2374):** House PTR live search pagination and `FilingType=P` filter, consensus voting placeholder exclusion (`effectiveTotal`), unblocking phantom collisions on `failed` and `not_found` status, and relaxing OGE 278-T OCR regex.
 2. **Issue #2365 (PR #2371):** Standardizing on `getCurrentUserFromRequest` across `/billing/*` endpoints to support iOS Bearer tokens, and passing `live.customer` object to resolve disconnected Stripe accounts in the admin premium roster.
-3. **Issue #2366 (PR #2372):** Added SQLite WAL mode and foreign keys pragmas in Deno init (`main.ts`), wired R2 weekly backup failure receipt writing in `fleet-sqlite-backup.sh`, configured `CT_COST_PROFILE=paid` in `docker-compose.yml`, and resolved duplicate price snapshot ticks.
+3. **Issue #2366 (PR #2372):** Added SQLite WAL mode and foreign keys pragmas in Deno init (`main.ts`), wired R2 weekly backup failure receipt writing in `fleet-sqlite-backup.sh`, removed the obsolete `CT_COST_PROFILE` tier from `docker-compose.yml` (the runtime now always reports the `live` profile), and resolved duplicate price snapshot ticks.
 4. **Issue #2367 (PR #2376):** Implemented `window.history.pushState` and global `popstate` listener for browser history navigation, removed unsupported column sorting controls (Amount, Type, Politician, Asset) to eliminate misleading in-memory single-page sorts, preserved checkout intent across OAuth sign-in, harmonized responsive breakpoints at 768px, and fixed directory table header accessibility.
 5. **Issue #2368 (PR #2370):** Added Universal Links Associated Domains entitlement (`applinks:congress.trade`) in XcodeGen `project.yml`, verified StoreKit Guideline 3.1.1 compliance in `ManageSubscription.swift` (already routed Apple subscribers directly to App Store subscription management URL), updated push alerts copy, displayed committee regulatory conflict tags in politician profile, refined iPad sheet sizing, and added CI drift detection for `CongressTrade.xcodeproj`.
 
@@ -26,18 +26,19 @@ Full remediation and production deployment for all 5 issues filed during the com
 - `clients/ios/CongressTrade/MemberDirectorySearch.swift` (iPad sheet sizing)
 - `.github/workflows/ios-build.yml` (XcodeGen drift check)
 - `scripts/ops/fleet-sqlite-backup.sh` (R2 failure receipt logging)
-- `app/docker-compose.yml` (`CT_COST_PROFILE=paid`)
+- `app/docker-compose.yml` (removed obsolete `CT_COST_PROFILE` tier)
 
 ## Verification
 - **Test Suite:** All 305 test files passing (3,903 tests) locally and in GitHub Actions CI.
 - **Backend Deployment:** Live revision at `https://congress.trade/api/health` confirmed running HEAD SHA `011b8ed1` on Coolify with:
   - `ok: true`, `db: true`, `schema: true`
-  - `costProfile: "paid"`
+  - `costProfile: "live"`
   - `litestreamStatus: "replicating"` (~5s sync latency)
   - All 13 pipeline health checks reporting `ok`
 - **Native iOS Verification:** PR #2370 merged to `main`; Xcode unsigned build and XcodeGen project drift gates passing in CI. TestFlight distribution is pending the next native release cycle (scheduled workflow disabled per `docs/rollouts/2026-09-03-ios-ship-schedule-skip.md`).
-- **GitHub Issues:** #2364, #2365, #2366, #2367, #2368 closed.
+- **GitHub Issues:** #2365, #2366, #2367, #2368 closed. #2364 remains open for the Autopilot per-document spend ceiling (see Follow-ups).
 
 ## Follow-ups
+- **Issue #2364 (open):** the `DEFAULT_LLM_DOC_USD_CEILING = 0.25` guard in `app/src/shared/llmSpend.ts` still caps multi-model Autopilot runs below their authorized $1 budget. Remediate and verify that path before closing #2364.
 - Native iOS client ship to TestFlight for PR #2370 changes (Universal Links entitlement, push copy, conflict tags, iPad sheet sizing).
 - Weekly R2 backup snapshot will refresh receipt on the next scheduled Sunday backup run.
