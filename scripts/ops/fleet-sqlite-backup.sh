@@ -12,6 +12,14 @@
 #   4) VACUUM INTO instead of sqlite3 .backup — online backup never converges on
 #      the ~11 GB ST DB under continuous writers
 #   5) a timed-out or failed dump ALERTS and returns non-zero (never return 0)
+# Fix (2026-09-13, board cbed4f30, CLAUDE): (1)'s in-script flock did not
+# actually compose with the cron wrapper's flock on the same path -- two
+# opens of one file never share a flock(2) lock -- so every tick from
+# 2026-09-07 SKIPped and no dumps landed for 6 days.  Script now skips its
+# own flock when a caller hands down FLOCKER=$LOCKFILE, and the standing
+# fix on the host cron wrapper points its own lock at a distinct file
+# (FLEET_BACKUP_LOCKFILE) so the two locks never target the same path.  See
+# docs/rollouts/2026-09-06-sqlite-backup-single-flight.md.
 # Host install after merge: /usr/local/sbin/fleet-sqlite-backup.sh on
 # fleet-hetzner-nbg1 (apply on top of the UUID-pinned host copy; do not
 # overwrite wholesale).  Not a Coolify image bake.
@@ -191,24 +199,51 @@ if [ "${FLEET_BACKUP_LIB_ONLY:-0}" = "1" ]; then
   return 0 2>/dev/null || exit 0
 fi
 
-# Single-flight: same inode as the host cron wrapper
-# (flock -n /var/lock/fleet-sqlite-backup.lock ...).  flock(2) grants a
-# second lock to the same process, so the wrapper and this script compose.
+# Single-flight against concurrent runs of this script.  A flock(2) lock is
+# owned by an open file description, not by a process or a script path, so
+# re-opening and re-flocking the SAME path from a process that only holds a
+# lock via a *different* open (e.g. the cron wrapper's
+# `flock -n FILE -c ...`) always conflicts -- it does not "compose" the way
+# a reentrant lock would.  (Wrong belief that it composed is why every cron
+# tick from 2026-09-07 through 2026-09-13 SKIPped: see
+# docs/rollouts/2026-09-06-sqlite-backup-single-flight.md.)
+#
+# Two mechanisms, either of which is sufficient on its own:
+#   a) explicit hand-down: a caller that already holds $LOCKFILE sets
+#      FLOCKER=$LOCKFILE before invoking us (the flock(1) self-lock idiom:
+#      `FLOCKER=FILE flock -n FILE -c ...`, see flock(1) EXAMPLES).  When we
+#      see our own FLOCKER match our own LOCKFILE, that is confirmation the
+#      lock is already held on our behalf, so we skip re-flocking it.
+#   b) distinct lock files: the caller points us at a different lock path
+#      via FLEET_BACKUP_LOCKFILE than the one it holds itself, so its flock
+#      and ours never target the same file and never race.
+# Standing production fix (2026-09-13, board cbed4f30): verified on
+# fleet-hetzner-nbg1 that util-linux 2.41.3's flock(1) does NOT set FLOCKER
+# itself -- only a script that manually exports it does -- so the live cron
+# wrapper does not satisfy (a).  It uses (b) instead
+# (FLEET_BACKUP_LOCKFILE=/var/lock/fleet-sqlite-backup.inner.lock), so (a)
+# below is currently dormant in production but kept for any caller that
+# does adopt the FLOCKER idiom (and for direct/manual invocations, which
+# fall through to our own exec+flock single-flight either way).
 if ! command -v flock >/dev/null 2>&1; then
   echo "[fleet-backup] FAIL flock not found (util-linux required for single-flight)" >&2
   exit 1
 fi
-mkdir -p "$(dirname "$LOCKFILE")" || {
-  echo "[fleet-backup] FAIL cannot create lock dir $(dirname "$LOCKFILE")" >&2
-  exit 1
-}
-exec 9>"$LOCKFILE" || {
-  echo "[fleet-backup] FAIL cannot open lock $LOCKFILE" >&2
-  exit 1
-}
-if ! flock -n 9; then
-  echo "[fleet-backup] SKIP already running (lock held: $LOCKFILE)" >&2
-  exit 0
+if [ "${FLOCKER:-}" = "$LOCKFILE" ]; then
+  echo "[fleet-backup] lock inherited from wrapper ($LOCKFILE)"
+else
+  mkdir -p "$(dirname "$LOCKFILE")" || {
+    echo "[fleet-backup] FAIL cannot create lock dir $(dirname "$LOCKFILE")" >&2
+    exit 1
+  }
+  exec 9>"$LOCKFILE" || {
+    echo "[fleet-backup] FAIL cannot open lock $LOCKFILE" >&2
+    exit 1
+  }
+  if ! flock -n 9; then
+    echo "[fleet-backup] SKIP already running (lock held: $LOCKFILE)" >&2
+    exit 0
+  fi
 fi
 
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"

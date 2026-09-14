@@ -4,6 +4,14 @@
 
 Owner: Infisical is the secret source of truth; the old Deno Deploy free/paid names are misleading.  `costProfile` now always uses aggressive live knobs (cron `* * * * *`).  `CT_COST_PROFILE` is ignored.  Host `fleet-sqlite-backup.sh` uses `VACUUM INTO` and fails loud.  Installed on the box from this lane.  Stripe `charge.refunded` / `charge.dispute.created` end entitlement.  Filing PDF gate is 402 JSON for every client.  Boards `d6226365`, `cbed4f30`, `93c48e00`, `8932ea1f`, `53548457`.  Branch `fx/aggressive-runtime-backups`.  Rollout: `docs/rollouts/2026-09-13-aggressive-runtime-and-backups.md`.
 
+## 2026-09-13 CLAUDE — fleet-sqlite-backup.sh lock composition
+
+The 2026-09-06 in-script flock never composed with the cron wrapper's flock on the same file, so no
+dumps landed from 2026-09-07 to 2026-09-13.  Cron now hands the script a distinct lock path
+(`FLEET_BACKUP_LOCKFILE=/var/lock/fleet-sqlite-backup.inner.lock`) and the script stands down when
+`FLOCKER=$LOCKFILE` is handed down.  The host runs FX's VACUUM INTO script, now in the repo.  Details:
+`docs/rollouts/2026-09-06-sqlite-backup-single-flight.md`, 2026-09-13 follow-up.
+
 ## 2026-09-06 GROK — fleet-sqlite-backup.sh single-flight + complete retention + timeout
 
 Housekeeper mitigated overlapping ST `sqlite3 .backup` on the box (no flock;
