@@ -252,7 +252,7 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('data-view="people" data-mobile="Directory"');
     expect(DASHBOARD_HTML).toContain('aria-controls="view-people">Directory</a>');
     // Trends is warmed on boot since it is the landing view.
-    expect(DASHBOARD_HTML).toContain('loadTrends(); // Trends is the default landing view');
+    expect(DASHBOARD_HTML).toContain('loadTrades(); // Trades is the default landing view');
   });
 
   it('renders the primary view tabs as real crawlable <a href> links (SEOSOCIAL-02)', () => {
@@ -3551,11 +3551,11 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
     expect(DASHBOARD_HTML).toContain("var VIEW_ALIASES = { feed: 'trades', delivery: 'subs', directory: 'people' };");
     expect(DASHBOARD_HTML).toContain('function resolveViewId(raw)');
     expect(DASHBOARD_HTML).toContain('var canonicalView = resolveViewId(fromUrl);');
-    // Unknown/garbage values resolve straight to 'trends' inside the same
+    // Unknown/garbage values resolve straight to 'trades' inside the same
     // branch that handles ?view= — never falling through to localStorage's
     // last-viewed tab (issue #1458).
     expect(DASHBOARD_HTML).toContain(
-      "initialView = document.querySelector('nav.tabs a[data-view=\"' + canonicalView + '\"]') ? canonicalView : 'trends';",
+      "initialView = document.querySelector('nav.tabs a[data-view=\"' + canonicalView + '\"]') ? canonicalView : 'trades';",
     );
     // The URL is rewritten to the canonical id, not the alias.
     expect(DASHBOARD_HTML).toContain("u0.searchParams.set('view', initialView);");
@@ -5853,7 +5853,7 @@ describe('desktop chrome 2026-08-16 (filters, CSV, Delivery, admin)', () => {
 
   it('falls back a direct ?view=admin/?view=review boot navigation to Trends for a non-admin', () => {
     expect(DASHBOARD_HTML).toContain(
-      "if (initialViewBtn && initialViewBtn.getAttribute('data-admin-tab') === 'true' && !canUseAdmin()) {\n      initialView = 'trends';\n    }",
+      "if (initialViewBtn && initialViewBtn.getAttribute('data-admin-tab') === 'true' && !canUseAdmin()) {\n      initialView = 'trades';\n    }",
     );
   });
 
@@ -6528,7 +6528,7 @@ describe('web chrome column + Trends flow rows (owner 2026-09-08)', () => {
   it('binds header.top and the sticky filter chips to the active view content column', () => {
     expect(DASHBOARD_HTML).toContain(':root { --ct-header-h: 100px; --ct-main-pad: 35px; --trends-gap: 24px; --ct-col-max: 1730px; }');
     expect(DASHBOARD_HTML).toContain('html[data-view="trends"] { --ct-col-max: 1280px; }');
-    expect(DASHBOARD_HTML).toContain('<html lang="en" data-view="trends">');
+    expect(DASHBOARD_HTML).toContain('<html lang="en" data-view="trades">');
     // Symmetric vertical pad (nav + account centered in the white band); side
     // pads reach the column once its cap engages, 35px before that.
     expect(DASHBOARD_HTML).toContain('padding: 10px max(var(--ct-main-pad, 35px), calc(50% - var(--ct-col-max, 1730px) / 2));');
@@ -6651,8 +6651,8 @@ describe('header chrome rework (owner 2026-09-09)', () => {
     expect(kids).toEqual(['a.brand', 'nav.tabs', 'div#acct', 'div#ctFilters']);
     // Brand is a real link home (Trends) — no more inert div.
     const brand = document.querySelector('header.top a.brand');
-    expect(brand?.getAttribute('href')).toBe('/?view=trends');
-    expect(brand?.getAttribute('onclick')).toContain("showView('trends')");
+    expect(brand?.getAttribute('href')).toBe('/?view=trades');
+    expect(brand?.getAttribute('onclick')).toContain("showView('trades')");
     // The whole #tradesToolbars block moved as-is: ids / handlers unchanged,
     // Reset chip is the last child of the group.
     const ctf = document.querySelector('#ctFilters');
@@ -6792,7 +6792,7 @@ describe('header chrome rework (owner 2026-09-09)', () => {
     expect(DASHBOARD_HTML).toContain("initialBtn.setAttribute('aria-current', 'page');");
     // Boot fallback to Trends restamps html[data-view] (the head script may
     // have stamped an admin-gated ?view= that then fell back).
-    expect(DASHBOARD_HTML).toContain("document.documentElement.setAttribute('data-view', 'trends');\n    if (typeof refreshIosFilterSummaries === 'function') refreshIosFilterSummaries();\n    loadTrends(); // Trends is the default landing view");
+    expect(DASHBOARD_HTML).toContain("document.documentElement.setAttribute('data-view', 'trades');\n    if (typeof refreshIosFilterSummaries === 'function') refreshIosFilterSummaries();\n    loadTrades(); // Trades is the default landing view");
     // "/" never steals focus from an open filter popover or menu.
     expect(DASHBOARD_HTML).toContain("var menuOpen = !!document.querySelector('.ios-filter-pop:not([hidden]), .menu-pop.open, .acct-mobile-menu.open');");
     // Reset issues one fetch (no debounced search fetch racing resetTradesPage).
