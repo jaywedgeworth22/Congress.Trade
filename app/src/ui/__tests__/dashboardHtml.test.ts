@@ -2198,6 +2198,11 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('mailto:support@congress.trade');
     expect(DASHBOARD_HTML).not.toContain('mailto:congress.trade@jays.services');
   });
+
+  it('footer includes subtle Report a Problem trigger', () => {
+    expect(DASHBOARD_HTML).toContain('Report a Problem</a>');
+    expect(DASHBOARD_HTML).toContain('window.openSentryFeedback');
+  });
 });
 
 /**

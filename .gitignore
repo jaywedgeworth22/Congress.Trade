@@ -37,6 +37,7 @@ ptr_state/
 prod.env
 
 # Temp / scratch
+filed_date_week_latency.ts
 *.tmp.json
 *.log
 .__probe
