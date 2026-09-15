@@ -1,9 +1,9 @@
 # congress-trading-shared provenance
 
 - Upstream: `https://github.com/jaywedgeworth22/congress-trading-shared`
-- Immutable release: `v2.6.0`
-- Commit: `f139d831d852c041cc9f3e87705da7a0b463c3d7`
-- Imported: `2026-08-24`
+- Immutable release: `v2.7.0`
+- Commit: `af11d706f8fa332fc70402999a9cc954cf419408`
+- Imported: `2026-09-15`
 - Imported paths: `src/`, `package.json`, `package-lock.json`, `CHANGELOG.md`, `README.md`, and `LICENSE`
 - Local source modifications: synced with upstream v2.5.2 (sub-$1,001 STOCK_ACT_BRACKETS tier, TxType B/S/E coercion, IsoDateTimeSchema, TradeEventRowSchema, AnalystRowSchema.asOfTimestamp upstreamed).
 
