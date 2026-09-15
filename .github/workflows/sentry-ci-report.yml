@@ -70,7 +70,7 @@ on:
       - Shared Package Pin Check
       - Security
       - Sentry Deploy
-    types: [completed]
+    types: [requested, completed]
 
 permissions:
   contents: read
@@ -88,10 +88,14 @@ jobs:
   # error check-ins.
   report:
     if: >-
-      github.event.workflow_run.conclusion == 'failure' ||
+      (github.event.action == 'requested' && github.event.workflow_run.event == 'schedule') ||
+      (github.event.action == 'completed' && (github.event.workflow_run.conclusion == 'failure' ||
       github.event.workflow_run.conclusion == 'timed_out' ||
       github.event.workflow_run.conclusion == 'startup_failure' ||
-      github.event.workflow_run.event == 'schedule'
+      github.event.workflow_run.event == 'schedule'))
+    permissions:
+      contents: read
+      actions: read
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -108,7 +112,9 @@ jobs:
         shell: bash
         env:
           SENTRY_FLEET_DSN: ${{ secrets.SENTRY_FLEET_DSN }}
-          WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
+          GITHUB_TOKEN: ${{ github.token }}
+          WORKFLOW_RUN_ACTION: ${{ github.event.action }}
+          WORKFLOW_          WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
           WORKFLOW_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
           WORKFLOW_EVENT: ${{ github.event.workflow_run.event }}
           WORKFLOW_BRANCH: ${{ github.event.workflow_run.head_branch }}
