@@ -2339,8 +2339,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     html[data-theme="dark"] nav.tabs a.active {
       background: transparent;
     }
-    nav.tabs a::before { content: attr(data-icon); display: block; font-size: 16px; line-height: 1; margin-bottom: 3px; }
-    nav.tabs a::after { content: attr(data-mobile); display: block; font-size: 10px; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    nav.tabs a::before { content: attr(data-icon) / ""; display: block; font-size: 16px; line-height: 1; margin-bottom: 3px; }
+    nav.tabs a::after { content: attr(data-mobile) / ""; display: block; font-size: 10px; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .tab-count-badge,
     .tab-count-badge.is-on {
       position: absolute;
