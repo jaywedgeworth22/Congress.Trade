@@ -309,16 +309,18 @@ export function evaluatePipelineSignals(
         value: s.localWorkerActivity24h ?? 0,
       });
     } else {
-      const nowET = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
-      const dayET = nowET.getDay();
-      const isWeekend = dayET === 0 || dayET === 6;
-      checks.push({ 
-        id: 'extraction_provider', 
-        status: 'ok', 
-        detail: isWeekend 
-          ? 'No extraction attempts in 24h (expected on weekend)' 
-          : 'No extraction attempts in 24h', 
-        value: 0 
+      const weekdayEt = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/New_York',
+        weekday: 'short',
+      }).format(new Date(nowMs));
+      const isWeekend = weekdayEt === 'Sat' || weekdayEt === 'Sun';
+      checks.push({
+        id: 'extraction_provider',
+        status: 'ok',
+        detail: isWeekend
+          ? 'No extraction attempts in 24h (expected on weekend)'
+          : 'No extraction attempts in 24h',
+        value: 0
       });
     }
   }
