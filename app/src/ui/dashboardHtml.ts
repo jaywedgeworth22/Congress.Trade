@@ -91,7 +91,7 @@ function speedProofSectionHtml(admin: boolean): string {
 }
 
 export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
-<html lang="en" data-view="trends">
+<html lang="en" data-view="trades">
 <head>
 %GA_SCRIPT%
 <meta charset="utf-8" />
@@ -2339,8 +2339,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     html[data-theme="dark"] nav.tabs a.active {
       background: transparent;
     }
-    nav.tabs a::before { content: attr(data-icon); display: block; font-size: 16px; line-height: 1; margin-bottom: 3px; }
-    nav.tabs a::after { content: attr(data-mobile); display: block; font-size: 10px; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    nav.tabs a::before { content: attr(data-icon) / ""; display: block; font-size: 16px; line-height: 1; margin-bottom: 3px; }
+    nav.tabs a::after { content: attr(data-mobile) / ""; display: block; font-size: 10px; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .tab-count-badge,
     .tab-count-badge.is-on {
       position: absolute;
@@ -3244,11 +3244,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
 <body>
 
 <header class="top">
-  <a class="brand" href="/?view=trends" aria-label="Congress.Trade - home" onclick="event.preventDefault(); showView('trends'); window.scrollTo({ top: 0 });">
+  <a class="brand" href="/?view=trades" aria-label="Congress.Trade - home" onclick="event.preventDefault(); showView('trades'); window.scrollTo({ top: 0 });">
     <img class="brand-logo" id="brandLogo" src="/assets/brand-logo-light.png?v=20" data-src-dark="/assets/brand-logo-dark.png?v=20" data-src-light="/assets/brand-logo-light.png?v=20" alt="Congress.Trade" width="1670" height="334" decoding="async" /></a>
   <nav class="tabs" role="tablist" aria-label="Primary views">
-    <a href="/?view=trends" data-view="trends" data-mobile="Trends" data-icon="📈" class="active" id="tab-trends" role="tab" aria-selected="true" aria-current="page" aria-controls="view-trends">Trends</a>
-    <a href="/?view=trades" data-view="trades" data-mobile="Trades" data-icon="☰" id="tab-trades" role="tab" aria-selected="false" aria-controls="view-trades">Trades</a>
+    <a href="/?view=trends" data-view="trends" data-mobile="Trends" data-icon="📈" id="tab-trends" role="tab" aria-selected="false" aria-controls="view-trends">Trends</a>
+    <a href="/?view=trades" data-view="trades" data-mobile="Trades" data-icon="☰" class="active" id="tab-trades" role="tab" aria-selected="true" aria-current="page" aria-controls="view-trades">Trades</a>
     <a href="/?view=people" data-view="people" data-mobile="Directory" data-icon="👥" id="tab-people" role="tab" aria-selected="false" aria-controls="view-people">Directory</a>
     <a href="/?view=review" data-view="review" data-mobile="Review" data-icon="✓" id="tab-review" role="tab" aria-selected="false" aria-controls="view-review" data-admin-tab="true" title="Review Queue" hidden>Review Queue <span class="tab-count-badge" id="reviewTabBadge" hidden></span></a>
     <a href="/?view=subs" data-view="subs" data-mobile="Delivery" data-icon="🔔" id="tab-subs" role="tab" aria-selected="false" aria-controls="view-subs">Delivery</a>
@@ -13209,7 +13209,7 @@ function handleAuthQueryParams() {
 
 window.addEventListener('popstate', function (e) {
   var urlParams = new URLSearchParams(window.location.search);
-  var view = urlParams.get('view') || 'trends';
+  var view = urlParams.get('view') || 'trades';
   var btn = document.querySelector('nav.tabs a[data-view="' + view + '"]');
   if (btn) {
     document.querySelectorAll('nav.tabs a').forEach(function (x) { x.classList.remove('active'); x.setAttribute('aria-selected', 'false'); x.removeAttribute('aria-current'); });
@@ -14049,7 +14049,7 @@ loadMe().then(function () {
   if (canUseAdmin()) loadReview(); // account state + admin tab visibility
   if (canUseAdmin()) loadPollConfig(); // poll-mode KPI — session-based admin resolved after boot
   loadExtractionIncident();
-  var initialView = 'trends';
+  var initialView = 'trades';
   try {
     var fromUrl = new URLSearchParams(window.location.search).get('view');
     if (!fromUrl) {
@@ -14065,7 +14065,7 @@ loadMe().then(function () {
       // silently resurrect an old session. Tabs are <a>, not <button>
       // (web-mobile chrome on main).
       var canonicalView = resolveViewId(fromUrl);
-      initialView = document.querySelector('nav.tabs a[data-view="' + canonicalView + '"]') ? canonicalView : 'trends';
+      initialView = document.querySelector('nav.tabs a[data-view="' + canonicalView + '"]') ? canonicalView : 'trades';
     } else {
       var saved = localStorage.getItem('ct-active-tab');
       // Same alias table for a stored last-viewed tab — old "feed" still
@@ -14081,11 +14081,11 @@ loadMe().then(function () {
   // even via direct ?view=admin/?view=review navigation or the /admin,
   // /review paths above — the tab bar hides the button, but until this
   // check the CONTENT PANE still went active underneath it regardless.
-  // Falls back to Trends, matching the "unknown ?view=" behavior below.
-  if (initialView !== 'trends') {
+  // Falls back to Trades, matching the "unknown ?view=" behavior below.
+  if (initialView !== 'trades') {
     var initialViewBtn = document.querySelector('nav.tabs a[data-view="' + initialView + '"]');
     if (initialViewBtn && initialViewBtn.getAttribute('data-admin-tab') === 'true' && !canUseAdmin()) {
-      initialView = 'trends';
+      initialView = 'trades';
     }
   }
   try {
@@ -14125,9 +14125,9 @@ loadMe().then(function () {
     // The head script may have stamped html[data-view] from a ?view= /
     // remembered tab that then fell back here (admin-gated, unknown) —
     // restamp so the header filter row shows for Trends.
-    document.documentElement.setAttribute('data-view', 'trends');
+    document.documentElement.setAttribute('data-view', 'trades');
     if (typeof refreshIosFilterSummaries === 'function') refreshIosFilterSummaries();
-    loadTrends(); // Trends is the default landing view
+    loadTrades(); // Trades is the default landing view
   }
   if (window.__pendingManageBilling) {
     window.__pendingManageBilling = false;
