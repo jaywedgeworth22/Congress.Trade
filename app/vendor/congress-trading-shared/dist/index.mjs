@@ -72,7 +72,7 @@ var LAG_BUCKETS = Object.freeze([
   Object.freeze({ label: "8-14d", max: 14 }),
   Object.freeze({ label: "15-30d", max: 30 }),
   Object.freeze({ label: "31-45d", max: 45 }),
-  Object.freeze({ label: "46-60d", max: 60 }),
+  Object.freeze({ label: "46-59d", max: 59 }),
   Object.freeze({ label: "60d+", max: null })
 ]);
 var DEFAULT_CONGRESS_TRADE_BASE_URL = "https://congress.trade";
@@ -206,10 +206,37 @@ function bracketMidpoint(min, max) {
   return 0;
 }
 var ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+var ISO_DATETIME_UTC = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]00:00)?$/;
 function isIsoDate(s) {
-  if (!ISO_DATE.test(s)) return false;
+  if (typeof s !== "string" || !ISO_DATE.test(s)) return false;
   const d = /* @__PURE__ */ new Date(s + "T00:00:00Z");
   return !isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+}
+function isIsoDateTime(s) {
+  if (typeof s !== "string" || !ISO_DATETIME_UTC.test(s)) return false;
+  const d = new Date(s);
+  return !isNaN(d.getTime());
+}
+function toIsoUtcString(input) {
+  if (input == null) return null;
+  if (input instanceof Date) {
+    return isNaN(input.getTime()) ? null : input.toISOString();
+  }
+  if (typeof input === "number") {
+    if (!Number.isFinite(input)) return null;
+    const d = new Date(input);
+    return isNaN(d.getTime()) ? null : d.toISOString();
+  }
+  if (typeof input === "string") {
+    const trimmed = input.trim();
+    if (!trimmed) return null;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+      return `${trimmed}T00:00:00.000Z`;
+    }
+    const d = new Date(trimmed);
+    return isNaN(d.getTime()) ? null : d.toISOString();
+  }
+  return null;
 }
 function daysBetween(a, b) {
   const da = /* @__PURE__ */ new Date(a + "T00:00:00Z");
@@ -225,16 +252,136 @@ function mergeRefs(a, b) {
   }
   return result;
 }
+function normalizeCompanyName(raw, ticker) {
+  if (!raw) return null;
+  let name = raw.trim();
+  if (!name) return null;
+  name = name.replace(/\s*\/\s*[a-zA-Z]{2}\s*(?:\/|\b)/gi, " ");
+  name = name.replace(/\s{2,}/g, " ").trim();
+  name = name.replace(/\s*\([A-Z]+(?:\s*:\s*[A-Z]+)?\)\s*$/i, "");
+  name = name.replace(/\/\s*$/g, "");
+  if (ticker && name.toLowerCase() === ticker.trim().toLowerCase()) {
+    return ticker.toUpperCase();
+  }
+  const TOKEN_MAP = {
+    // Suffixes
+    inc: "Inc.",
+    "inc.": "Inc.",
+    llc: "LLC",
+    "llc.": "LLC",
+    llp: "LLP",
+    "llp.": "LLP",
+    plc: "PLC",
+    "plc.": "PLC",
+    corp: "Corp.",
+    "corp.": "Corp.",
+    co: "Co.",
+    "co.": "Co.",
+    ltd: "Ltd.",
+    "ltd.": "Ltd.",
+    lp: "LP",
+    "lp.": "LP",
+    nv: "NV",
+    "nv.": "NV",
+    ag: "AG",
+    "ag.": "AG",
+    sa: "SA",
+    "sa.": "SA",
+    bv: "BV",
+    "bv.": "BV",
+    // Acronyms
+    cbs: "CBS",
+    ibm: "IBM",
+    att: "AT&T",
+    amd: "AMD",
+    bp: "BP",
+    kkr: "KKR",
+    msci: "MSCI",
+    nrg: "NRG",
+    pnc: "PNC",
+    ubs: "UBS",
+    etf: "ETF",
+    reit: "REIT",
+    usa: "USA",
+    sec: "SEC",
+    nyse: "NYSE",
+    nasdaq: "NASDAQ",
+    spdr: "SPDR",
+    tsmc: "TSMC",
+    asml: "ASML"
+  };
+  const KEEP_UPPER = /* @__PURE__ */ new Set([
+    "IBM",
+    "GE",
+    "CDW",
+    "AT&T",
+    "HP",
+    "AMD",
+    "LPL",
+    "ST",
+    "BEP",
+    "BWXT",
+    "LUV",
+    "TPR",
+    "SCI",
+    "WRB",
+    "ABT",
+    "FLEX",
+    "TSCO"
+  ]);
+  let wordIndex = 0;
+  name = name.replace(/[A-Za-z0-9&]+/g, (word) => {
+    wordIndex++;
+    if (ticker && word.toLowerCase() === ticker.toLowerCase()) {
+      return ticker.toUpperCase();
+    }
+    if (word.toUpperCase() === word && /[A-Z]/.test(word)) {
+      if (word.length <= 4 && !/[AEIOUY]/.test(word)) {
+        return word;
+      }
+      if (KEEP_UPPER.has(word)) return word;
+      if (["THE", "AND", "FOR", "OF", "IN", "ON", "AT", "TO"].includes(word)) {
+        return wordIndex === 1 ? word.charAt(0).toUpperCase() + word.substring(1).toLowerCase() : word.toLowerCase();
+      }
+      return word.charAt(0).toUpperCase() + word.substring(1).toLowerCase();
+    }
+    if (word.toLowerCase() === word && word.length > 1 && /[a-z]/.test(word)) {
+      if (["the", "and", "for", "of", "in", "on", "at", "to"].includes(word)) {
+        return wordIndex === 1 ? word.charAt(0).toUpperCase() + word.substring(1).toLowerCase() : word;
+      }
+      return word.charAt(0).toUpperCase() + word.substring(1);
+    }
+    return word;
+  });
+  name = name.replace(/\b([a-zA-Z&]+)(\.|\b)/g, (match, word, dot) => {
+    const key = (word + (dot || "")).toLowerCase();
+    const cleanKey = word.toLowerCase();
+    if (TOKEN_MAP[key]) {
+      return TOKEN_MAP[key];
+    }
+    if (TOKEN_MAP[cleanKey]) {
+      return TOKEN_MAP[cleanKey];
+    }
+    return match;
+  });
+  name = name.replace(/\s+([.,])/g, "$1");
+  name = name.replace(/\s{2,}/g, " ");
+  name = name.replace(/\.{2,}/g, ".");
+  return name.trim();
+}
 
 // src/schemas.ts
 var nullAsUndefined = (schema) => z.preprocess((value) => value === null ? void 0 : value, schema.optional());
 var IsoDateSchema = z.string().refine(isIsoDate, {
   message: "Expected a valid YYYY-MM-DD date"
 });
+var IsoDateTimeSchema = z.string().datetime({
+  message: "Expected a valid ISO 8601 UTC date-time string (e.g., 2026-07-22T14:30:00Z)"
+});
 var ChamberSchema = z.enum(["house", "senate", "executive"]);
 var PartyBucketSchema = z.enum(["D", "R", "O"]);
 var OwnerSchema = z.enum(["self", "spouse", "joint", "dependent"]);
-var TxTypeSchema = z.enum(["P", "S", "E"]);
+var TxTypeSchema = z.enum(["B", "S", "E", "P"]).transform((v) => v === "P" ? "B" : v);
 var AssetTypeCategorySchema = z.enum([
   "public_equity",
   "private_equity",
@@ -405,7 +552,30 @@ var AnalystRowSchema = z.object({
   targetMedian: nullAsUndefined(z.number()),
   analystCount: nullAsUndefined(z.number()),
   source: nullAsUndefined(z.string()),
-  updatedAt: z.string().optional()
+  updatedAt: z.string().optional(),
+  asOfTimestamp: nullAsUndefined(z.string())
+});
+var TradeEventRowSchema = z.object({
+  docId: z.string(),
+  chamber: ChamberSchema,
+  source: z.string(),
+  sourceUrl: nullAsUndefined(z.string()),
+  filerName: z.string(),
+  filerId: nullAsUndefined(z.string()),
+  party: nullAsUndefined(z.string()),
+  state: nullAsUndefined(z.string()),
+  district: nullAsUndefined(z.string()),
+  ticker: z.string(),
+  assetType: nullAsUndefined(z.string()),
+  assetDescription: nullAsUndefined(z.string()),
+  txType: z.string(),
+  transactionDate: IsoDateSchema,
+  transactionTimestamp: nullAsUndefined(z.string()),
+  disclosureDate: nullAsUndefined(IsoDateSchema),
+  disclosureTimestamp: nullAsUndefined(z.string()),
+  extractedTimestamp: nullAsUndefined(z.string()),
+  amountMin: nullAsUndefined(z.number()),
+  amountMax: nullAsUndefined(z.number())
 });
 var InsiderRowSchema = z.object({
   ticker: z.string(),
@@ -447,6 +617,7 @@ var SharePayloadSchema = z.object({
   shortVolume: z.array(ShortVolumeRowSchema).optional(),
   fundamentals: z.array(FundamentalRowSchema).optional(),
   analyst: z.array(AnalystRowSchema).optional(),
+  trades: z.array(TradeEventRowSchema).optional(),
   origin: z.string().optional()
 });
 var BundleResponseSchema = z.object({
@@ -462,6 +633,14 @@ var CongressEventSchema = z.object({
   seq: z.number().int().nonnegative().optional(),
   emittedAt: z.string().datetime().optional(),
   data: z.unknown().optional()
+});
+var CongressTradeDataSchema = z.object({
+  trades: z.array(CongressTransactionSchema).optional(),
+  transaction: CongressTransactionSchema.optional()
+});
+var CongressTradeEventSchema = CongressEventSchema.extend({
+  type: z.literal("congress.trade").or(z.literal("trade.new")),
+  data: CongressTradeDataSchema.optional()
 });
 var ConvictionTickerSchema = z.object({
   ticker: z.string(),
@@ -534,7 +713,18 @@ var MemberPerformanceSchema = z.object({
   medianReturn: z.number().nullable().optional(),
   medianExcess: z.number().nullable().optional(),
   avgReturn: z.number().nullable().optional(),
-  avgExcess: z.number().nullable().optional()
+  avgExcess: z.number().nullable().optional(),
+  /** Filing-date leg only: excess annualized for Top Performers parity. */
+  avgAnnualizedExcess: z.number().nullable().optional()
+});
+var MemberDualPerformanceSchema = z.object({
+  filerId: z.string().optional(),
+  side: z.string().optional(),
+  buyCount: z.number().optional(),
+  tradeDate: MemberPerformanceSchema.nullable().optional(),
+  filingDate: MemberPerformanceSchema.nullable().optional(),
+  performance: MemberPerformanceSchema.nullable().optional(),
+  note: z.string().optional()
 });
 var BacktestHorizonSchema = z.object({
   days: z.number(),
@@ -652,6 +842,38 @@ function parseSafe(schema, data) {
 
 // src/usageTelemetry.ts
 import { z as z2 } from "zod";
+var USAGE_TELEMETRY_SCHEMA_VERSION = 2;
+var API_USAGE_MONITOR_INGEST_PATH = "/api/ingest/usage";
+var API_USAGE_MONITOR_HEALTH_PATH = "/api/health";
+var API_USAGE_MONITOR_READY_PATH = "/api/ready";
+var USAGE_TELEMETRY_PRODUCERS = ["congress-trade", "socratic-trade", "usage-monitor"];
+var UsageTelemetryProducerSchema = z2.enum(USAGE_TELEMETRY_PRODUCERS);
+var USAGE_TELEMETRY_KNOWN_PROVIDERS = [
+  "openrouter",
+  "openai",
+  "anthropic",
+  "google-ai",
+  "mistral",
+  "finnhub",
+  "fmp",
+  "unusual-whales",
+  "firecrawl",
+  "sec-edgar",
+  "alpaca",
+  "polygon",
+  "quantconnect",
+  "hetzner",
+  "cloudflare",
+  "massive",
+  "tiingo",
+  "infisical",
+  "peer-app",
+  "external-api",
+  "seed-source",
+  "filing-source",
+  "subscriber-webhook"
+];
+var UsageTelemetryKnownProviderSchema = z2.enum(USAGE_TELEMETRY_KNOWN_PROVIDERS);
 var UsageTelemetryMetricTypeSchema = z2.enum([
   "usage",
   "cost",
@@ -662,9 +884,6 @@ var UsageTelemetryMetricTypeSchema = z2.enum([
   "limit",
   "quota_sync",
   "credit_balance",
-  // Recurring fixed-cost events materialized by the API Usage Monitor
-  // (subscription-materializer). Kept in the shared enum so producers can
-  // validate before send; monitor already accepts this value.
   "subscription"
 ]);
 var UsageTelemetryUnitSchema = z2.enum([
@@ -679,22 +898,28 @@ var UsageTelemetryUnitSchema = z2.enum([
   "row",
   "byte"
 ]);
-var UsageTelemetryBillingModeSchema = z2.enum([
-  "actual",
-  "estimated",
-  "manual"
+var UsageTelemetryBillingModeSchema = z2.enum(["actual", "estimated", "manual"]);
+var UsageTelemetryConfidenceSchema = z2.enum(["actual", "estimated", "manual"]);
+var UsageTelemetryLimitWindowSchema = z2.enum(["minute", "day", "month", "run"]);
+var UsageTelemetryCoverageScopeSchema = z2.enum([
+  "api_key",
+  "project",
+  "provider_connection",
+  "billing_account"
 ]);
-var UsageTelemetryConfidenceSchema = z2.enum([
-  "actual",
-  "estimated",
-  "manual"
+var UsageTelemetryCoverageModeSchema = z2.enum(["point", "window", "cumulative"]);
+var UsageTelemetryCoverageRelationshipSchema = z2.enum([
+  "disjoint",
+  "overlaps",
+  "supersedes",
+  "unknown"
 ]);
-var UsageTelemetryLimitWindowSchema = z2.enum([
-  "minute",
-  "day",
-  "month",
-  "run"
-]);
+var UsageTelemetryCoverageSchema = z2.object({
+  scope: UsageTelemetryCoverageScopeSchema,
+  mode: UsageTelemetryCoverageModeSchema,
+  relationship: UsageTelemetryCoverageRelationshipSchema.default("unknown"),
+  reportThrough: z2.string().datetime().optional()
+}).strict();
 var UsageTelemetryMetadataSchema = z2.record(
   z2.string(),
   z2.union([z2.string(), z2.number().finite(), z2.boolean(), z2.null()])
@@ -707,17 +932,16 @@ var UsageTelemetryMetadataSchema = z2.record(
   }
   return clean2;
 });
-var UsageTelemetryEventSchema = z2.object({
-  sourceApp: z2.string().trim().min(1).max(80),
+var UsageTelemetryMeasurementFields = {
   environment: z2.string().trim().min(1).max(80).optional(),
   provider: z2.string().trim().min(1).max(80),
   service: z2.string().trim().min(1).max(120).optional(),
-  // Per-project attribution name. Resolved to Project.id on the monitor at
-  // ingest. Deliberately NOT part of the idempotency basis — adding it there
-  // would rekey existing events.
   project: z2.string().trim().min(1).max(120).optional(),
   label: z2.string().trim().min(1).max(160).optional(),
-  keyRef: z2.string().trim().min(1).max(160).optional(),
+  producerKeyRef: z2.string().trim().min(1).max(160).optional(),
+  providerConnectionRef: z2.string().trim().min(1).max(160).optional(),
+  billingAccountRef: z2.string().trim().min(1).max(160).optional(),
+  coverage: UsageTelemetryCoverageSchema.optional(),
   billingMode: UsageTelemetryBillingModeSchema.default("estimated"),
   metricType: UsageTelemetryMetricTypeSchema.default("usage"),
   quantity: z2.number().finite().nonnegative().optional(),
@@ -732,26 +956,85 @@ var UsageTelemetryEventSchema = z2.object({
   windowStart: z2.string().datetime().optional(),
   windowEnd: z2.string().datetime().optional(),
   occurredAt: z2.string().datetime().optional(),
-  // The provider-side call/generation id (e.g. OpenRouter's `id` on a
-  // completions response), pushed so the monitor can verify reported cost
-  // against the provider's own record (e.g. `GET /api/v1/generation?id=...`).
-  // CONTRACT: deliberately NOT part of `deriveUsageTelemetryIdempotencyKey`'s
-  // basis — adding it there would change the key for existing/replayed
-  // events. Keep the idempotency key derivation limited to sourceApp,
-  // provider, metricType, keyRef, and occurredAt.
   providerRequestId: z2.string().trim().min(1).max(200).optional(),
-  metadata: UsageTelemetryMetadataSchema.optional(),
-  idempotencyKey: z2.string().trim().min(1).max(200).optional()
+  metadata: UsageTelemetryMetadataSchema.optional()
+};
+var UsageTelemetryV2EventSchema = z2.object({
+  eventId: z2.string().trim().min(1).max(200),
+  ...UsageTelemetryMeasurementFields
+}).strict();
+var UsageTelemetryV2BatchSchema = z2.object({
+  schemaVersion: z2.literal(USAGE_TELEMETRY_SCHEMA_VERSION),
+  producerId: z2.string().trim().min(1).max(80),
+  producerInstanceId: z2.string().trim().min(1).max(160).optional(),
+  events: z2.array(UsageTelemetryV2EventSchema).min(1).max(100)
+}).strict();
+var UsageTelemetryV2IngestAckSchema = z2.object({
+  ok: z2.literal(true),
+  schemaVersion: z2.literal(USAGE_TELEMETRY_SCHEMA_VERSION),
+  received: z2.number().int().nonnegative(),
+  persisted: z2.number().int().nonnegative(),
+  duplicates: z2.number().int().nonnegative(),
+  pruned: z2.number().int().nonnegative(),
+  rejected: z2.number().int().nonnegative()
+}).strict().superRefine((ack, ctx) => {
+  if (ack.persisted + ack.duplicates + ack.pruned + ack.rejected !== ack.received) {
+    ctx.addIssue({
+      code: "custom",
+      message: "Usage telemetry acknowledgement counts must sum to received"
+    });
+  }
+});
+var UsageTelemetryErrorCodeSchema = z2.enum([
+  "invalid_request",
+  "unauthorized",
+  "forbidden",
+  "rate_limited",
+  "receiver_busy",
+  "idempotency_conflict",
+  "payload_too_large",
+  "not_configured",
+  "internal_error"
+]);
+var UsageTelemetryV2ErrorResponseSchema = z2.object({
+  ok: z2.literal(false),
+  schemaVersion: z2.literal(USAGE_TELEMETRY_SCHEMA_VERSION),
+  error: z2.object({
+    code: UsageTelemetryErrorCodeSchema,
+    message: z2.string().trim().min(1).max(500),
+    retryable: z2.boolean(),
+    retryAfterSeconds: z2.number().int().nonnegative().optional()
+  }).strict()
+}).strict();
+var UsageTelemetryEventSchema = z2.object({
+  sourceApp: z2.string().trim().min(1).max(80),
+  eventId: z2.string().trim().min(1).max(200).optional(),
+  keyRef: z2.string().trim().min(1).max(160).optional(),
+  idempotencyKey: z2.string().trim().min(1).max(200).optional(),
+  ...UsageTelemetryMeasurementFields
 });
 var UsageTelemetryBatchSchema = z2.object({
   events: z2.array(UsageTelemetryEventSchema).min(1).max(100)
 });
-var UsageTelemetryIngestResponseSchema = z2.object({
-  ok: z2.boolean(),
-  accepted: z2.number().int().nonnegative(),
-  ignoredPruned: z2.number().int().nonnegative().optional()
+var LegacyUsageTelemetryOutboxEventSchema = UsageTelemetryEventSchema.extend({
+  idempotencyKey: z2.string().trim().min(1).max(200)
 });
-var API_USAGE_MONITOR_INGEST_PATH = "/api/ingest/usage";
+var LegacyUsageTelemetryOutboxBatchSchema = z2.object({
+  events: z2.array(LegacyUsageTelemetryOutboxEventSchema).min(1).max(100)
+});
+function generateFallbackUuid() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return "evt_" + Date.now().toString(36) + "_" + Math.random().toString(36).substring(2, 10);
+}
+function createUsageTelemetryV2Event(input) {
+  const eventId = input.eventId ?? generateFallbackUuid();
+  return UsageTelemetryV2EventSchema.parse({
+    ...input,
+    eventId
+  });
+}
 function usageMonitorIngestUrl(baseUrl) {
   return `${baseUrl.replace(/\/+$/, "")}${API_USAGE_MONITOR_INGEST_PATH}`;
 }
@@ -768,41 +1051,112 @@ async function deriveUsageTelemetryIdempotencyKey(event) {
   const basis = [event.sourceApp, event.provider, event.metricType, event.keyRef ?? "", event.occurredAt].map(encodeIdempotencyField).join("");
   return sha256Hex(basis);
 }
+async function deriveUsageTelemetryV2IdempotencyKey(input) {
+  const basis = ["usage-telemetry-v2", input.producerId, input.eventId].map(encodeIdempotencyField).join("");
+  return sha256Hex(basis);
+}
+var UsageTelemetryApiError = class extends Error {
+  status;
+  code;
+  retryable;
+  retryAfterSeconds;
+  constructor(input) {
+    super(`Usage telemetry ingest failed: ${input.message}`);
+    this.name = "UsageTelemetryApiError";
+    this.status = input.status;
+    this.code = input.code;
+    this.retryable = input.retryable;
+    this.retryAfterSeconds = input.retryAfterSeconds;
+  }
+};
+function retryAfterSeconds(header) {
+  if (!header) return void 0;
+  const seconds = Number(header);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.ceil(seconds);
+  const date = Date.parse(header);
+  if (!Number.isFinite(date)) return void 0;
+  return Math.max(0, Math.ceil((date - Date.now()) / 1e3));
+}
+function fallbackErrorCode(status) {
+  if (status === 401) return "unauthorized";
+  if (status === 403) return "forbidden";
+  if (status === 409) return "idempotency_conflict";
+  if (status === 413) return "payload_too_large";
+  if (status === 429) return "rate_limited";
+  if (status === 503) return "receiver_busy";
+  if (status >= 500) return "internal_error";
+  return "invalid_request";
+}
 function createUsageTelemetryClient(options) {
   const fetchImpl = options.fetchImpl ?? fetch;
   const url = usageMonitorIngestUrl(options.baseUrl);
-  return {
-    async send(events) {
-      const parsed = UsageTelemetryBatchSchema.parse({ events });
-      if (options.requireExplicitIdempotencyKey) {
-        const missingIndex = parsed.events.findIndex((event) => !event.idempotencyKey);
-        if (missingIndex >= 0) {
-          throw new Error(`Usage telemetry event ${missingIndex} requires an explicit idempotencyKey`);
-        }
+  const producerId = z2.string().trim().min(1).max(80).parse(options.producerId);
+  const producerInstanceId = options.producerInstanceId == null ? void 0 : z2.string().trim().min(1).max(160).parse(options.producerInstanceId);
+  async function post(wireEvents) {
+    const body = UsageTelemetryV2BatchSchema.parse({
+      schemaVersion: USAGE_TELEMETRY_SCHEMA_VERSION,
+      producerId,
+      producerInstanceId,
+      events: wireEvents
+    });
+    const res = await fetchImpl(url, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${options.token}`,
+        "content-type": "application/json",
+        "x-usage-telemetry-version": String(USAGE_TELEMETRY_SCHEMA_VERSION)
+      },
+      body: JSON.stringify(body)
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const parsedError = UsageTelemetryV2ErrorResponseSchema.safeParse(payload);
+      const headerRetryAfter = retryAfterSeconds(res.headers.get("retry-after"));
+      if (parsedError.success) {
+        throw new UsageTelemetryApiError({
+          status: res.status,
+          ...parsedError.data.error,
+          retryAfterSeconds: parsedError.data.error.retryAfterSeconds ?? headerRetryAfter
+        });
       }
-      const body = {
-        events: await Promise.all(
-          parsed.events.map(async (event) => {
-            if (event.idempotencyKey) return event;
-            const idempotencyKey = await deriveUsageTelemetryIdempotencyKey(event);
-            return idempotencyKey ? { ...event, idempotencyKey } : event;
-          })
-        )
-      };
-      const res = await fetchImpl(url, {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${options.token}`,
-          "content-type": "application/json"
-        },
-        body: JSON.stringify(body)
+      const code = fallbackErrorCode(res.status);
+      const message = typeof payload === "object" && payload && "error" in payload ? String(payload.error) : `HTTP ${res.status}`;
+      throw new UsageTelemetryApiError({
+        status: res.status,
+        code,
+        message,
+        retryable: res.status === 429 || res.status >= 500,
+        retryAfterSeconds: headerRetryAfter
       });
-      const payload = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        const message = typeof payload === "object" && payload && "error" in payload ? String(payload.error) : `HTTP ${res.status}`;
-        throw new Error(`Usage telemetry ingest failed: ${message}`);
-      }
-      return UsageTelemetryIngestResponseSchema.parse(payload);
+    }
+    return UsageTelemetryV2IngestAckSchema.parse(payload);
+  }
+  return {
+    /** Fresh producers send the strict v2 event shape: eventId is required and sourceApp is absent. */
+    async send(events) {
+      const wireEvents = events.map((event) => UsageTelemetryV2EventSchema.parse(event));
+      return post(wireEvents);
+    },
+    /**
+     * Bounded migration path for already-persisted v1 rows only. Their durable idempotencyKey is
+     * promoted to v2 eventId. Missing identity or source/producer drift fails before any request.
+     */
+    async sendLegacyOutbox(events) {
+      const parsed = LegacyUsageTelemetryOutboxBatchSchema.parse({ events });
+      const wireEvents = parsed.events.map((event, index) => {
+        if (event.sourceApp !== producerId) {
+          throw new Error(
+            `Legacy usage telemetry event ${index} sourceApp must match producerId ${producerId}`
+          );
+        }
+        const { sourceApp: _sourceApp, idempotencyKey: _idempotencyKey, keyRef, ...measurement } = event;
+        return UsageTelemetryV2EventSchema.parse({
+          ...measurement,
+          eventId: event.idempotencyKey,
+          producerKeyRef: event.producerKeyRef ?? keyRef
+        });
+      });
+      return post(wireEvents);
     }
   };
 }
@@ -886,8 +1240,25 @@ function parseResponse(schema, value, label) {
 }
 function normalizeSecurityRef(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
-  const ref = value;
-  return "sharesOutstanding" in ref ? ref : { ...ref, sharesOutstanding: null };
+  const ref = { ...value };
+  if (!("sharesOutstanding" in ref)) {
+    ref.sharesOutstanding = null;
+  }
+  if ("marketCapBucket" in ref) {
+    const validBuckets = ["mega", "large", "mid", "small", "micro", "nano"];
+    if (typeof ref.marketCapBucket === "string" && !validBuckets.includes(ref.marketCapBucket)) {
+      ref.marketCapBucket = null;
+    }
+  }
+  if ("currentPriceDate" in ref && typeof ref.currentPriceDate === "string") {
+    const match = ref.currentPriceDate.match(/^(\d{4}-\d{2}-\d{2})/);
+    if (match) {
+      ref.currentPriceDate = match[1];
+    } else {
+      ref.currentPriceDate = null;
+    }
+  }
+  return ref;
 }
 var CongressTradeHttpError = class extends Error {
   constructor(method, path, status) {
@@ -936,7 +1307,10 @@ var CongressTradeClient = class {
    * `clientId`; the field remains on the wire for compatibility with older servers.
    */
   async createSubscription(clientId, desiredSecret) {
-    const body = { delivery: "sse", clientId };
+    const body = { delivery: "sse" };
+    if (clientId) {
+      body.clientId = clientId;
+    }
     if (desiredSecret !== void 0) {
       if (desiredSecret.length < 16 || desiredSecret.length > 256) {
         throw new RangeError("desired subscription secret must be 16-256 characters");
@@ -1133,16 +1507,28 @@ var CongressTradeClient = class {
       "member leaderboard"
     ).members;
   }
+  /**
+   * Dual-anchor member performance (filingDate = copy-trade, tradeDate = politician timing).
+   * Prefer `filingDate` for App B trading decisions; keep `tradeDate` as context.
+   * Legacy single-leg clients can still read `performance` (= tradeDate).
+   */
   async getMemberPerformance(filerId) {
     if (!filerId) return null;
-    const data = parseResponse(
-      z4.object({ performance: MemberPerformanceSchema.nullable() }),
-      await this.getJson(
-        `${API_PATHS.ANALYTICS_MEMBER_PERFORMANCE}/${encodeURIComponent(filerId)}/performance`
-      ),
-      "member performance"
+    const raw = await this.getJson(
+      `${API_PATHS.ANALYTICS_MEMBER_PERFORMANCE}/${encodeURIComponent(filerId)}/performance`
     );
-    return data.performance;
+    if (!raw || typeof raw !== "object") {
+      throw new Error("Invalid member performance response");
+    }
+    const obj = raw;
+    const hasKeys = "filingDate" in obj || "tradeDate" in obj || "performance" in obj;
+    if (!hasKeys) throw new Error("Invalid member performance response");
+    const dual = MemberDualPerformanceSchema.safeParse(raw);
+    if (!dual.success) throw new Error("Invalid member performance response");
+    const d = dual.data;
+    if (d.performance && !d.tradeDate) d.tradeDate = d.performance;
+    if (d.filingDate || d.tradeDate || d.performance) return d;
+    return null;
   }
   async getConviction(opts = {}) {
     const params = new URLSearchParams();
@@ -1285,6 +1671,7 @@ function createCongressEvent(type, data, options) {
 
 // src/brackets.ts
 var STOCK_ACT_BRACKETS = Object.freeze([
+  Object.freeze({ min: 0, max: 1e3 }),
   Object.freeze({ min: 1001, max: 15e3 }),
   Object.freeze({ min: 15001, max: 5e4 }),
   Object.freeze({ min: 50001, max: 1e5 }),
@@ -1337,11 +1724,11 @@ var OperationGuardRejectionSchema = z5.discriminatedUnion("code", [
   OperationGuardRateLimitedSchema,
   OperationGuardInFlightSchema
 ]);
-function buildRateLimitedRejection(operation, retryAfterSeconds) {
+function buildRateLimitedRejection(operation, retryAfterSeconds2) {
   return OperationGuardRateLimitedSchema.parse({
     code: "rate_limited",
     operation,
-    retryAfterSeconds
+    retryAfterSeconds: retryAfterSeconds2
   });
 }
 function buildOperationInFlightRejection(operation, activeOperation) {
@@ -1391,9 +1778,166 @@ async function verifyCongressWebhookSignature(body, signatureHeader, secret) {
   }
   return isEqual;
 }
+
+// src/tickerLogoPolicy.ts
+var DEFAULT_LOGO_SOURCE_ORDER = Object.freeze([
+  "logodev",
+  "local",
+  "github"
+]);
+var SOCRATIC_DEFAULT_LOGO_SOURCE_ORDER = Object.freeze([
+  "github",
+  "logodev"
+]);
+function ghThenLd() {
+  return ["github", "logodev", "local"];
+}
+function ldOnly() {
+  return ["logodev", "local"];
+}
+function ldThenGh() {
+  return ["logodev", "github", "local"];
+}
+function ghDarkLdLight() {
+  return { light: ["logodev", "local"], dark: ["github", "logodev", "local"] };
+}
+var SEEDED_LOGO_POLICY = {
+  HUBB: { light: ldOnly(), dark: ldOnly() },
+  AAPL: ghDarkLdLight(),
+  NVDA: { light: ghThenLd(), dark: ghThenLd() },
+  WAB: { light: ghThenLd(), dark: ghThenLd() },
+  HONAV: { light: ldOnly(), dark: ldOnly(), notes: "Honeywell Aerospace disclosure name" },
+  TSCO: { light: ldOnly(), dark: ldOnly() },
+  ABT: { light: ghThenLd(), dark: ["github", "local"] },
+  BSX: { light: ghThenLd(), dark: ldOnly() },
+  SPCX: {
+    light: ["local", "logodev"],
+    dark: ["local", "logodev"],
+    notes: "Upload a SpaceX mark; logo.dev is a stopgap"
+  },
+  LYV: ghDarkLdLight(),
+  MA: { light: ghThenLd(), dark: ["github", "local"] },
+  MSFT: { light: ghThenLd(), dark: ghThenLd() },
+  HD: { light: ldThenGh(), dark: ldThenGh() },
+  IBM: {
+    light: ["local", "logodev"],
+    dark: ["github", "logodev", "local"],
+    notes: "Upload light and dark IBM marks"
+  },
+  MELI: { light: ghThenLd(), dark: ["github", "local"] },
+  META: { light: ghThenLd(), dark: ["github", "local"] },
+  UBER: {
+    light: ["local", "logodev"],
+    dark: ["github", "logodev", "local"],
+    notes: "Upload a light-mode Uber mark"
+  },
+  UNH: {
+    light: ["local", "logodev"],
+    dark: ["github", "local"],
+    notes: "Upload a light-mode UNH mark; GitHub on light is not usable"
+  },
+  ACN: { light: ghThenLd(), dark: ["github", "local"] },
+  AMZN: ghDarkLdLight(),
+  BLK: {
+    light: ["local", "logodev"],
+    dark: ["github", "logodev", "local"],
+    notes: "Upload a light-mode BlackRock mark"
+  },
+  "BRK-B": { light: ldOnly(), dark: ldOnly() },
+  "BRK.B": { light: ldOnly(), dark: ldOnly() },
+  BRKB: { light: ldOnly(), dark: ldOnly() }
+};
+var POLICY_ALIASES = {
+  GOOGL: "GOOGL",
+  GOOG: "GOOG",
+  HONAV: "HONAV",
+  BRK_B: "BRK-B"
+};
+function canonicalLogoPolicySymbol(symbol) {
+  const upper = symbol.trim().replace(/^\$/, "").toUpperCase();
+  if (POLICY_ALIASES[upper]) return POLICY_ALIASES[upper];
+  if (upper === "BRK.B" || upper === "BRKB" || upper === "BRK_B") return "BRK-B";
+  return upper;
+}
+function mergeLogoPolicy(overlay) {
+  return { ...SEEDED_LOGO_POLICY, ...overlay ?? {} };
+}
+function sourceOrderFor(symbol, theme, overlay, fallback = DEFAULT_LOGO_SOURCE_ORDER) {
+  const key = canonicalLogoPolicySymbol(symbol);
+  const merged = mergeLogoPolicy(overlay);
+  const row = merged[key] ?? merged[symbol.toUpperCase()];
+  const order = row?.[theme] ?? fallback;
+  return order.filter((src, i) => order.indexOf(src) === i);
+}
+function remoteLogoSources(order) {
+  return order.filter((src) => src === "github" || src === "logodev");
+}
+function parseLogoSources(value) {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  const out = [];
+  for (const item of value) {
+    if (item !== "local" && item !== "github" && item !== "logodev") return null;
+    if (!out.includes(item)) out.push(item);
+  }
+  return out.length ? out : null;
+}
+function parseSymbolLogoPolicy(value) {
+  if (!value || typeof value !== "object") return null;
+  const rec = value;
+  const light = parseLogoSources(rec.light);
+  const dark = parseLogoSources(rec.dark);
+  if (!light || !dark) return null;
+  const notes = typeof rec.notes === "string" && rec.notes.trim() ? rec.notes.trim() : void 0;
+  return notes ? { light, dark, notes } : { light, dark };
+}
+function parseTickerLogoPolicyMap(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const out = {};
+  for (const [rawKey, rawVal] of Object.entries(value)) {
+    const key = canonicalLogoPolicySymbol(rawKey);
+    if (!/^[A-Z0-9._-]{1,20}$/.test(key)) return null;
+    const parsed = parseSymbolLogoPolicy(rawVal);
+    if (!parsed) return null;
+    out[key] = parsed;
+  }
+  return out;
+}
+function policyFromLetters(letters) {
+  const ordered = letters.toUpperCase().replace(/[^ABCD]/g, "");
+  if (!ordered.length) return null;
+  const light = [];
+  const dark = [];
+  const seenL = /* @__PURE__ */ new Set();
+  const seenD = /* @__PURE__ */ new Set();
+  for (const ch of ordered) {
+    if (ch === "A" && !seenL.has("github")) {
+      light.push("github");
+      seenL.add("github");
+    }
+    if (ch === "C" && !seenL.has("logodev")) {
+      light.push("logodev");
+      seenL.add("logodev");
+    }
+    if (ch === "B" && !seenD.has("github")) {
+      dark.push("github");
+      seenD.add("github");
+    }
+    if (ch === "D" && !seenD.has("logodev")) {
+      dark.push("logodev");
+      seenD.add("logodev");
+    }
+  }
+  if (!light.length) light.push("local");
+  if (!dark.length) dark.push("local");
+  if (!light.includes("local")) light.push("local");
+  if (!dark.includes("local")) dark.push("local");
+  return { light, dark };
+}
 export {
   API_PATHS,
+  API_USAGE_MONITOR_HEALTH_PATH,
   API_USAGE_MONITOR_INGEST_PATH,
+  API_USAGE_MONITOR_READY_PATH,
   APP_B_ORIGIN_TAG as APP_B_ORIGIN,
   APP_B_ORIGIN_TAG,
   AmountBracketSchema,
@@ -1414,19 +1958,26 @@ export {
   CongressEventSchema,
   CongressEventTypeSchema,
   CongressTradeClient,
+  CongressTradeDataSchema,
+  CongressTradeEventSchema,
   CongressTradeHttpError,
   CongressTransactionReadSchema,
   CongressTransactionSchema,
   ConvictionTickerSchema,
   DEFAULT_CONGRESS_TRADE_BASE_URL,
+  DEFAULT_LOGO_SOURCE_ORDER,
   DEFAULT_TRANSACTIONS_LIMIT,
   FundamentalRowSchema,
   InsiderReadRowSchema,
   InsiderRowSchema,
   IsoDateSchema,
+  IsoDateTimeSchema,
   LAG_BUCKETS,
+  LegacyUsageTelemetryOutboxBatchSchema,
+  LegacyUsageTelemetryOutboxEventSchema,
   MAX_REFS_BATCH,
   MKT_CAP_THRESHOLDS,
+  MemberDualPerformanceSchema,
   MemberLeaderSchema,
   MemberPerformanceSchema,
   MktCapBucketSchema,
@@ -1437,6 +1988,8 @@ export {
   PartyBucketSchema,
   PriceCloseSchema,
   PriceSeriesSchema,
+  SEEDED_LOGO_POLICY,
+  SOCRATIC_DEFAULT_LOGO_SOURCE_ORDER,
   STOCK_ACT_BRACKETS,
   SecurityRefInputSchema,
   SecurityRefSchema,
@@ -1453,53 +2006,82 @@ export {
   TICKER_RENAMES,
   TickerBacktestSchema,
   TickerLeaderSchema,
+  TradeEventRowSchema,
   TransactionsPageSchema,
   TransactionsQuerySchema,
   TxTypeSchema,
+  USAGE_TELEMETRY_KNOWN_PROVIDERS,
+  USAGE_TELEMETRY_PRODUCERS,
+  USAGE_TELEMETRY_SCHEMA_VERSION,
+  UsageTelemetryApiError,
   UsageTelemetryBatchSchema,
   UsageTelemetryBillingModeSchema,
   UsageTelemetryConfidenceSchema,
+  UsageTelemetryCoverageModeSchema,
+  UsageTelemetryCoverageRelationshipSchema,
+  UsageTelemetryCoverageSchema,
+  UsageTelemetryCoverageScopeSchema,
+  UsageTelemetryErrorCodeSchema,
   UsageTelemetryEventSchema,
-  UsageTelemetryIngestResponseSchema,
+  UsageTelemetryApiError as UsageTelemetryIngestError,
+  UsageTelemetryKnownProviderSchema,
   UsageTelemetryLimitWindowSchema,
   UsageTelemetryMetadataSchema,
   UsageTelemetryMetricTypeSchema,
+  UsageTelemetryProducerSchema,
   UsageTelemetryUnitSchema,
+  UsageTelemetryV2BatchSchema,
+  UsageTelemetryV2ErrorResponseSchema,
+  UsageTelemetryV2EventSchema,
+  UsageTelemetryV2IngestAckSchema,
   WELL_FORMED_TICKER,
   WINDOW_PRESETS,
   bracketMidpoint,
   buildCallClassifier,
   buildOperationInFlightRejection,
   buildRateLimitedRejection,
+  canonicalLogoPolicySymbol,
   classifyTickerAlias,
   clean,
   createCongressEvent,
   createUsageTelemetryClient,
+  createUsageTelemetryV2Event,
   daysBetween,
   deriveUsageTelemetryIdempotencyKey,
+  deriveUsageTelemetryV2IdempotencyKey,
   getOperationGuardHttpStatus,
   isIsoDate,
+  isIsoDateTime,
   isPlaceholderTicker,
   isValidBracket,
   isWellFormedTicker,
   marketCapBucket,
   matchBracket,
+  mergeLogoPolicy,
   mergeRefs,
   nearestBracket,
+  normalizeCompanyName,
   normalizePreferredTickerVariant,
   normalizeSecurityRef,
   normalizeTicker,
   openrouterRequestEnrichment,
   parseArray,
+  parseLogoSources,
   parseSafe,
+  parseSymbolLogoPolicy,
+  parseTickerLogoPolicyMap,
+  policyFromLetters,
   punctuationVariants,
+  remoteLogoSources,
   resolveContinuousTicker,
   resolvePreferredTickerFromAssetName,
   resolveTickerAlias,
   resolveTickerDeterministic,
   signCongressWebhook,
+  sourceOrderFor,
   stripPreferredSeries,
   telemetryEventClassifier,
+  toIsoUtcString,
   usageMonitorIngestUrl,
   verifyCongressWebhookSignature
 };

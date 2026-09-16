@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.6.0] — 2026-08-23
+
+### Added
+- `tickerLogoPolicy`: shared A/B/C/D company-logo source order (GitHub pack vs
+  logo.dev, light vs dark) plus the 2026-08-23 Congress.Trade top-30 seed map.
+  Apps keep their own serving, disk/KV cache, and admin jury. `sourceOrderFor`
+  accepts a fallback so Socratic.Trade can keep GitHub-first for ungraded names.
+
 ## [2.5.2] — 2026-08-11
 
 ### Changed
@@ -308,7 +316,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Package prepared for install via `prepare` build script and CI.
 - GitHub Actions CI pipeline (typecheck, build, audit).
 
-[Unreleased]: https://github.com/jaywedgeworth22/congress-trading-shared/compare/v2.0.0...HEAD
+[Unreleased]: https://github.com/jaywedgeworth22/congress-trading-shared/compare/v2.6.0...HEAD
+[2.6.0]: https://github.com/jaywedgeworth22/congress-trading-shared/compare/v2.5.2...v2.6.0
+[2.5.2]: https://github.com/jaywedgeworth22/congress-trading-shared/compare/v2.5.1...v2.5.2
 [2.0.0]: https://github.com/jaywedgeworth22/congress-trading-shared/compare/v1.11.1...v2.0.0
 [1.11.1]: https://github.com/jaywedgeworth22/congress-trading-shared/compare/v1.11.0...v1.11.1
 [1.11.0]: https://github.com/jaywedgeworth22/congress-trading-shared/compare/v1.10.0...v1.11.0

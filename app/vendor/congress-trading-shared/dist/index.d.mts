@@ -1,6 +1,8 @@
 import { z } from 'zod';
 
 declare const IsoDateSchema: z.ZodString;
+declare const IsoDateTimeSchema: z.ZodString;
+type IsoDateTime = z.infer<typeof IsoDateTimeSchema>;
 declare const ChamberSchema: z.ZodEnum<{
     house: "house";
     senate: "senate";
@@ -20,12 +22,14 @@ declare const OwnerSchema: z.ZodEnum<{
     dependent: "dependent";
 }>;
 type Owner = z.infer<typeof OwnerSchema>;
-declare const TxTypeSchema: z.ZodEnum<{
-    P: "P";
+/** B = Buy, S = Sell, E = Exchange. Legacy form letter P (Purchase) is accepted on parse and coerced to B. */
+declare const TxTypeSchema: z.ZodPipe<z.ZodEnum<{
+    B: "B";
     S: "S";
     E: "E";
-}>;
-type TxType = z.infer<typeof TxTypeSchema>;
+    P: "P";
+}>, z.ZodTransform<"B" | "S" | "E", "B" | "S" | "E" | "P">>;
+type TxType = "B" | "S" | "E";
 declare const AssetTypeCategorySchema: z.ZodEnum<{
     public_equity: "public_equity";
     private_equity: "private_equity";
@@ -174,11 +178,12 @@ declare const CongressTransactionSchema: z.ZodObject<{
         unknown: "unknown";
     }>>>;
     assetTypeCategoryLabel: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    txType: z.ZodEnum<{
-        P: "P";
+    txType: z.ZodPipe<z.ZodEnum<{
+        B: "B";
         S: "S";
         E: "E";
-    }>;
+        P: "P";
+    }>, z.ZodTransform<"B" | "S" | "E", "B" | "S" | "E" | "P">>;
     amountMin: z.ZodNullable<z.ZodNumber>;
     amountMax: z.ZodNullable<z.ZodNumber>;
     estValue: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
@@ -261,11 +266,12 @@ declare const CongressTransactionReadSchema: z.ZodObject<{
         unknown: "unknown";
     }>>>;
     assetTypeCategoryLabel: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-    txType: z.ZodEnum<{
-        P: "P";
+    txType: z.ZodPipe<z.ZodEnum<{
+        B: "B";
         S: "S";
         E: "E";
-    }>;
+        P: "P";
+    }>, z.ZodTransform<"B" | "S" | "E", "B" | "S" | "E" | "P">>;
     amountMin: z.ZodNullable<z.ZodNumber>;
     amountMax: z.ZodNullable<z.ZodNumber>;
     estValue: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
@@ -348,11 +354,12 @@ declare const TransactionsPageSchema: z.ZodObject<{
             unknown: "unknown";
         }>>>;
         assetTypeCategoryLabel: z.ZodOptional<z.ZodNullable<z.ZodString>>;
-        txType: z.ZodEnum<{
-            P: "P";
+        txType: z.ZodPipe<z.ZodEnum<{
+            B: "B";
             S: "S";
             E: "E";
-        }>;
+            P: "P";
+        }>, z.ZodTransform<"B" | "S" | "E", "B" | "S" | "E" | "P">>;
         amountMin: z.ZodNullable<z.ZodNumber>;
         amountMax: z.ZodNullable<z.ZodNumber>;
         estValue: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
@@ -412,17 +419,19 @@ declare const TransactionsQuerySchema: z.ZodObject<{
         senate: "senate";
         executive: "executive";
     }>>;
-    type: z.ZodOptional<z.ZodEnum<{
-        P: "P";
+    type: z.ZodOptional<z.ZodPipe<z.ZodEnum<{
+        B: "B";
         S: "S";
         E: "E";
-    }>>;
+        P: "P";
+    }>, z.ZodTransform<"B" | "S" | "E", "B" | "S" | "E" | "P">>>;
     limit: z.ZodOptional<z.ZodNumber>;
     order: z.ZodOptional<z.ZodEnum<{
         asc: "asc";
         desc: "desc";
     }>>;
 }, z.core.$strip>;
+type TransactionsQueryInput = z.input<typeof TransactionsQuerySchema>;
 type TransactionsQuery = z.infer<typeof TransactionsQuerySchema>;
 declare const FundamentalRowSchema: z.ZodObject<{
     ticker: z.ZodString;
@@ -456,8 +465,36 @@ declare const AnalystRowSchema: z.ZodObject<{
     analystCount: z.ZodPreprocess<z.ZodOptional<z.ZodNumber>>;
     source: z.ZodPreprocess<z.ZodOptional<z.ZodString>>;
     updatedAt: z.ZodOptional<z.ZodString>;
+    asOfTimestamp: z.ZodPreprocess<z.ZodOptional<z.ZodString>>;
 }, z.core.$strip>;
 type AnalystRow = z.infer<typeof AnalystRowSchema>;
+declare const TradeEventRowSchema: z.ZodObject<{
+    docId: z.ZodString;
+    chamber: z.ZodEnum<{
+        house: "house";
+        senate: "senate";
+        executive: "executive";
+    }>;
+    source: z.ZodString;
+    sourceUrl: z.ZodPreprocess<z.ZodOptional<z.ZodString>>;
+    filerName: z.ZodString;
+    filerId: z.ZodPreprocess<z.ZodOptional<z.ZodString>>;
+    party: z.ZodPreprocess<z.ZodOptional<z.ZodString>>;
+    state: z.ZodPreprocess<z.ZodOptional<z.ZodString>>;
+    district: z.ZodPreprocess<z.ZodOptional<z.ZodString>>;
+    ticker: z.ZodString;
+    assetType: z.ZodPreprocess<z.ZodOptional<z.ZodString>>;
+    assetDescription: z.ZodPreprocess<z.ZodOptional<z.ZodString>>;
+    txType: z.ZodString;
+    transactionDate: z.ZodString;
+    transactionTimestamp: z.ZodPreprocess<z.ZodOptional<z.ZodString>>;
+    disclosureDate: z.ZodPreprocess<z.ZodOptional<z.ZodString>>;
+    disclosureTimestamp: z.ZodPreprocess<z.ZodOptional<z.ZodString>>;
+    extractedTimestamp: z.ZodPreprocess<z.ZodOptional<z.ZodString>>;
+    amountMin: z.ZodPreprocess<z.ZodOptional<z.ZodNumber>>;
+    amountMax: z.ZodPreprocess<z.ZodOptional<z.ZodNumber>>;
+}, z.core.$strip>;
+type TradeEventRow = z.infer<typeof TradeEventRowSchema>;
 declare const InsiderRowSchema: z.ZodObject<{
     ticker: z.ZodString;
     date: z.ZodString;
@@ -603,6 +640,33 @@ declare const SharePayloadSchema: z.ZodObject<{
         analystCount: z.ZodPreprocess<z.ZodOptional<z.ZodNumber>>;
         source: z.ZodPreprocess<z.ZodOptional<z.ZodString>>;
         updatedAt: z.ZodOptional<z.ZodString>;
+        asOfTimestamp: z.ZodPreprocess<z.ZodOptional<z.ZodString>>;
+    }, z.core.$strip>>>;
+    trades: z.ZodOptional<z.ZodArray<z.ZodObject<{
+        docId: z.ZodString;
+        chamber: z.ZodEnum<{
+            house: "house";
+            senate: "senate";
+            executive: "executive";
+        }>;
+        source: z.ZodString;
+        sourceUrl: z.ZodPreprocess<z.ZodOptional<z.ZodString>>;
+        filerName: z.ZodString;
+        filerId: z.ZodPreprocess<z.ZodOptional<z.ZodString>>;
+        party: z.ZodPreprocess<z.ZodOptional<z.ZodString>>;
+        state: z.ZodPreprocess<z.ZodOptional<z.ZodString>>;
+        district: z.ZodPreprocess<z.ZodOptional<z.ZodString>>;
+        ticker: z.ZodString;
+        assetType: z.ZodPreprocess<z.ZodOptional<z.ZodString>>;
+        assetDescription: z.ZodPreprocess<z.ZodOptional<z.ZodString>>;
+        txType: z.ZodString;
+        transactionDate: z.ZodString;
+        transactionTimestamp: z.ZodPreprocess<z.ZodOptional<z.ZodString>>;
+        disclosureDate: z.ZodPreprocess<z.ZodOptional<z.ZodString>>;
+        disclosureTimestamp: z.ZodPreprocess<z.ZodOptional<z.ZodString>>;
+        extractedTimestamp: z.ZodPreprocess<z.ZodOptional<z.ZodString>>;
+        amountMin: z.ZodPreprocess<z.ZodOptional<z.ZodNumber>>;
+        amountMax: z.ZodPreprocess<z.ZodOptional<z.ZodNumber>>;
     }, z.core.$strip>>>;
     origin: z.ZodOptional<z.ZodString>;
 }, z.core.$strip>;
@@ -681,6 +745,362 @@ declare const CongressEventSchema: z.ZodObject<{
     data: z.ZodOptional<z.ZodUnknown>;
 }, z.core.$strip>;
 type CongressEvent = z.infer<typeof CongressEventSchema>;
+declare const CongressTradeDataSchema: z.ZodObject<{
+    trades: z.ZodOptional<z.ZodArray<z.ZodObject<{
+        id: z.ZodString;
+        docId: z.ZodString;
+        filerId: z.ZodNullable<z.ZodString>;
+        txDate: z.ZodNullable<z.ZodString>;
+        owner: z.ZodNullable<z.ZodEnum<{
+            self: "self";
+            spouse: "spouse";
+            joint: "joint";
+            dependent: "dependent";
+        }>>;
+        assetName: z.ZodString;
+        ticker: z.ZodNullable<z.ZodString>;
+        assetType: z.ZodNullable<z.ZodString>;
+        assetTypeName: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        assetTypeCategory: z.ZodOptional<z.ZodNullable<z.ZodEnum<{
+            public_equity: "public_equity";
+            private_equity: "private_equity";
+            option: "option";
+            fund: "fund";
+            fixed_income_government: "fixed_income_government";
+            fixed_income_corporate: "fixed_income_corporate";
+            fixed_income_asset_backed: "fixed_income_asset_backed";
+            cash: "cash";
+            retirement_or_529: "retirement_or_529";
+            real_estate: "real_estate";
+            private_fund: "private_fund";
+            business_interest: "business_interest";
+            crypto: "crypto";
+            insurance_annuity: "insurance_annuity";
+            trust: "trust";
+            commodity_collectible: "commodity_collectible";
+            derivative: "derivative";
+            intellectual_property: "intellectual_property";
+            receivable: "receivable";
+            other_security: "other_security";
+            other: "other";
+            unknown: "unknown";
+        }>>>;
+        assetTypeCategoryLabel: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        txType: z.ZodPipe<z.ZodEnum<{
+            B: "B";
+            S: "S";
+            E: "E";
+            P: "P";
+        }>, z.ZodTransform<"B" | "S" | "E", "B" | "S" | "E" | "P">>;
+        amountMin: z.ZodNullable<z.ZodNumber>;
+        amountMax: z.ZodNullable<z.ZodNumber>;
+        estValue: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+        isOption: z.ZodBoolean;
+        capGainsOver200: z.ZodBoolean;
+        rawText: z.ZodString;
+        filingStatus: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        subholding: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        location: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        description: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        supplementalText: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        confidence: z.ZodOptional<z.ZodNumber>;
+        source: z.ZodOptional<z.ZodEnum<{
+            primary: "primary";
+            seed_dataset: "seed_dataset";
+            manual: "manual";
+        }>>;
+        rowKey: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        createdAt: z.ZodOptional<z.ZodString>;
+        cursorSeq: z.ZodOptional<z.ZodNumber>;
+        chamber: z.ZodOptional<z.ZodNullable<z.ZodEnum<{
+            house: "house";
+            senate: "senate";
+            executive: "executive";
+        }>>>;
+        memberName: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        filedDate: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        fullName: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        state: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        photoUrl: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        firstSeenAt: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        sourceUrl: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        refCompanyName: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        refSector: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        refMarketCap: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+        refMarketCapBucket: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        refCountry: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        refExchangeShort: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        refAssetClass: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    }, z.core.$strip>>>;
+    transaction: z.ZodOptional<z.ZodObject<{
+        id: z.ZodString;
+        docId: z.ZodString;
+        filerId: z.ZodNullable<z.ZodString>;
+        txDate: z.ZodNullable<z.ZodString>;
+        owner: z.ZodNullable<z.ZodEnum<{
+            self: "self";
+            spouse: "spouse";
+            joint: "joint";
+            dependent: "dependent";
+        }>>;
+        assetName: z.ZodString;
+        ticker: z.ZodNullable<z.ZodString>;
+        assetType: z.ZodNullable<z.ZodString>;
+        assetTypeName: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        assetTypeCategory: z.ZodOptional<z.ZodNullable<z.ZodEnum<{
+            public_equity: "public_equity";
+            private_equity: "private_equity";
+            option: "option";
+            fund: "fund";
+            fixed_income_government: "fixed_income_government";
+            fixed_income_corporate: "fixed_income_corporate";
+            fixed_income_asset_backed: "fixed_income_asset_backed";
+            cash: "cash";
+            retirement_or_529: "retirement_or_529";
+            real_estate: "real_estate";
+            private_fund: "private_fund";
+            business_interest: "business_interest";
+            crypto: "crypto";
+            insurance_annuity: "insurance_annuity";
+            trust: "trust";
+            commodity_collectible: "commodity_collectible";
+            derivative: "derivative";
+            intellectual_property: "intellectual_property";
+            receivable: "receivable";
+            other_security: "other_security";
+            other: "other";
+            unknown: "unknown";
+        }>>>;
+        assetTypeCategoryLabel: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        txType: z.ZodPipe<z.ZodEnum<{
+            B: "B";
+            S: "S";
+            E: "E";
+            P: "P";
+        }>, z.ZodTransform<"B" | "S" | "E", "B" | "S" | "E" | "P">>;
+        amountMin: z.ZodNullable<z.ZodNumber>;
+        amountMax: z.ZodNullable<z.ZodNumber>;
+        estValue: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+        isOption: z.ZodBoolean;
+        capGainsOver200: z.ZodBoolean;
+        rawText: z.ZodString;
+        filingStatus: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        subholding: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        location: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        description: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        supplementalText: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        confidence: z.ZodOptional<z.ZodNumber>;
+        source: z.ZodOptional<z.ZodEnum<{
+            primary: "primary";
+            seed_dataset: "seed_dataset";
+            manual: "manual";
+        }>>;
+        rowKey: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        createdAt: z.ZodOptional<z.ZodString>;
+        cursorSeq: z.ZodOptional<z.ZodNumber>;
+        chamber: z.ZodOptional<z.ZodNullable<z.ZodEnum<{
+            house: "house";
+            senate: "senate";
+            executive: "executive";
+        }>>>;
+        memberName: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        filedDate: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        fullName: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        state: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        photoUrl: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        firstSeenAt: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        sourceUrl: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        refCompanyName: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        refSector: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        refMarketCap: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+        refMarketCapBucket: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        refCountry: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        refExchangeShort: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        refAssetClass: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+    }, z.core.$strip>>;
+}, z.core.$strip>;
+type CongressTradeData = z.infer<typeof CongressTradeDataSchema>;
+declare const CongressTradeEventSchema: z.ZodObject<{
+    id: z.ZodOptional<z.ZodString>;
+    seq: z.ZodOptional<z.ZodNumber>;
+    emittedAt: z.ZodOptional<z.ZodString>;
+    type: z.ZodUnion<[z.ZodLiteral<"congress.trade">, z.ZodLiteral<"trade.new">]>;
+    data: z.ZodOptional<z.ZodObject<{
+        trades: z.ZodOptional<z.ZodArray<z.ZodObject<{
+            id: z.ZodString;
+            docId: z.ZodString;
+            filerId: z.ZodNullable<z.ZodString>;
+            txDate: z.ZodNullable<z.ZodString>;
+            owner: z.ZodNullable<z.ZodEnum<{
+                self: "self";
+                spouse: "spouse";
+                joint: "joint";
+                dependent: "dependent";
+            }>>;
+            assetName: z.ZodString;
+            ticker: z.ZodNullable<z.ZodString>;
+            assetType: z.ZodNullable<z.ZodString>;
+            assetTypeName: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            assetTypeCategory: z.ZodOptional<z.ZodNullable<z.ZodEnum<{
+                public_equity: "public_equity";
+                private_equity: "private_equity";
+                option: "option";
+                fund: "fund";
+                fixed_income_government: "fixed_income_government";
+                fixed_income_corporate: "fixed_income_corporate";
+                fixed_income_asset_backed: "fixed_income_asset_backed";
+                cash: "cash";
+                retirement_or_529: "retirement_or_529";
+                real_estate: "real_estate";
+                private_fund: "private_fund";
+                business_interest: "business_interest";
+                crypto: "crypto";
+                insurance_annuity: "insurance_annuity";
+                trust: "trust";
+                commodity_collectible: "commodity_collectible";
+                derivative: "derivative";
+                intellectual_property: "intellectual_property";
+                receivable: "receivable";
+                other_security: "other_security";
+                other: "other";
+                unknown: "unknown";
+            }>>>;
+            assetTypeCategoryLabel: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            txType: z.ZodPipe<z.ZodEnum<{
+                B: "B";
+                S: "S";
+                E: "E";
+                P: "P";
+            }>, z.ZodTransform<"B" | "S" | "E", "B" | "S" | "E" | "P">>;
+            amountMin: z.ZodNullable<z.ZodNumber>;
+            amountMax: z.ZodNullable<z.ZodNumber>;
+            estValue: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+            isOption: z.ZodBoolean;
+            capGainsOver200: z.ZodBoolean;
+            rawText: z.ZodString;
+            filingStatus: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            subholding: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            location: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            description: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            supplementalText: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            confidence: z.ZodOptional<z.ZodNumber>;
+            source: z.ZodOptional<z.ZodEnum<{
+                primary: "primary";
+                seed_dataset: "seed_dataset";
+                manual: "manual";
+            }>>;
+            rowKey: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            createdAt: z.ZodOptional<z.ZodString>;
+            cursorSeq: z.ZodOptional<z.ZodNumber>;
+            chamber: z.ZodOptional<z.ZodNullable<z.ZodEnum<{
+                house: "house";
+                senate: "senate";
+                executive: "executive";
+            }>>>;
+            memberName: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            filedDate: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            fullName: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            state: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            photoUrl: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            firstSeenAt: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            sourceUrl: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            refCompanyName: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            refSector: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            refMarketCap: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+            refMarketCapBucket: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            refCountry: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            refExchangeShort: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            refAssetClass: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        }, z.core.$strip>>>;
+        transaction: z.ZodOptional<z.ZodObject<{
+            id: z.ZodString;
+            docId: z.ZodString;
+            filerId: z.ZodNullable<z.ZodString>;
+            txDate: z.ZodNullable<z.ZodString>;
+            owner: z.ZodNullable<z.ZodEnum<{
+                self: "self";
+                spouse: "spouse";
+                joint: "joint";
+                dependent: "dependent";
+            }>>;
+            assetName: z.ZodString;
+            ticker: z.ZodNullable<z.ZodString>;
+            assetType: z.ZodNullable<z.ZodString>;
+            assetTypeName: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            assetTypeCategory: z.ZodOptional<z.ZodNullable<z.ZodEnum<{
+                public_equity: "public_equity";
+                private_equity: "private_equity";
+                option: "option";
+                fund: "fund";
+                fixed_income_government: "fixed_income_government";
+                fixed_income_corporate: "fixed_income_corporate";
+                fixed_income_asset_backed: "fixed_income_asset_backed";
+                cash: "cash";
+                retirement_or_529: "retirement_or_529";
+                real_estate: "real_estate";
+                private_fund: "private_fund";
+                business_interest: "business_interest";
+                crypto: "crypto";
+                insurance_annuity: "insurance_annuity";
+                trust: "trust";
+                commodity_collectible: "commodity_collectible";
+                derivative: "derivative";
+                intellectual_property: "intellectual_property";
+                receivable: "receivable";
+                other_security: "other_security";
+                other: "other";
+                unknown: "unknown";
+            }>>>;
+            assetTypeCategoryLabel: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            txType: z.ZodPipe<z.ZodEnum<{
+                B: "B";
+                S: "S";
+                E: "E";
+                P: "P";
+            }>, z.ZodTransform<"B" | "S" | "E", "B" | "S" | "E" | "P">>;
+            amountMin: z.ZodNullable<z.ZodNumber>;
+            amountMax: z.ZodNullable<z.ZodNumber>;
+            estValue: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+            isOption: z.ZodBoolean;
+            capGainsOver200: z.ZodBoolean;
+            rawText: z.ZodString;
+            filingStatus: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            subholding: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            location: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            description: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            supplementalText: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            confidence: z.ZodOptional<z.ZodNumber>;
+            source: z.ZodOptional<z.ZodEnum<{
+                primary: "primary";
+                seed_dataset: "seed_dataset";
+                manual: "manual";
+            }>>;
+            rowKey: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            createdAt: z.ZodOptional<z.ZodString>;
+            cursorSeq: z.ZodOptional<z.ZodNumber>;
+            chamber: z.ZodOptional<z.ZodNullable<z.ZodEnum<{
+                house: "house";
+                senate: "senate";
+                executive: "executive";
+            }>>>;
+            memberName: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            filedDate: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            fullName: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            state: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            photoUrl: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            firstSeenAt: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            sourceUrl: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            refCompanyName: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            refSector: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            refMarketCap: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+            refMarketCapBucket: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            refCountry: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            refExchangeShort: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+            refAssetClass: z.ZodOptional<z.ZodNullable<z.ZodString>>;
+        }, z.core.$strip>>;
+    }, z.core.$strip>>;
+}, z.core.$strip>;
+type CongressTradeEvent = z.infer<typeof CongressTradeEventSchema>;
 declare const ConvictionTickerSchema: z.ZodObject<{
     ticker: z.ZodString;
     name: z.ZodPreprocess<z.ZodOptional<z.ZodString>>;
@@ -764,6 +1184,7 @@ declare const MemberLeaderSchema: z.ZodObject<{
     netSentiment: z.ZodOptional<z.ZodNumber>;
 }, z.core.$strip>;
 type MemberLeader = z.infer<typeof MemberLeaderSchema>;
+/** One performance leg (trade-date skill or filing-date copy-trade). */
 declare const MemberPerformanceSchema: z.ZodObject<{
     tradeCount: z.ZodOptional<z.ZodNumber>;
     scoredCount: z.ZodOptional<z.ZodNumber>;
@@ -772,8 +1193,54 @@ declare const MemberPerformanceSchema: z.ZodObject<{
     medianExcess: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
     avgReturn: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
     avgExcess: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+    avgAnnualizedExcess: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
 }, z.core.$strip>;
 type MemberPerformance = z.infer<typeof MemberPerformanceSchema>;
+/**
+ * Dual-anchor member performance from App A
+ * `GET /api/analytics/member/:filerId/performance`.
+ *
+ * - `tradeDate` — stock move since the politician's trade vs S&P (timing skill)
+ * - `filingDate` — move since public disclosure vs S&P (copy-trade for App B)
+ * - `performance` — legacy alias of `tradeDate` for older clients
+ */
+declare const MemberDualPerformanceSchema: z.ZodObject<{
+    filerId: z.ZodOptional<z.ZodString>;
+    side: z.ZodOptional<z.ZodString>;
+    buyCount: z.ZodOptional<z.ZodNumber>;
+    tradeDate: z.ZodOptional<z.ZodNullable<z.ZodObject<{
+        tradeCount: z.ZodOptional<z.ZodNumber>;
+        scoredCount: z.ZodOptional<z.ZodNumber>;
+        winRate: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+        medianReturn: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+        medianExcess: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+        avgReturn: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+        avgExcess: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+        avgAnnualizedExcess: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+    }, z.core.$strip>>>;
+    filingDate: z.ZodOptional<z.ZodNullable<z.ZodObject<{
+        tradeCount: z.ZodOptional<z.ZodNumber>;
+        scoredCount: z.ZodOptional<z.ZodNumber>;
+        winRate: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+        medianReturn: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+        medianExcess: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+        avgReturn: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+        avgExcess: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+        avgAnnualizedExcess: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+    }, z.core.$strip>>>;
+    performance: z.ZodOptional<z.ZodNullable<z.ZodObject<{
+        tradeCount: z.ZodOptional<z.ZodNumber>;
+        scoredCount: z.ZodOptional<z.ZodNumber>;
+        winRate: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+        medianReturn: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+        medianExcess: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+        avgReturn: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+        avgExcess: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+        avgAnnualizedExcess: z.ZodOptional<z.ZodNullable<z.ZodNumber>>;
+    }, z.core.$strip>>>;
+    note: z.ZodOptional<z.ZodString>;
+}, z.core.$strip>;
+type MemberDualPerformance = z.infer<typeof MemberDualPerformanceSchema>;
 declare const BacktestHorizonSchema: z.ZodObject<{
     days: z.ZodNumber;
     tradeCount: z.ZodNumber;
@@ -866,11 +1333,12 @@ declare const ClientAssetSchema: z.ZodObject<{
 type ClientAsset = z.infer<typeof ClientAssetSchema>;
 declare const ClientTransactionSchema: z.ZodObject<{
     date: z.ZodNullable<z.ZodString>;
-    type: z.ZodEnum<{
-        P: "P";
+    type: z.ZodPipe<z.ZodEnum<{
+        B: "B";
         S: "S";
         E: "E";
-    }>;
+        P: "P";
+    }>, z.ZodTransform<"B" | "S" | "E", "B" | "S" | "E" | "P">>;
     owner: z.ZodNullable<z.ZodString>;
     amountMin: z.ZodNullable<z.ZodNumber>;
     amountMax: z.ZodNullable<z.ZodNumber>;
@@ -914,11 +1382,12 @@ declare const ClientTradeSchema: z.ZodObject<{
     }, z.core.$strip>;
     transaction: z.ZodObject<{
         date: z.ZodNullable<z.ZodString>;
-        type: z.ZodEnum<{
-            P: "P";
+        type: z.ZodPipe<z.ZodEnum<{
+            B: "B";
             S: "S";
             E: "E";
-        }>;
+            P: "P";
+        }>, z.ZodTransform<"B" | "S" | "E", "B" | "S" | "E" | "P">>;
         owner: z.ZodNullable<z.ZodString>;
         amountMin: z.ZodNullable<z.ZodNumber>;
         amountMax: z.ZodNullable<z.ZodNumber>;
@@ -1031,8 +1500,8 @@ declare const LAG_BUCKETS: readonly [Readonly<{
     label: "31-45d";
     max: 45;
 }>, Readonly<{
-    label: "46-60d";
-    max: 60;
+    label: "46-59d";
+    max: 59;
 }>, Readonly<{
     label: "60d+";
     max: null;
@@ -1122,11 +1591,56 @@ declare function marketCapBucket(n: number | null | undefined): MktCapBucket | n
 declare function bracketMidpoint(min: number | null, max: number | null): number;
 /** Check if a string is a valid YYYY-MM-DD date. */
 declare function isIsoDate(s: string): boolean;
+/** Check if a string is a valid ISO 8601 UTC date-time string (e.g. 2026-07-22T14:30:00Z). */
+declare function isIsoDateTime(s: string): boolean;
+/**
+ * Converts any Date, timestamp number, or date string into a canonical ISO 8601 UTC string (e.g. 2026-07-22T14:30:00.000Z).
+ * Returns null if the input is null, undefined, or invalid.
+ */
+declare function toIsoUtcString(input: Date | number | string | null | undefined): string | null;
 /** Days between two YYYY-MM-DD strings. */
 declare function daysBetween(a: string, b: string): number;
 /** Merge two partial refs, preferring the second (later/more authoritative) for non-null fields. */
 declare function mergeRefs<T extends Record<string, unknown>>(a: Partial<T> | null | undefined, b: Partial<T> | Record<string, unknown> | null | undefined): Partial<T>;
+/** Standardize company name: title-case all-caps, normalize common suffixes, preserve key acronyms. */
+declare function normalizeCompanyName(raw: string | null | undefined, ticker?: string | null): string | null;
 
+declare const USAGE_TELEMETRY_SCHEMA_VERSION: 2;
+declare const API_USAGE_MONITOR_INGEST_PATH = "/api/ingest/usage";
+declare const API_USAGE_MONITOR_HEALTH_PATH = "/api/health";
+declare const API_USAGE_MONITOR_READY_PATH = "/api/ready";
+declare const USAGE_TELEMETRY_PRODUCERS: readonly ["congress-trade", "socratic-trade", "usage-monitor"];
+declare const UsageTelemetryProducerSchema: z.ZodEnum<{
+    "congress-trade": "congress-trade";
+    "socratic-trade": "socratic-trade";
+    "usage-monitor": "usage-monitor";
+}>;
+declare const USAGE_TELEMETRY_KNOWN_PROVIDERS: readonly ["openrouter", "openai", "anthropic", "google-ai", "mistral", "finnhub", "fmp", "unusual-whales", "firecrawl", "sec-edgar", "alpaca", "polygon", "quantconnect", "hetzner", "cloudflare", "massive", "tiingo", "infisical", "peer-app", "external-api", "seed-source", "filing-source", "subscriber-webhook"];
+declare const UsageTelemetryKnownProviderSchema: z.ZodEnum<{
+    openrouter: "openrouter";
+    openai: "openai";
+    anthropic: "anthropic";
+    "google-ai": "google-ai";
+    mistral: "mistral";
+    finnhub: "finnhub";
+    fmp: "fmp";
+    "unusual-whales": "unusual-whales";
+    firecrawl: "firecrawl";
+    "sec-edgar": "sec-edgar";
+    alpaca: "alpaca";
+    polygon: "polygon";
+    quantconnect: "quantconnect";
+    hetzner: "hetzner";
+    cloudflare: "cloudflare";
+    massive: "massive";
+    tiingo: "tiingo";
+    infisical: "infisical";
+    "peer-app": "peer-app";
+    "external-api": "external-api";
+    "seed-source": "seed-source";
+    "filing-source": "filing-source";
+    "subscriber-webhook": "subscriber-webhook";
+}>;
 declare const UsageTelemetryMetricTypeSchema: z.ZodEnum<{
     limit: "limit";
     usage: "usage";
@@ -1167,15 +1681,74 @@ declare const UsageTelemetryLimitWindowSchema: z.ZodEnum<{
     month: "month";
     run: "run";
 }>;
+declare const UsageTelemetryCoverageScopeSchema: z.ZodEnum<{
+    api_key: "api_key";
+    project: "project";
+    provider_connection: "provider_connection";
+    billing_account: "billing_account";
+}>;
+declare const UsageTelemetryCoverageModeSchema: z.ZodEnum<{
+    point: "point";
+    window: "window";
+    cumulative: "cumulative";
+}>;
+declare const UsageTelemetryCoverageRelationshipSchema: z.ZodEnum<{
+    unknown: "unknown";
+    disjoint: "disjoint";
+    overlaps: "overlaps";
+    supersedes: "supersedes";
+}>;
+declare const UsageTelemetryCoverageSchema: z.ZodObject<{
+    scope: z.ZodEnum<{
+        api_key: "api_key";
+        project: "project";
+        provider_connection: "provider_connection";
+        billing_account: "billing_account";
+    }>;
+    mode: z.ZodEnum<{
+        point: "point";
+        window: "window";
+        cumulative: "cumulative";
+    }>;
+    relationship: z.ZodDefault<z.ZodEnum<{
+        unknown: "unknown";
+        disjoint: "disjoint";
+        overlaps: "overlaps";
+        supersedes: "supersedes";
+    }>>;
+    reportThrough: z.ZodOptional<z.ZodString>;
+}, z.core.$strict>;
 declare const UsageTelemetryMetadataSchema: z.ZodPipe<z.ZodRecord<z.ZodString, z.ZodUnion<readonly [z.ZodString, z.ZodNumber, z.ZodBoolean, z.ZodNull]>>, z.ZodTransform<Record<string, string | number | boolean | null>, Record<string, string | number | boolean | null>>>;
-declare const UsageTelemetryEventSchema: z.ZodObject<{
-    sourceApp: z.ZodString;
+/** The only v2 event shape sent over the wire. */
+declare const UsageTelemetryV2EventSchema: z.ZodObject<{
     environment: z.ZodOptional<z.ZodString>;
     provider: z.ZodString;
     service: z.ZodOptional<z.ZodString>;
     project: z.ZodOptional<z.ZodString>;
     label: z.ZodOptional<z.ZodString>;
-    keyRef: z.ZodOptional<z.ZodString>;
+    producerKeyRef: z.ZodOptional<z.ZodString>;
+    providerConnectionRef: z.ZodOptional<z.ZodString>;
+    billingAccountRef: z.ZodOptional<z.ZodString>;
+    coverage: z.ZodOptional<z.ZodObject<{
+        scope: z.ZodEnum<{
+            api_key: "api_key";
+            project: "project";
+            provider_connection: "provider_connection";
+            billing_account: "billing_account";
+        }>;
+        mode: z.ZodEnum<{
+            point: "point";
+            window: "window";
+            cumulative: "cumulative";
+        }>;
+        relationship: z.ZodDefault<z.ZodEnum<{
+            unknown: "unknown";
+            disjoint: "disjoint";
+            overlaps: "overlaps";
+            supersedes: "supersedes";
+        }>>;
+        reportThrough: z.ZodOptional<z.ZodString>;
+    }, z.core.$strict>>;
     billingMode: z.ZodDefault<z.ZodEnum<{
         manual: "manual";
         actual: "actual";
@@ -1227,17 +1800,42 @@ declare const UsageTelemetryEventSchema: z.ZodObject<{
     occurredAt: z.ZodOptional<z.ZodString>;
     providerRequestId: z.ZodOptional<z.ZodString>;
     metadata: z.ZodOptional<z.ZodPipe<z.ZodRecord<z.ZodString, z.ZodUnion<readonly [z.ZodString, z.ZodNumber, z.ZodBoolean, z.ZodNull]>>, z.ZodTransform<Record<string, string | number | boolean | null>, Record<string, string | number | boolean | null>>>>;
-    idempotencyKey: z.ZodOptional<z.ZodString>;
-}, z.core.$strip>;
-declare const UsageTelemetryBatchSchema: z.ZodObject<{
+    eventId: z.ZodString;
+}, z.core.$strict>;
+/** The v2 wire envelope. Producer identity belongs to the batch, not mutable event metadata. */
+declare const UsageTelemetryV2BatchSchema: z.ZodObject<{
+    schemaVersion: z.ZodLiteral<2>;
+    producerId: z.ZodString;
+    producerInstanceId: z.ZodOptional<z.ZodString>;
     events: z.ZodArray<z.ZodObject<{
-        sourceApp: z.ZodString;
         environment: z.ZodOptional<z.ZodString>;
         provider: z.ZodString;
         service: z.ZodOptional<z.ZodString>;
         project: z.ZodOptional<z.ZodString>;
         label: z.ZodOptional<z.ZodString>;
-        keyRef: z.ZodOptional<z.ZodString>;
+        producerKeyRef: z.ZodOptional<z.ZodString>;
+        providerConnectionRef: z.ZodOptional<z.ZodString>;
+        billingAccountRef: z.ZodOptional<z.ZodString>;
+        coverage: z.ZodOptional<z.ZodObject<{
+            scope: z.ZodEnum<{
+                api_key: "api_key";
+                project: "project";
+                provider_connection: "provider_connection";
+                billing_account: "billing_account";
+            }>;
+            mode: z.ZodEnum<{
+                point: "point";
+                window: "window";
+                cumulative: "cumulative";
+            }>;
+            relationship: z.ZodDefault<z.ZodEnum<{
+                unknown: "unknown";
+                disjoint: "disjoint";
+                overlaps: "overlaps";
+                supersedes: "supersedes";
+            }>>;
+            reportThrough: z.ZodOptional<z.ZodString>;
+        }, z.core.$strict>>;
         billingMode: z.ZodDefault<z.ZodEnum<{
             manual: "manual";
             actual: "actual";
@@ -1289,48 +1887,426 @@ declare const UsageTelemetryBatchSchema: z.ZodObject<{
         occurredAt: z.ZodOptional<z.ZodString>;
         providerRequestId: z.ZodOptional<z.ZodString>;
         metadata: z.ZodOptional<z.ZodPipe<z.ZodRecord<z.ZodString, z.ZodUnion<readonly [z.ZodString, z.ZodNumber, z.ZodBoolean, z.ZodNull]>>, z.ZodTransform<Record<string, string | number | boolean | null>, Record<string, string | number | boolean | null>>>>;
+        eventId: z.ZodString;
+    }, z.core.$strict>>;
+}, z.core.$strict>;
+declare const UsageTelemetryV2IngestAckSchema: z.ZodObject<{
+    ok: z.ZodLiteral<true>;
+    schemaVersion: z.ZodLiteral<2>;
+    received: z.ZodNumber;
+    persisted: z.ZodNumber;
+    duplicates: z.ZodNumber;
+    pruned: z.ZodNumber;
+    rejected: z.ZodNumber;
+}, z.core.$strict>;
+declare const UsageTelemetryErrorCodeSchema: z.ZodEnum<{
+    invalid_request: "invalid_request";
+    unauthorized: "unauthorized";
+    forbidden: "forbidden";
+    rate_limited: "rate_limited";
+    receiver_busy: "receiver_busy";
+    idempotency_conflict: "idempotency_conflict";
+    payload_too_large: "payload_too_large";
+    not_configured: "not_configured";
+    internal_error: "internal_error";
+}>;
+declare const UsageTelemetryV2ErrorResponseSchema: z.ZodObject<{
+    ok: z.ZodLiteral<false>;
+    schemaVersion: z.ZodLiteral<2>;
+    error: z.ZodObject<{
+        code: z.ZodEnum<{
+            invalid_request: "invalid_request";
+            unauthorized: "unauthorized";
+            forbidden: "forbidden";
+            rate_limited: "rate_limited";
+            receiver_busy: "receiver_busy";
+            idempotency_conflict: "idempotency_conflict";
+            payload_too_large: "payload_too_large";
+            not_configured: "not_configured";
+            internal_error: "internal_error";
+        }>;
+        message: z.ZodString;
+        retryable: z.ZodBoolean;
+        retryAfterSeconds: z.ZodOptional<z.ZodNumber>;
+    }, z.core.$strict>;
+}, z.core.$strict>;
+/**
+ * Producer draft retained as an in-process migration boundary. It is never a v2 wire shape.
+ * Existing durable v1 rows can be drained by using their idempotencyKey as eventId.
+ */
+declare const UsageTelemetryEventSchema: z.ZodObject<{
+    environment: z.ZodOptional<z.ZodString>;
+    provider: z.ZodString;
+    service: z.ZodOptional<z.ZodString>;
+    project: z.ZodOptional<z.ZodString>;
+    label: z.ZodOptional<z.ZodString>;
+    producerKeyRef: z.ZodOptional<z.ZodString>;
+    providerConnectionRef: z.ZodOptional<z.ZodString>;
+    billingAccountRef: z.ZodOptional<z.ZodString>;
+    coverage: z.ZodOptional<z.ZodObject<{
+        scope: z.ZodEnum<{
+            api_key: "api_key";
+            project: "project";
+            provider_connection: "provider_connection";
+            billing_account: "billing_account";
+        }>;
+        mode: z.ZodEnum<{
+            point: "point";
+            window: "window";
+            cumulative: "cumulative";
+        }>;
+        relationship: z.ZodDefault<z.ZodEnum<{
+            unknown: "unknown";
+            disjoint: "disjoint";
+            overlaps: "overlaps";
+            supersedes: "supersedes";
+        }>>;
+        reportThrough: z.ZodOptional<z.ZodString>;
+    }, z.core.$strict>>;
+    billingMode: z.ZodDefault<z.ZodEnum<{
+        manual: "manual";
+        actual: "actual";
+        estimated: "estimated";
+    }>>;
+    metricType: z.ZodDefault<z.ZodEnum<{
+        limit: "limit";
+        usage: "usage";
+        cost: "cost";
+        quota: "quota";
+        tier: "tier";
+        health: "health";
+        balance: "balance";
+        quota_sync: "quota_sync";
+        credit_balance: "credit_balance";
+        subscription: "subscription";
+    }>>;
+    quantity: z.ZodOptional<z.ZodNumber>;
+    unit: z.ZodOptional<z.ZodEnum<{
+        request: "request";
+        call: "call";
+        token: "token";
+        credit: "credit";
+        usd: "usd";
+        page: "page";
+        job: "job";
+        document: "document";
+        row: "row";
+        byte: "byte";
+    }>>;
+    costUsd: z.ZodOptional<z.ZodNumber>;
+    requests: z.ZodOptional<z.ZodNumber>;
+    credits: z.ZodOptional<z.ZodNumber>;
+    limit: z.ZodOptional<z.ZodNumber>;
+    limitWindow: z.ZodOptional<z.ZodEnum<{
+        minute: "minute";
+        day: "day";
+        month: "month";
+        run: "run";
+    }>>;
+    tier: z.ZodOptional<z.ZodString>;
+    confidence: z.ZodDefault<z.ZodEnum<{
+        manual: "manual";
+        actual: "actual";
+        estimated: "estimated";
+    }>>;
+    windowStart: z.ZodOptional<z.ZodString>;
+    windowEnd: z.ZodOptional<z.ZodString>;
+    occurredAt: z.ZodOptional<z.ZodString>;
+    providerRequestId: z.ZodOptional<z.ZodString>;
+    metadata: z.ZodOptional<z.ZodPipe<z.ZodRecord<z.ZodString, z.ZodUnion<readonly [z.ZodString, z.ZodNumber, z.ZodBoolean, z.ZodNull]>>, z.ZodTransform<Record<string, string | number | boolean | null>, Record<string, string | number | boolean | null>>>>;
+    sourceApp: z.ZodString;
+    eventId: z.ZodOptional<z.ZodString>;
+    keyRef: z.ZodOptional<z.ZodString>;
+    idempotencyKey: z.ZodOptional<z.ZodString>;
+}, z.core.$strip>;
+declare const UsageTelemetryBatchSchema: z.ZodObject<{
+    events: z.ZodArray<z.ZodObject<{
+        environment: z.ZodOptional<z.ZodString>;
+        provider: z.ZodString;
+        service: z.ZodOptional<z.ZodString>;
+        project: z.ZodOptional<z.ZodString>;
+        label: z.ZodOptional<z.ZodString>;
+        producerKeyRef: z.ZodOptional<z.ZodString>;
+        providerConnectionRef: z.ZodOptional<z.ZodString>;
+        billingAccountRef: z.ZodOptional<z.ZodString>;
+        coverage: z.ZodOptional<z.ZodObject<{
+            scope: z.ZodEnum<{
+                api_key: "api_key";
+                project: "project";
+                provider_connection: "provider_connection";
+                billing_account: "billing_account";
+            }>;
+            mode: z.ZodEnum<{
+                point: "point";
+                window: "window";
+                cumulative: "cumulative";
+            }>;
+            relationship: z.ZodDefault<z.ZodEnum<{
+                unknown: "unknown";
+                disjoint: "disjoint";
+                overlaps: "overlaps";
+                supersedes: "supersedes";
+            }>>;
+            reportThrough: z.ZodOptional<z.ZodString>;
+        }, z.core.$strict>>;
+        billingMode: z.ZodDefault<z.ZodEnum<{
+            manual: "manual";
+            actual: "actual";
+            estimated: "estimated";
+        }>>;
+        metricType: z.ZodDefault<z.ZodEnum<{
+            limit: "limit";
+            usage: "usage";
+            cost: "cost";
+            quota: "quota";
+            tier: "tier";
+            health: "health";
+            balance: "balance";
+            quota_sync: "quota_sync";
+            credit_balance: "credit_balance";
+            subscription: "subscription";
+        }>>;
+        quantity: z.ZodOptional<z.ZodNumber>;
+        unit: z.ZodOptional<z.ZodEnum<{
+            request: "request";
+            call: "call";
+            token: "token";
+            credit: "credit";
+            usd: "usd";
+            page: "page";
+            job: "job";
+            document: "document";
+            row: "row";
+            byte: "byte";
+        }>>;
+        costUsd: z.ZodOptional<z.ZodNumber>;
+        requests: z.ZodOptional<z.ZodNumber>;
+        credits: z.ZodOptional<z.ZodNumber>;
+        limit: z.ZodOptional<z.ZodNumber>;
+        limitWindow: z.ZodOptional<z.ZodEnum<{
+            minute: "minute";
+            day: "day";
+            month: "month";
+            run: "run";
+        }>>;
+        tier: z.ZodOptional<z.ZodString>;
+        confidence: z.ZodDefault<z.ZodEnum<{
+            manual: "manual";
+            actual: "actual";
+            estimated: "estimated";
+        }>>;
+        windowStart: z.ZodOptional<z.ZodString>;
+        windowEnd: z.ZodOptional<z.ZodString>;
+        occurredAt: z.ZodOptional<z.ZodString>;
+        providerRequestId: z.ZodOptional<z.ZodString>;
+        metadata: z.ZodOptional<z.ZodPipe<z.ZodRecord<z.ZodString, z.ZodUnion<readonly [z.ZodString, z.ZodNumber, z.ZodBoolean, z.ZodNull]>>, z.ZodTransform<Record<string, string | number | boolean | null>, Record<string, string | number | boolean | null>>>>;
+        sourceApp: z.ZodString;
+        eventId: z.ZodOptional<z.ZodString>;
+        keyRef: z.ZodOptional<z.ZodString>;
         idempotencyKey: z.ZodOptional<z.ZodString>;
     }, z.core.$strip>>;
 }, z.core.$strip>;
-declare const UsageTelemetryIngestResponseSchema: z.ZodObject<{
-    ok: z.ZodBoolean;
-    accepted: z.ZodNumber;
-    ignoredPruned: z.ZodOptional<z.ZodNumber>;
+declare const LegacyUsageTelemetryOutboxEventSchema: z.ZodObject<{
+    environment: z.ZodOptional<z.ZodString>;
+    provider: z.ZodString;
+    service: z.ZodOptional<z.ZodString>;
+    project: z.ZodOptional<z.ZodString>;
+    label: z.ZodOptional<z.ZodString>;
+    producerKeyRef: z.ZodOptional<z.ZodString>;
+    providerConnectionRef: z.ZodOptional<z.ZodString>;
+    billingAccountRef: z.ZodOptional<z.ZodString>;
+    coverage: z.ZodOptional<z.ZodObject<{
+        scope: z.ZodEnum<{
+            api_key: "api_key";
+            project: "project";
+            provider_connection: "provider_connection";
+            billing_account: "billing_account";
+        }>;
+        mode: z.ZodEnum<{
+            point: "point";
+            window: "window";
+            cumulative: "cumulative";
+        }>;
+        relationship: z.ZodDefault<z.ZodEnum<{
+            unknown: "unknown";
+            disjoint: "disjoint";
+            overlaps: "overlaps";
+            supersedes: "supersedes";
+        }>>;
+        reportThrough: z.ZodOptional<z.ZodString>;
+    }, z.core.$strict>>;
+    billingMode: z.ZodDefault<z.ZodEnum<{
+        manual: "manual";
+        actual: "actual";
+        estimated: "estimated";
+    }>>;
+    metricType: z.ZodDefault<z.ZodEnum<{
+        limit: "limit";
+        usage: "usage";
+        cost: "cost";
+        quota: "quota";
+        tier: "tier";
+        health: "health";
+        balance: "balance";
+        quota_sync: "quota_sync";
+        credit_balance: "credit_balance";
+        subscription: "subscription";
+    }>>;
+    quantity: z.ZodOptional<z.ZodNumber>;
+    unit: z.ZodOptional<z.ZodEnum<{
+        request: "request";
+        call: "call";
+        token: "token";
+        credit: "credit";
+        usd: "usd";
+        page: "page";
+        job: "job";
+        document: "document";
+        row: "row";
+        byte: "byte";
+    }>>;
+    costUsd: z.ZodOptional<z.ZodNumber>;
+    requests: z.ZodOptional<z.ZodNumber>;
+    credits: z.ZodOptional<z.ZodNumber>;
+    limit: z.ZodOptional<z.ZodNumber>;
+    limitWindow: z.ZodOptional<z.ZodEnum<{
+        minute: "minute";
+        day: "day";
+        month: "month";
+        run: "run";
+    }>>;
+    tier: z.ZodOptional<z.ZodString>;
+    confidence: z.ZodDefault<z.ZodEnum<{
+        manual: "manual";
+        actual: "actual";
+        estimated: "estimated";
+    }>>;
+    windowStart: z.ZodOptional<z.ZodString>;
+    windowEnd: z.ZodOptional<z.ZodString>;
+    occurredAt: z.ZodOptional<z.ZodString>;
+    providerRequestId: z.ZodOptional<z.ZodString>;
+    metadata: z.ZodOptional<z.ZodPipe<z.ZodRecord<z.ZodString, z.ZodUnion<readonly [z.ZodString, z.ZodNumber, z.ZodBoolean, z.ZodNull]>>, z.ZodTransform<Record<string, string | number | boolean | null>, Record<string, string | number | boolean | null>>>>;
+    sourceApp: z.ZodString;
+    eventId: z.ZodOptional<z.ZodString>;
+    keyRef: z.ZodOptional<z.ZodString>;
+    idempotencyKey: z.ZodString;
+}, z.core.$strip>;
+declare const LegacyUsageTelemetryOutboxBatchSchema: z.ZodObject<{
+    events: z.ZodArray<z.ZodObject<{
+        environment: z.ZodOptional<z.ZodString>;
+        provider: z.ZodString;
+        service: z.ZodOptional<z.ZodString>;
+        project: z.ZodOptional<z.ZodString>;
+        label: z.ZodOptional<z.ZodString>;
+        producerKeyRef: z.ZodOptional<z.ZodString>;
+        providerConnectionRef: z.ZodOptional<z.ZodString>;
+        billingAccountRef: z.ZodOptional<z.ZodString>;
+        coverage: z.ZodOptional<z.ZodObject<{
+            scope: z.ZodEnum<{
+                api_key: "api_key";
+                project: "project";
+                provider_connection: "provider_connection";
+                billing_account: "billing_account";
+            }>;
+            mode: z.ZodEnum<{
+                point: "point";
+                window: "window";
+                cumulative: "cumulative";
+            }>;
+            relationship: z.ZodDefault<z.ZodEnum<{
+                unknown: "unknown";
+                disjoint: "disjoint";
+                overlaps: "overlaps";
+                supersedes: "supersedes";
+            }>>;
+            reportThrough: z.ZodOptional<z.ZodString>;
+        }, z.core.$strict>>;
+        billingMode: z.ZodDefault<z.ZodEnum<{
+            manual: "manual";
+            actual: "actual";
+            estimated: "estimated";
+        }>>;
+        metricType: z.ZodDefault<z.ZodEnum<{
+            limit: "limit";
+            usage: "usage";
+            cost: "cost";
+            quota: "quota";
+            tier: "tier";
+            health: "health";
+            balance: "balance";
+            quota_sync: "quota_sync";
+            credit_balance: "credit_balance";
+            subscription: "subscription";
+        }>>;
+        quantity: z.ZodOptional<z.ZodNumber>;
+        unit: z.ZodOptional<z.ZodEnum<{
+            request: "request";
+            call: "call";
+            token: "token";
+            credit: "credit";
+            usd: "usd";
+            page: "page";
+            job: "job";
+            document: "document";
+            row: "row";
+            byte: "byte";
+        }>>;
+        costUsd: z.ZodOptional<z.ZodNumber>;
+        requests: z.ZodOptional<z.ZodNumber>;
+        credits: z.ZodOptional<z.ZodNumber>;
+        limit: z.ZodOptional<z.ZodNumber>;
+        limitWindow: z.ZodOptional<z.ZodEnum<{
+            minute: "minute";
+            day: "day";
+            month: "month";
+            run: "run";
+        }>>;
+        tier: z.ZodOptional<z.ZodString>;
+        confidence: z.ZodDefault<z.ZodEnum<{
+            manual: "manual";
+            actual: "actual";
+            estimated: "estimated";
+        }>>;
+        windowStart: z.ZodOptional<z.ZodString>;
+        windowEnd: z.ZodOptional<z.ZodString>;
+        occurredAt: z.ZodOptional<z.ZodString>;
+        providerRequestId: z.ZodOptional<z.ZodString>;
+        metadata: z.ZodOptional<z.ZodPipe<z.ZodRecord<z.ZodString, z.ZodUnion<readonly [z.ZodString, z.ZodNumber, z.ZodBoolean, z.ZodNull]>>, z.ZodTransform<Record<string, string | number | boolean | null>, Record<string, string | number | boolean | null>>>>;
+        sourceApp: z.ZodString;
+        eventId: z.ZodOptional<z.ZodString>;
+        keyRef: z.ZodOptional<z.ZodString>;
+        idempotencyKey: z.ZodString;
+    }, z.core.$strip>>;
 }, z.core.$strip>;
 type UsageTelemetryMetricType = z.infer<typeof UsageTelemetryMetricTypeSchema>;
+type UsageTelemetryProducer = z.infer<typeof UsageTelemetryProducerSchema>;
+type UsageTelemetryKnownProvider = z.infer<typeof UsageTelemetryKnownProviderSchema>;
 type UsageTelemetryUnit = z.infer<typeof UsageTelemetryUnitSchema>;
 type UsageTelemetryBillingMode = z.infer<typeof UsageTelemetryBillingModeSchema>;
 type UsageTelemetryConfidence = z.infer<typeof UsageTelemetryConfidenceSchema>;
 type UsageTelemetryLimitWindow = z.infer<typeof UsageTelemetryLimitWindowSchema>;
+type UsageTelemetryCoverage = z.infer<typeof UsageTelemetryCoverageSchema>;
 type UsageTelemetryEventInput = z.input<typeof UsageTelemetryEventSchema>;
 type UsageTelemetryEvent = z.infer<typeof UsageTelemetryEventSchema>;
 type UsageTelemetryBatchInput = z.input<typeof UsageTelemetryBatchSchema>;
 type UsageTelemetryBatch = z.infer<typeof UsageTelemetryBatchSchema>;
-type UsageTelemetryIngestResponse = z.infer<typeof UsageTelemetryIngestResponseSchema>;
-declare const API_USAGE_MONITOR_INGEST_PATH = "/api/ingest/usage";
-declare function usageMonitorIngestUrl(baseUrl: string): string;
+type LegacyUsageTelemetryOutboxEventInput = z.input<typeof LegacyUsageTelemetryOutboxEventSchema>;
+type UsageTelemetryV2EventInput = z.input<typeof UsageTelemetryV2EventSchema>;
+type UsageTelemetryV2Event = z.infer<typeof UsageTelemetryV2EventSchema>;
+type UsageTelemetryV2BatchInput = z.input<typeof UsageTelemetryV2BatchSchema>;
+type UsageTelemetryV2Batch = z.infer<typeof UsageTelemetryV2BatchSchema>;
+type UsageTelemetryIngestResponse = z.infer<typeof UsageTelemetryV2IngestAckSchema>;
+type UsageTelemetryV2ErrorResponse = z.infer<typeof UsageTelemetryV2ErrorResponseSchema>;
+type UsageTelemetryErrorCode = z.infer<typeof UsageTelemetryErrorCodeSchema>;
 /**
- * Computes the same deterministic idempotency key the API Usage Monitor server
- * derives server-side as a fallback (see `deriveIdempotencyKey` in that repo's
- * `src/lib/usage-telemetry.ts`). Computing and attaching it here ensures
- * retries of the same event collapse to the same key instead of each retry
- * getting its own random fallback key on the server.
- *
- * CONTRACT — this MUST stay byte-for-byte identical to the server algorithm:
- *   basis = encodeField(sourceApp) + encodeField(provider) + encodeField(metricType)
- *         + encodeField(keyRef ?? "") + encodeField(occurredAt)
- *   key   = sha256Hex(basis)
- * where encodeField(v) = `${utf8ByteLength(v)}:${v}` (see encodeIdempotencyField).
- *
- * Both sides apply their own defaulting (e.g. metricType -> "usage") BEFORE
- * computing the basis string, so `event` here is expected to already be the
- * fully-defaulted event (see `send()` below, which derives the key from
- * `UsageTelemetryBatchSchema.parse(...)` output, after Zod's `.default()`
- * values have been applied). If either side ever changes the field order,
- * the encoding scheme, the hash algorithm, or *when* defaults are applied
- * relative to hashing, idempotency will silently break — update both repos
- * together and bump a version marker if the format ever changes.
+ * Creates and validates a strict v2 UsageTelemetryEvent.
+ * Auto-generates an eventId if one is not supplied.
  */
+declare function createUsageTelemetryV2Event(input: Omit<UsageTelemetryV2EventInput, "eventId"> & {
+    eventId?: string;
+}): UsageTelemetryV2Event;
+declare function usageMonitorIngestUrl(baseUrl: string): string;
+/** Legacy v1 helper used only to assign a stable eventId while old durable rows drain. */
 declare function deriveUsageTelemetryIdempotencyKey(event: {
     sourceApp: string;
     provider: string;
@@ -1338,15 +2314,40 @@ declare function deriveUsageTelemetryIdempotencyKey(event: {
     keyRef?: string;
     occurredAt?: string;
 }): Promise<string | undefined>;
+/** Canonical v2 persistence identity. Mutable measurement fields never participate. */
+declare function deriveUsageTelemetryV2IdempotencyKey(input: {
+    producerId: string;
+    eventId: string;
+}): Promise<string>;
 interface UsageTelemetryClientOptions {
     baseUrl: string;
     token: string;
+    producerId: string;
+    producerInstanceId?: string;
     fetchImpl?: typeof fetch;
-    /** Reject events without a caller-supplied identity instead of relying on the five-field fallback. */
-    requireExplicitIdempotencyKey?: boolean;
 }
+declare class UsageTelemetryApiError extends Error {
+    readonly status: number;
+    readonly code: UsageTelemetryErrorCode;
+    readonly retryable: boolean;
+    readonly retryAfterSeconds?: number;
+    constructor(input: {
+        status: number;
+        code: UsageTelemetryErrorCode;
+        message: string;
+        retryable: boolean;
+        retryAfterSeconds?: number;
+    });
+}
+
 declare function createUsageTelemetryClient(options: UsageTelemetryClientOptions): {
-    send(events: UsageTelemetryEventInput[]): Promise<UsageTelemetryIngestResponse>;
+    /** Fresh producers send the strict v2 event shape: eventId is required and sourceApp is absent. */
+    send(events: UsageTelemetryV2EventInput[]): Promise<UsageTelemetryIngestResponse>;
+    /**
+     * Bounded migration path for already-persisted v1 rows only. Their durable idempotencyKey is
+     * promoted to v2 eventId. Missing identity or source/producer drift fails before any request.
+     */
+    sendLegacyOutbox(events: LegacyUsageTelemetryOutboxEventInput[]): Promise<UsageTelemetryIngestResponse>;
 };
 
 /**
@@ -1485,7 +2486,7 @@ declare class CongressTradeClient {
      * Current Congress.Trade derives ownership from the user session and ignores
      * `clientId`; the field remains on the wire for compatibility with older servers.
      */
-    createSubscription(clientId: string, desiredSecret?: string): Promise<Subscription>;
+    createSubscription(clientId?: string, desiredSecret?: string): Promise<Subscription>;
     /**
      * Build an SSE URL. Pass the per-subscription secret for EventSource-style
      * clients; callers that omit it must send the same secret as a Bearer header.
@@ -1521,7 +2522,7 @@ declare class CongressTradeClient {
         from?: string;
         to?: string;
     }): Promise<ShortVolumeReadRow[]>;
-    getTransactions(query?: TransactionsQuery): Promise<TransactionsPage>;
+    getTransactions(query?: TransactionsQueryInput): Promise<TransactionsPage>;
     getTickerLeaderboard(opts?: {
         window?: string;
         limit?: number;
@@ -1534,7 +2535,12 @@ declare class CongressTradeClient {
         window?: string;
         limit?: number;
     }): Promise<MemberLeader[]>;
-    getMemberPerformance(filerId: string): Promise<MemberPerformance | null>;
+    /**
+     * Dual-anchor member performance (filingDate = copy-trade, tradeDate = politician timing).
+     * Prefer `filingDate` for App B trading decisions; keep `tradeDate` as context.
+     * Legacy single-leg clients can still read `performance` (= tradeDate).
+     */
+    getMemberPerformance(filerId: string): Promise<MemberDualPerformance | null>;
     getConviction(opts?: {
         window?: string;
         limit?: number;
@@ -1589,8 +2595,10 @@ interface AmountBracket {
     max: number | null;
 }
 /**
- * The canonical STOCK Act bracket set (ascending). The final tier ($50,000,001+)
- * is open-ended and represented with max === null.
+ * The canonical STOCK Act bracket set (ascending), plus a product-level
+ * `$0 – $1,000` tier for exact sub-$1,001 dollar amounts that appear on many
+ * House PTRs (partial sales / small lots). The final tier ($50,000,001+) is
+ * open-ended and represented with max === null.
  */
 declare const STOCK_ACT_BRACKETS: readonly AmountBracket[];
 /**
@@ -1643,4 +2651,48 @@ declare function signCongressWebhook(body: string, secret: string): Promise<stri
  */
 declare function verifyCongressWebhookSignature(body: string, signatureHeader: string, secret: string): Promise<boolean>;
 
-export { API_PATHS, API_USAGE_MONITOR_INGEST_PATH, APP_B_ORIGIN_TAG as APP_B_ORIGIN, APP_B_ORIGIN_TAG, type AmountBracket, AmountBracketSchema, type AnalystRow, AnalystRowSchema, type AssetTypeCategory, AssetTypeCategorySchema, type BacktestHorizon, BacktestHorizonSchema, type BundleResponse, BundleResponseSchema, CONGRESS_EVENT_TYPES, type CallClassifierContext, CallClassifierContextSchema, type CallClassifierOutputs, type CallClassifierTelemetryMetadata, type CallClassifierTrace, type Chamber, ChamberSchema, type ClientAsset, ClientAssetSchema, type ClientFiling, ClientFilingSchema, type ClientMember, ClientMemberSchema, type ClientTrade, ClientTradeSchema, type ClientTransaction, ClientTransactionSchema, type ClusterBuy, ClusterBuySchema, type CommitteeConflict, CommitteeConflictSchema, type CongressEvent, CongressEventSchema, type CongressEventType, CongressEventTypeSchema, CongressTradeClient, type CongressTradeClientConfig, CongressTradeHttpError, type CongressTransaction, type CongressTransactionRead, CongressTransactionReadSchema, CongressTransactionSchema, type ConvictionTicker, ConvictionTickerSchema, DEFAULT_CONGRESS_TRADE_BASE_URL, DEFAULT_TRANSACTIONS_LIMIT, type FundamentalRow, FundamentalRowSchema, type InsiderReadRow, InsiderReadRowSchema, type InsiderRow, InsiderRowSchema, IsoDateSchema, LAG_BUCKETS, MAX_REFS_BATCH, MKT_CAP_THRESHOLDS, type MemberLeader, MemberLeaderSchema, type MemberPerformance, MemberPerformanceSchema, type MktCapBucket, MktCapBucketSchema, type OpenRouterRequestEnrichment, type OperationGuardInFlight, OperationGuardInFlightSchema, type OperationGuardRateLimited, OperationGuardRateLimitedSchema, type OperationGuardRejection, OperationGuardRejectionSchema, type Owner, OwnerSchema, type PartyBucket, PartyBucketSchema, type PriceClose, PriceCloseSchema, type PriceSeries, PriceSeriesSchema, STOCK_ACT_BRACKETS, type SecurityRef, type SecurityRefInput, SecurityRefInputSchema, SecurityRefSchema, type SharePayload, SharePayloadSchema, type ShortVolumeReadRow, ShortVolumeReadRowSchema, type ShortVolumeRow, ShortVolumeRowSchema, type SnapshotManifest, SnapshotManifestSchema, type SnapshotTableInfo, SnapshotTableInfoSchema, type SseMessage, SseMessageSchema, SseParser, type SseParserOptions, type Subscription, SubscriptionSchema, TICKER_ACQUISITIONS, TICKER_ALIASES, TICKER_RENAMES, type TickerAliasClass, type TickerAliasResolution, type TickerBacktest, TickerBacktestSchema, type TickerLeader, TickerLeaderSchema, type TransactionsPage, TransactionsPageSchema, type TransactionsQuery, TransactionsQuerySchema, type TxType, TxTypeSchema, type UsageTelemetryBatch, type UsageTelemetryBatchInput, UsageTelemetryBatchSchema, type UsageTelemetryBillingMode, UsageTelemetryBillingModeSchema, type UsageTelemetryClientOptions, type UsageTelemetryConfidence, UsageTelemetryConfidenceSchema, type UsageTelemetryEvent, type UsageTelemetryEventInput, UsageTelemetryEventSchema, type UsageTelemetryIngestResponse, UsageTelemetryIngestResponseSchema, type UsageTelemetryLimitWindow, UsageTelemetryLimitWindowSchema, UsageTelemetryMetadataSchema, type UsageTelemetryMetricType, UsageTelemetryMetricTypeSchema, type UsageTelemetryUnit, UsageTelemetryUnitSchema, WELL_FORMED_TICKER, WINDOW_PRESETS, type Window, bracketMidpoint, buildCallClassifier, buildOperationInFlightRejection, buildRateLimitedRejection, classifyTickerAlias, clean, createCongressEvent, createUsageTelemetryClient, daysBetween, deriveUsageTelemetryIdempotencyKey, getOperationGuardHttpStatus, isIsoDate, isPlaceholderTicker, isValidBracket, isWellFormedTicker, marketCapBucket, matchBracket, mergeRefs, nearestBracket, normalizePreferredTickerVariant, normalizeSecurityRef, normalizeTicker, openrouterRequestEnrichment, parseArray, parseSafe, punctuationVariants, resolveContinuousTicker, resolvePreferredTickerFromAssetName, resolveTickerAlias, resolveTickerDeterministic, signCongressWebhook, stripPreferredSeries, telemetryEventClassifier, usageMonitorIngestUrl, verifyCongressWebhookSignature };
+/**
+ * Per-ticker, per-theme company-logo source order shared by Congress.Trade
+ * and Socratic.Trade.
+ *
+ * Owner jury letters:
+ *   A = GitHub pack on a light plate
+ *   B = GitHub pack on a dark plate
+ *   C = logo.dev light
+ *   D = logo.dev dark
+ *
+ * GitHub ships one PNG; A vs B is that file on light vs dark chrome.
+ * logo.dev can ship two theme variants (rarely different in practice).
+ *
+ * `local` means an app-hosted file (CT repo pack / ST disk upload). Serving
+ * and caching stay in each app. Seeded from the 2026-08-23 CT top-30 jury.
+ */
+type LogoSource = "local" | "github" | "logodev";
+type LogoTheme = "light" | "dark";
+interface SymbolLogoPolicy {
+    light: LogoSource[];
+    dark: LogoSource[];
+    notes?: string;
+}
+type TickerLogoPolicyMap = Record<string, SymbolLogoPolicy>;
+/** Default when a symbol has no jury row (ABCD — any source is fine). */
+declare const DEFAULT_LOGO_SOURCE_ORDER: readonly LogoSource[];
+/** ST historical cascade for ungraded names (GitHub first). */
+declare const SOCRATIC_DEFAULT_LOGO_SOURCE_ORDER: readonly LogoSource[];
+/**
+ * Top 30 by 90-day trade count (congress.trade 2026-08-23). Omitted symbols
+ * use the caller fallback (CT: DEFAULT_LOGO_SOURCE_ORDER; ST: SOCRATIC_DEFAULT).
+ */
+declare const SEEDED_LOGO_POLICY: TickerLogoPolicyMap;
+declare function canonicalLogoPolicySymbol(symbol: string): string;
+declare function mergeLogoPolicy(overlay: TickerLogoPolicyMap | undefined): TickerLogoPolicyMap;
+declare function sourceOrderFor(symbol: string, theme: LogoTheme, overlay?: TickerLogoPolicyMap, fallback?: readonly LogoSource[]): LogoSource[];
+/** Drop `local` for apps that only fetch GitHub / logo.dev (ST after disk cache). */
+declare function remoteLogoSources(order: readonly LogoSource[]): Array<"github" | "logodev">;
+declare function parseLogoSources(value: unknown): LogoSource[] | null;
+declare function parseSymbolLogoPolicy(value: unknown): SymbolLogoPolicy | null;
+declare function parseTickerLogoPolicyMap(value: unknown): TickerLogoPolicyMap | null;
+/** Letters from the owner jury (e.g. "BCD") → source lists for both themes. */
+declare function policyFromLetters(letters: string): SymbolLogoPolicy | null;
+
+export { API_PATHS, API_USAGE_MONITOR_HEALTH_PATH, API_USAGE_MONITOR_INGEST_PATH, API_USAGE_MONITOR_READY_PATH, APP_B_ORIGIN_TAG as APP_B_ORIGIN, APP_B_ORIGIN_TAG, type AmountBracket, AmountBracketSchema, type AnalystRow, AnalystRowSchema, type AssetTypeCategory, AssetTypeCategorySchema, type BacktestHorizon, BacktestHorizonSchema, type BundleResponse, BundleResponseSchema, CONGRESS_EVENT_TYPES, type CallClassifierContext, CallClassifierContextSchema, type CallClassifierOutputs, type CallClassifierTelemetryMetadata, type CallClassifierTrace, type Chamber, ChamberSchema, type ClientAsset, ClientAssetSchema, type ClientFiling, ClientFilingSchema, type ClientMember, ClientMemberSchema, type ClientTrade, ClientTradeSchema, type ClientTransaction, ClientTransactionSchema, type ClusterBuy, ClusterBuySchema, type CommitteeConflict, CommitteeConflictSchema, type CongressEvent, CongressEventSchema, type CongressEventType, CongressEventTypeSchema, CongressTradeClient, type CongressTradeClientConfig, type CongressTradeData, CongressTradeDataSchema, type CongressTradeEvent, CongressTradeEventSchema, CongressTradeHttpError, type CongressTransaction, type CongressTransactionRead, CongressTransactionReadSchema, CongressTransactionSchema, type ConvictionTicker, ConvictionTickerSchema, DEFAULT_CONGRESS_TRADE_BASE_URL, DEFAULT_LOGO_SOURCE_ORDER, DEFAULT_TRANSACTIONS_LIMIT, type FundamentalRow, FundamentalRowSchema, type InsiderReadRow, InsiderReadRowSchema, type InsiderRow, InsiderRowSchema, IsoDateSchema, type IsoDateTime, IsoDateTimeSchema, LAG_BUCKETS, LegacyUsageTelemetryOutboxBatchSchema, type LegacyUsageTelemetryOutboxEventInput, LegacyUsageTelemetryOutboxEventSchema, type LogoSource, type LogoTheme, MAX_REFS_BATCH, MKT_CAP_THRESHOLDS, type MemberDualPerformance, MemberDualPerformanceSchema, type MemberLeader, MemberLeaderSchema, type MemberPerformance, MemberPerformanceSchema, type MktCapBucket, MktCapBucketSchema, type OpenRouterRequestEnrichment, type OperationGuardInFlight, OperationGuardInFlightSchema, type OperationGuardRateLimited, OperationGuardRateLimitedSchema, type OperationGuardRejection, OperationGuardRejectionSchema, type Owner, OwnerSchema, type PartyBucket, PartyBucketSchema, type PriceClose, PriceCloseSchema, type PriceSeries, PriceSeriesSchema, SEEDED_LOGO_POLICY, SOCRATIC_DEFAULT_LOGO_SOURCE_ORDER, STOCK_ACT_BRACKETS, type SecurityRef, type SecurityRefInput, SecurityRefInputSchema, SecurityRefSchema, type SharePayload, SharePayloadSchema, type ShortVolumeReadRow, ShortVolumeReadRowSchema, type ShortVolumeRow, ShortVolumeRowSchema, type SnapshotManifest, SnapshotManifestSchema, type SnapshotTableInfo, SnapshotTableInfoSchema, type SseMessage, SseMessageSchema, SseParser, type SseParserOptions, type Subscription, SubscriptionSchema, type SymbolLogoPolicy, TICKER_ACQUISITIONS, TICKER_ALIASES, TICKER_RENAMES, type TickerAliasClass, type TickerAliasResolution, type TickerBacktest, TickerBacktestSchema, type TickerLeader, TickerLeaderSchema, type TickerLogoPolicyMap, type TradeEventRow, TradeEventRowSchema, type TransactionsPage, TransactionsPageSchema, type TransactionsQuery, type TransactionsQueryInput, TransactionsQuerySchema, type TxType, TxTypeSchema, USAGE_TELEMETRY_KNOWN_PROVIDERS, USAGE_TELEMETRY_PRODUCERS, USAGE_TELEMETRY_SCHEMA_VERSION, UsageTelemetryApiError, type UsageTelemetryBatch, type UsageTelemetryBatchInput, UsageTelemetryBatchSchema, type UsageTelemetryBillingMode, UsageTelemetryBillingModeSchema, type UsageTelemetryClientOptions, type UsageTelemetryConfidence, UsageTelemetryConfidenceSchema, type UsageTelemetryCoverage, UsageTelemetryCoverageModeSchema, UsageTelemetryCoverageRelationshipSchema, UsageTelemetryCoverageSchema, UsageTelemetryCoverageScopeSchema, type UsageTelemetryErrorCode, UsageTelemetryErrorCodeSchema, type UsageTelemetryEvent, type UsageTelemetryEventInput, UsageTelemetryEventSchema, UsageTelemetryApiError as UsageTelemetryIngestError, type UsageTelemetryIngestResponse, type UsageTelemetryKnownProvider, UsageTelemetryKnownProviderSchema, type UsageTelemetryLimitWindow, UsageTelemetryLimitWindowSchema, UsageTelemetryMetadataSchema, type UsageTelemetryMetricType, UsageTelemetryMetricTypeSchema, type UsageTelemetryProducer, UsageTelemetryProducerSchema, type UsageTelemetryUnit, UsageTelemetryUnitSchema, type UsageTelemetryV2Batch, type UsageTelemetryV2BatchInput, UsageTelemetryV2BatchSchema, type UsageTelemetryV2ErrorResponse, UsageTelemetryV2ErrorResponseSchema, type UsageTelemetryV2Event, type UsageTelemetryV2EventInput, UsageTelemetryV2EventSchema, UsageTelemetryV2IngestAckSchema, WELL_FORMED_TICKER, WINDOW_PRESETS, type Window, bracketMidpoint, buildCallClassifier, buildOperationInFlightRejection, buildRateLimitedRejection, canonicalLogoPolicySymbol, classifyTickerAlias, clean, createCongressEvent, createUsageTelemetryClient, createUsageTelemetryV2Event, daysBetween, deriveUsageTelemetryIdempotencyKey, deriveUsageTelemetryV2IdempotencyKey, getOperationGuardHttpStatus, isIsoDate, isIsoDateTime, isPlaceholderTicker, isValidBracket, isWellFormedTicker, marketCapBucket, matchBracket, mergeLogoPolicy, mergeRefs, nearestBracket, normalizeCompanyName, normalizePreferredTickerVariant, normalizeSecurityRef, normalizeTicker, openrouterRequestEnrichment, parseArray, parseLogoSources, parseSafe, parseSymbolLogoPolicy, parseTickerLogoPolicyMap, policyFromLetters, punctuationVariants, remoteLogoSources, resolveContinuousTicker, resolvePreferredTickerFromAssetName, resolveTickerAlias, resolveTickerDeterministic, signCongressWebhook, sourceOrderFor, stripPreferredSeries, telemetryEventClassifier, toIsoUtcString, usageMonitorIngestUrl, verifyCongressWebhookSignature };
