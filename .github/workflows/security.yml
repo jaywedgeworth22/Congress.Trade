@@ -143,13 +143,46 @@ jobs:
               ;;
           esac
 
+          # The findings themselves are written to a JSON report rather than
+          # relied on from stdout.  `gitleaks git` only prints the "leaks found:
+          # N" summary line, so before this change a failing run said *how many*
+          # leaks it found and nothing else -- the weekly full-history sweep had
+          # failed every week since 2026-08-17 reporting "leaks found: 6" with
+          # no rule, path, commit or fingerprint anywhere in the log, which is
+          # why nobody could act on it.  --redact still applies, and we print
+          # only structural fields (rule / path / line / commit / fingerprint)
+          # and then delete the report, so no secret value can reach a job log
+          # or an artifact even if redaction ever regressed.
+          report="${RUNNER_TEMP:-/tmp}/gitleaks-report.json"
+          rm -f "$report"
+
           if [ -n "$range" ]; then
             echo "scanning commit range: $range"
-            # --redact so a finding never prints the secret itself into a job
-            # log readable by anyone with repo access.
-            gitleaks git --no-banner --redact --exit-code 1 --log-opts "$range" .
+            gitleaks git --no-banner --redact --exit-code 0 \
+              --report-format json --report-path "$report" --log-opts "$range" .
           else
             echo "scanning full history"
-            gitleaks git --no-banner --redact --exit-code 1 .
+            gitleaks git --no-banner --redact --exit-code 0 \
+              --report-format json --report-path "$report" .
           fi
+
+          count=0
+          if [ -s "$report" ]; then
+            count="$(jq 'length' "$report")"
+          fi
+
+          if [ "$count" -gt 0 ]; then
+            echo "::error::gitleaks found ${count} finding(s).  Structural details below; secret values are never printed."
+            # Explicitly whitelist the fields we emit.  Never emit .Secret or
+            # .Match.
+            jq -r '.[] | "  rule=\(.RuleID) file=\(.File) line=\(.StartLine) commit=\(.Commit[0:12]) date=\(.Date[0:10])\n    fingerprint=\(.Fingerprint)"' "$report"
+            echo
+            echo "A finding that is a confirmed false positive goes in .gitleaksignore as its"
+            echo "fingerprint line, with a comment saying why.  A finding that is a real secret"
+            echo "means ROTATE FIRST, then decide about history -- never the other way round."
+            rm -f "$report"
+            exit 1
+          fi
+
+          rm -f "$report"
           echo "No leaks detected."

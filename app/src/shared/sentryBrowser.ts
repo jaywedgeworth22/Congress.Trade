@@ -103,15 +103,30 @@ export function renderSentryBrowserScript(env: SentryBrowserInput | undefined): 
       "Sentry.feedbackIntegration({colorScheme:'light',autoInject:false,showBranding:false,buttonLabel:'Report a Problem',submitButtonLabel:'Send',formTitle:'Report a Problem'})",
     );
   }
+  // CONGRESS-TRADE-1H: `Sentry.init` builds a `replayIntegration()`, and the
+  // Replay constructor THROWS "Multiple Sentry Session Replay instances are not
+  // supported" the second time it runs on a page.  Two things can drive a
+  // second run: the loader IIFE executing twice (the shell markup appearing
+  // twice in one document, a bfcache/pjax-style re-injection, an extension or
+  // proxy that re-evaluates inline scripts), and `n.onload` firing more than
+  // once for a single tag.  Both are guarded here with window-scoped flags —
+  // the injection guard stops a second <script> tag being appended at all, and
+  // the init guard is the backstop for a double onload on the one tag we did
+  // append.  The thrown error was unhandled, so it reached
+  // `onerror` and became a production issue rather than a no-op.
   return [
     '<script>',
     '(function(){',
-    'window.openSentryFeedback=function(){try{var f=window.Sentry&&window.Sentry.getFeedback&&window.Sentry.getFeedback();if(f&&f.createForm){f.createForm().then(function(form){form.appendToDom();form.open();}).catch(function(){});}}catch(e){}};',
+    'window.openSentryFeedback=window.openSentryFeedback||function(){try{var f=window.Sentry&&window.Sentry.getFeedback&&window.Sentry.getFeedback();if(f&&f.createForm){f.createForm().then(function(form){form.appendToDom();form.open();}).catch(function(){});}}catch(e){}};',
+    'if(window.__ctSentryLoaderStarted)return;',
+    'window.__ctSentryLoaderStarted=1;',
     'var n=document.createElement("script");',
     'n.async=1;n.crossOrigin="anonymous";',
     'n.src=' + jsonLiteral(resolved.scriptSrc) + ';',
     'n.onload=function(){',
+    'if(window.__ctSentryInitialized)return;',
     'if(!window.Sentry)return;',
+    'window.__ctSentryInitialized=1;',
     'window.Sentry.init(Object.assign(' + JSON.stringify(init) + ',{integrations:[' +
       integrations.join(',') +
       ']}));',
