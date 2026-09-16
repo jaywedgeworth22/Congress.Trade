@@ -30,7 +30,9 @@ struct TrendsView: View {
                     } else {
                         if let notice = store.trendsNotice,
                            !Self.isBenignCancellationNotice(notice) {
-                            NoticeView(message: notice)
+                            NoticeView(message: notice) {
+                                Task { await store.refreshTrends() }
+                            }
                         }
 
                         summaryStrip
@@ -728,28 +730,30 @@ struct TrendsView: View {
             VStack(spacing: 0) {
                 ForEach(Array(store.conflicts.prefix(8).enumerated()), id: \.element.id) { idx, c in
                     Button {
-                        selectedPolitician = MemberSheetTarget(id: c.bioguideId, name: c.memberName ?? c.bioguideId, photoUrl: c.photoUrl)
+                        // The route sends no photo for conflict rows; the sheet
+                        // resolves one from the roster it already has.
+                        selectedPolitician = MemberSheetTarget(id: c.memberTargetId, name: c.displayName, photoUrl: nil)
                     } label: {
                         HStack(spacing: 10) {
                             MemberAvatar(
-                                photoURL: MemberPhotoURL.resolve(c.photoUrl),
+                                photoURL: nil,
                                 name: c.memberName ?? "",
                                 size: 28
                             )
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(c.memberName ?? c.bioguideId)
+                                Text(c.displayName)
                                     .font(.subheadline.weight(.semibold))
                                     .lineLimit(1)
-                                Text("\(c.committeeName ?? c.committeeCode) · \(c.sector)")
+                                Text(c.contextLine)
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
                                     .lineLimit(1)
                             }
                             Spacer()
                             HStack(spacing: 6) {
-                                AssetMark(symbol: c.ticker, isTicker: true, size: 22)
+                                AssetMark(symbol: c.ticker ?? "", isTicker: true, size: 22)
                                 VStack(alignment: .trailing, spacing: 2) {
-                                    Text(c.ticker)
+                                    Text(c.ticker ?? "—")
                                         .font(.caption.weight(.bold))
                                     StatusPill(
                                         text: c.txType == "B" ? "Buy" : (c.txType == "S" ? "Sell" : "Exchange"),

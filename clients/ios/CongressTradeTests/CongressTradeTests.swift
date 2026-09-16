@@ -793,7 +793,7 @@ final class CongressTradeTests: XCTestCase {
         await store.refreshTrends()
 
         XCTAssertEqual(summaryAttempts, 3)
-        XCTAssertEqual(store.trendsNotice, "The site is updating.  Pull to refresh.")
+        XCTAssertEqual(store.trendsNotice, "The site is updating (502).  Pull to refresh.")
         XCTAssertFalse((store.trendsNotice ?? "").contains("Request failed"))
     }
 
@@ -1349,10 +1349,10 @@ final class CongressTradeTests: XCTestCase {
 
     func testAPIErrorUserFacingMessageHidesRawTransportPhrase() {
         let updating = APIError.server(status: 502, message: "Request failed", retryAfterSeconds: nil)
-        XCTAssertEqual(updating.userFacingMessage, "The site is updating.  Pull to refresh.")
+        XCTAssertEqual(updating.userFacingMessage, "The site is updating (502).  Pull to refresh.")
         XCTAssertEqual(
             APIError.server(status: 503, message: "try again", retryAfterSeconds: nil).userFacingMessage,
-            "The site is updating.  Pull to refresh."
+            "The site is updating (503).  Pull to refresh."
         )
         XCTAssertEqual(
             APIError.server(status: 429, message: "Request failed", retryAfterSeconds: 2).userFacingMessage,
@@ -1364,7 +1364,7 @@ final class CongressTradeTests: XCTestCase {
         )
         XCTAssertEqual(
             APIError.server(status: 400, message: "Request failed", retryAfterSeconds: nil).userFacingMessage,
-            "Could not load this page.  Pull to refresh."
+            "Could not load this page (400).  Pull to refresh."
         )
         XCTAssertEqual(
             APIError.transport(URLError(.notConnectedToInternet)).userFacingMessage,
@@ -2953,6 +2953,154 @@ final class CongressTradeTests: XCTestCase {
             headerFields: ["content-type": "application/json"]
         )!
         return (response, Data(json.utf8))
+    }
+
+    // MARK: - Trades search slot (board 341d17d2)
+
+    /// The bug: one keystroke set `isApplyingFilters`, which flipped the slot to
+    /// `.updating`, which swapped the `TextField` out of the hierarchy and
+    /// cleared focus — so Trades search was one character per tap.
+    func testSearchSlotDoesNotShowUpdatingWhileFocused() {
+        XCTAssertNil(
+            FeedDashboardView.searchSlotStatus(
+                notice: nil,
+                isOffline: false,
+                isTradesUpdating: true,
+                isSearchFocused: true
+            ),
+            "A refresh in flight must not replace the field while the user is typing in it."
+        )
+    }
+
+    func testSearchSlotShowsUpdatingWhenNotFocused() {
+        XCTAssertEqual(
+            FeedDashboardView.searchSlotStatus(
+                notice: nil,
+                isOffline: false,
+                isTradesUpdating: true,
+                isSearchFocused: false
+            ),
+            .updating
+        )
+    }
+
+    /// `.reload` must still win over focus: it is the only recovery control on
+    /// the tab, so swallowing it to save a keystroke would strand a failed load.
+    func testSearchSlotReloadStillWinsWhileFocused() {
+        XCTAssertEqual(
+            FeedDashboardView.searchSlotStatus(
+                notice: "Request failed",
+                isOffline: false,
+                isTradesUpdating: true,
+                isSearchFocused: true
+            ),
+            .reload(message: "Request failed")
+        )
+    }
+
+    func testSearchSlotOfflineReportsOfflineNotTheRawNotice() {
+        XCTAssertEqual(
+            FeedDashboardView.searchSlotStatus(
+                notice: "",
+                isOffline: true,
+                isTradesUpdating: false,
+                isSearchFocused: true
+            ),
+            .reload(message: "You are offline.")
+        )
+    }
+
+    // MARK: - Conflicts decode (board bf27125a)
+
+    /// Captured verbatim from `GET /api/analytics/conflicts?window=365d&limit=2`
+    /// — the shape `app/src/analytics/routes.ts` actually emits.  The previous
+    /// model required `bioguideId`, `committeeCode` and `date`, none of which
+    /// appear here, so every decode threw and the whole section stayed hidden.
+    private static let conflictsJSON = """
+    {
+      "count": 2,
+      "conflicts": [
+        {
+          "id": "abc123",
+          "ticker": "NVDA",
+          "sector": "Information Technology",
+          "txType": "B",
+          "txDate": "2026-05-04",
+          "filerId": "P000197",
+          "memberName": "Nancy Pelosi",
+          "chamber": "house",
+          "partyBucket": "D",
+          "viaCommittees": ["Committee on Science, Space, and Technology"],
+          "estAmountUsd": 500000
+        },
+        {
+          "id": "def456",
+          "ticker": "XOM",
+          "sector": null,
+          "txType": "S",
+          "txDate": null,
+          "filerId": "S000033",
+          "memberName": null,
+          "chamber": null,
+          "partyBucket": null,
+          "viaCommittees": [],
+          "estAmountUsd": null
+        }
+      ]
+    }
+    """
+
+    func testConflictsDecodeAgainstLiveResponseShape() throws {
+        let decoded = try JSONDecoder().decode(
+            ConflictCandidateResponse.self,
+            from: Data(Self.conflictsJSON.utf8)
+        )
+        let items = try XCTUnwrap(decoded.conflicts)
+        XCTAssertEqual(items.count, 2)
+
+        let first = items[0]
+        XCTAssertEqual(first.id, "abc123")
+        XCTAssertEqual(first.memberTargetId, "P000197")
+        XCTAssertEqual(first.displayName, "Nancy Pelosi")
+        XCTAssertEqual(first.contextLine, "Committee on Science, Space, and Technology · Information Technology")
+
+        // Every nullable field null at once must still decode — one null used to
+        // be enough to blank the entire section.
+        let second = items[1]
+        XCTAssertEqual(second.memberTargetId, "S000033")
+        XCTAssertEqual(second.displayName, "S000033")
+        XCTAssertEqual(second.contextLine, "")
+        XCTAssertTrue(second.committees.isEmpty)
+    }
+
+    // MARK: - Calendar-year analytics window (board d2c4a15e)
+
+    /// Both calendar-year chips used to send `365d`, so "Last Calendar Year"
+    /// showed trailing-365-day analytics — and disagreed with the Trades list
+    /// underneath it, which filters on the exact `from`/`to` bounds.
+    /// `app/src/analytics/sql.ts:43` accepts these two as first-class windows.
+    func testCalendarYearRangesSendCalendarWindows() {
+        XCTAssertEqual(TimeRange.thisCalendarYear.analyticsWindow, "this_cy")
+        XCTAssertEqual(TimeRange.lastCalendarYear.analyticsWindow, "last_cy")
+    }
+
+    func testNonCalendarRangesStillSendDayCounts() {
+        XCTAssertEqual(TimeRange.all.analyticsWindow, "all")
+        XCTAssertNotEqual(TimeRange.thisCalendarYear.analyticsWindow, TimeRange.lastCalendarYear.analyticsWindow)
+    }
+
+    // MARK: - Error copy (board 5c1c9706)
+
+    /// A support report has to be able to say which failure it was.
+    func testServerErrorMessageCarriesStatusCode() {
+        XCTAssertTrue(
+            APIError.server(status: 502, message: "", retryAfterSeconds: nil).userFacingMessage.contains("502"),
+            "5xx copy must name the status code."
+        )
+        XCTAssertTrue(
+            APIError.server(status: 418, message: "Request failed", retryAfterSeconds: nil).userFacingMessage.contains("418"),
+            "The generic fallback must name the status code."
+        )
     }
 }
 

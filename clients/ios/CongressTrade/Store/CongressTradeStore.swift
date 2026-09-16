@@ -162,6 +162,16 @@ final class CongressTradeStore: ObservableObject {
     /// Same request/runner pair for the Trends analytics fan-out.
     private var trendsRequested = false
     private var trendsRunner: Task<Void, Never>?
+    /// Bounded recovery timer for a Trends load that failed outright.
+    ///
+    /// `scheduleAutoRefresh()` arms only from `feed?.nextPollAfterSec`, and
+    /// `feed` is nil when the FIRST load fails — so the poll loop never started
+    /// and the app's opening screen stayed a board of "—" tiles until the user
+    /// found pull-to-refresh.  This is deliberately short and finite: it exists
+    /// to ride out a transient blip, not to hammer a backend that is down.
+    private var trendsRecoveryTask: Task<Void, Never>?
+    private var trendsRecoveryAttempt = 0
+    private static let maxTrendsRecoveryAttempts = 3
     /// Filter edits the user has made that have not yet reached a request —
     /// i.e. we are inside a view-side debounce window.
     private var pendingFilterIntents = 0
@@ -597,6 +607,8 @@ final class CongressTradeStore: ObservableObject {
         refreshRunner = nil
         trendsRunner?.cancel()
         trendsRunner = nil
+        trendsRecoveryTask?.cancel()
+        trendsRecoveryTask = nil
         filterIntentWatchdog?.cancel()
         filterIntentWatchdog = nil
     }
@@ -605,6 +617,7 @@ final class CongressTradeStore: ObservableObject {
         autoRefreshTask?.cancel()
         refreshRunner?.cancel()
         trendsRunner?.cancel()
+        trendsRecoveryTask?.cancel()
         filterIntentWatchdog?.cancel()
     }
 
@@ -616,6 +629,8 @@ final class CongressTradeStore: ObservableObject {
         if paused {
             autoRefreshTask?.cancel()
             autoRefreshTask = nil
+            trendsRecoveryTask?.cancel()
+            trendsRecoveryTask = nil
         } else {
             scheduleAutoRefresh()
         }
@@ -851,6 +866,22 @@ final class CongressTradeStore: ObservableObject {
         await runner.value
     }
 
+    /// Arms one bounded backoff retry after a failed Trends load, and does
+    /// nothing once the attempts are spent — after that the Retry button on
+    /// `NoticeView` (and pull-to-refresh) are the recovery path.
+    private func scheduleTrendsRecovery() {
+        trendsRecoveryTask?.cancel()
+        trendsRecoveryTask = nil
+        guard !autoRefreshPaused, trendsRecoveryAttempt < Self.maxTrendsRecoveryAttempts else { return }
+        trendsRecoveryAttempt += 1
+        let seconds = Double(1 << trendsRecoveryAttempt) * 3.0  // 6s, 12s, 24s
+        trendsRecoveryTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+            guard !Task.isCancelled, let self else { return }
+            await self.refreshTrends()
+        }
+    }
+
     private func performTrendsRefresh() async {
         trendsNotice = nil
         // All-time + calendar-year analytics map through analyticsWindow.
@@ -872,14 +903,21 @@ final class CongressTradeStore: ObservableObject {
                     skipRising: skipRising
                 )
             }
+            // A load that got through clears the recovery budget, so a later
+            // blip gets its own three attempts.
+            trendsRecoveryAttempt = 0
+            trendsRecoveryTask?.cancel()
+            trendsRecoveryTask = nil
         } catch {
             if Task.isCancelled { /* ignore */ }
             else if let apiError = error as? APIError, apiError.isCancellation {
                 // Normal Task cancel — do not paint a grey "cancelled" banner.
             } else if let apiError = error as? APIError {
                 trendsNotice = apiError.userFacingMessage
+                scheduleTrendsRecovery()
             } else {
                 trendsNotice = "Could not load Trends.  Pull to refresh."
+                scheduleTrendsRecovery()
             }
         }
     }
@@ -921,7 +959,16 @@ final class CongressTradeStore: ObservableObject {
         marketCapBuckets = (try? await marketCapTask)?.buckets ?? []
         partySplit = try? await partySplitTask
         filingLag = try? await filingLagTask
-        conflicts = (try? await conflictsTask)?.conflicts ?? []
+        // Not `try?`: a decode mismatch here is a contract break, and swallowing
+        // it is exactly how this section stayed invisible on iOS for weeks.
+        // Still fail-soft for the user — an empty Conflicts section must never
+        // blank the rest of Trends — but it now reports itself.
+        do {
+            conflicts = (try await conflictsTask).conflicts ?? []
+        } catch {
+            conflicts = []
+            SentryTelemetry.captureDecodeFailure(endpoint: "/api/analytics/conflicts", error: error)
+        }
         do {
             latencySummary = try await latencyTask
         } catch {

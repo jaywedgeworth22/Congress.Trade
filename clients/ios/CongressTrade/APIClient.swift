@@ -1150,11 +1150,14 @@ enum APIError: LocalizedError {
             if status == 429 {
                 return "Too many requests.  Pull to refresh."
             }
+            // The status code is carried in the copy so a support report says
+            // which failure it was.  Without it every backend fault reads the
+            // same and "it says the site is updating" is unactionable.
             if (500...599).contains(status) {
-                return "The site is updating.  Pull to refresh."
+                return "The site is updating (\(status)).  Pull to refresh."
             }
             if message.isEmpty || message == "Request failed" {
-                return "Could not load this page.  Pull to refresh."
+                return "Could not load this page (\(status)).  Pull to refresh."
             }
             return message
         case .transport:

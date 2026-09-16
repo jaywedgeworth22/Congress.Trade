@@ -257,7 +257,11 @@ struct DeliveryView: View {
 struct DeliveryMethodExplainer: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Webhooks: POST new filings to your URL (HMAC signed).")
+            // One POST per transaction, not per filing — a filing with several
+            // trades sends several requests (`app/src/delivery/webhook.ts`
+            // sets X-Tx-Id per POST).  "New filings" read as one-per-filing and
+            // sent integrators dedupe on the wrong key.
+            Text("Webhooks: POST each new trade to your URL (HMAC signed).")
             Text("SSE: Live stream over an open connection.")
         }
         .font(.caption)

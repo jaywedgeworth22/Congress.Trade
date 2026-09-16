@@ -120,11 +120,39 @@ struct FeedDashboardView: View {
     /// Status that occupies the search-field slot. Reload wins over Updating
     /// because it is actionable. `nil` shows the typed search field.
     private var tradesSearchSlotStatus: TradesSearchSlotStatus? {
-        if let notice = store.feedNotice,
-           store.isOffline || (!notice.isEmpty && !Self.isBenignCancellationNotice(notice)) {
-            return .reload(message: store.isOffline ? "You are offline." : notice)
+        Self.searchSlotStatus(
+            notice: store.feedNotice,
+            isOffline: store.isOffline,
+            isTradesUpdating: store.isTradesUpdating,
+            isSearchFocused: searchFocused
+        )
+    }
+
+    /// Pure so it can be tested; the view only supplies the four facts.
+    ///
+    /// The `isSearchFocused` clause is the fix for the one-character-per-tap
+    /// bug.  The slot swaps the `TextField` out of the hierarchy whenever this
+    /// returns non-nil, and the first keystroke sets `isApplyingFilters`
+    /// synchronously, so before this the field was destroyed on keystroke one
+    /// and only came back — unfocused — after the server round trip.  While the
+    /// user is typing, an in-flight refresh is reported by a spinner *inside*
+    /// the field instead (see `TradesUnifiedSearchField.isUpdating`), which
+    /// keeps the field, the caret and the keyboard alive.
+    ///
+    /// `.reload` deliberately still wins over focus: it is the only recovery
+    /// control on this tab, and silently swallowing it to preserve a keystroke
+    /// would leave a failed load with no way out.
+    static func searchSlotStatus(
+        notice: String?,
+        isOffline: Bool,
+        isTradesUpdating: Bool,
+        isSearchFocused: Bool
+    ) -> TradesSearchSlotStatus? {
+        if let notice,
+           isOffline || (!notice.isEmpty && !Self.isBenignCancellationNotice(notice)) {
+            return .reload(message: isOffline ? "You are offline." : notice)
         }
-        if store.isTradesUpdating {
+        if isTradesUpdating && !isSearchFocused {
             return .updating
         }
         return nil
@@ -154,6 +182,7 @@ struct FeedDashboardView: View {
                             countLabel: tradeCountLabel(showing: trades.count),
                             focused: $searchFocused,
                             status: tradesSearchSlotStatus,
+                            isUpdating: store.isTradesUpdating,
                             onSubmit: { applyUnifiedSearch() },
                             onClear: {
                                 searchText = ""
@@ -169,7 +198,11 @@ struct FeedDashboardView: View {
                             scheduleSearchDebounce()
                         }
                         .onChange(of: tradesSearchSlotStatus) { _, status in
-                            if status != nil { searchFocused = false }
+                            // Only `.reload` takes focus away.  Dropping focus
+                            // on `.updating` was the second half of the
+                            // one-character-per-tap bug: it dismissed the
+                            // keyboard on every keystroke.
+                            if case .reload = status { searchFocused = false }
                         }
                     }
                 }
@@ -1179,6 +1212,9 @@ struct TradesUnifiedSearchField: View {
     var countLabel: String? = nil
     var focused: FocusState<Bool>.Binding
     var status: TradesSearchSlotStatus? = nil
+    /// Refresh in flight.  Shown as a spinner inside the field so the field is
+    /// never swapped out from under someone who is typing.
+    var isUpdating: Bool = false
     var onSubmit: () -> Void = {}
     var onClear: () -> Void = {}
     var onReload: () -> Void = {}
@@ -1206,18 +1242,21 @@ struct TradesUnifiedSearchField: View {
                     .contentTransition(.numericText())
                     .lineLimit(1)
                     .fixedSize()
+                    // Without its own label this inherited the container's, so
+                    // the number itself — the only thing it conveys — was never
+                    // announced.
+                    .accessibilityLabel("\(countLabel) matching")
             }
         }
         .animation(.easeInOut(duration: 0.15), value: status)
-        .accessibilityLabel(status == nil
-            ? "Search trades by politician name, ticker, state, or party"
-            : statusAccessibility)
     }
 
     private var searchSlot: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
+                // Decorative twin of the field's own label.
+                .accessibilityHidden(true)
             TextField("Name, ticker, state, or party", text: $text)
                 .neverAutocapitalized()
                 .autocorrectionDisabled()
@@ -1228,6 +1267,17 @@ struct TradesUnifiedSearchField: View {
                     onSubmit()
                     focused.wrappedValue = false
                 }
+                // Labelled here rather than on the enclosing HStack.  A label on
+                // a non-element container is inherited by every child, which is
+                // what made the magnifier, the count and the Reload button all
+                // announce the search field's label.
+                .accessibilityLabel("Search trades by politician name, ticker, state, or party")
+            if isUpdating {
+                ProgressView()
+                    .controlSize(.mini)
+                    .transition(.opacity)
+                    .accessibilityLabel("Updating results")
+            }
             if !text.isEmpty {
                 Button {
                     withAnimation { text = "" }
@@ -1240,6 +1290,7 @@ struct TradesUnifiedSearchField: View {
                 .accessibilityLabel("Clear Search")
             }
         }
+        .animation(.easeInOut(duration: 0.15), value: isUpdating)
     }
 
     @ViewBuilder
@@ -1254,6 +1305,10 @@ struct TradesUnifiedSearchField: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
+            // One element, announced once, instead of two children that each
+            // inherited the container's label.
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Updating results")
         case .reload(let message):
             HStack(spacing: 8) {
                 Text(message)
@@ -1265,18 +1320,12 @@ struct TradesUnifiedSearchField: View {
                     .font(.caption.weight(.semibold))
                     .buttonStyle(.bordered)
                     .clipShape(Capsule())
+                    // The button used to inherit the container label and so
+                    // announced as "Request failed, button", which says nothing
+                    // about what it does.  The failure text belongs in the hint.
+                    .accessibilityLabel("Reload trades")
+                    .accessibilityHint(message)
             }
-        }
-    }
-
-    private var statusAccessibility: String {
-        switch status {
-        case .updating:
-            return "Updating results"
-        case .reload(let message):
-            return message
-        case .none:
-            return "Search trades"
         }
     }
 }
