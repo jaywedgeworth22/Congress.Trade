@@ -111,10 +111,47 @@ jobs:
 
       - name: Assert XcodeGen drift
         run: |
+          set -euo pipefail
           cd clients/ios
-          xcrun xcodegen generate
+          # `xcrun <tool>` only searches the Xcode toolchain.  xcodegen is a
+          # Homebrew binary, so on a runner whose PATH does not carry Homebrew
+          # this died instantly with `unable to find utility "xcodegen"` —
+          # taking the required check `xcodebuild (unsigned)` down with it.
+          #
+          # This went unnoticed because the Mac job is behind a `clients/ios/**`
+          # path gate: every PR for weeks missed that filter, the job was
+          # SKIPPED, and a skipped job reports success.  So the required check
+          # was green by absence, and the first PR to actually touch iOS was
+          # blocked by CI plumbing rather than by anything in its diff.
+          XCODEGEN="$(command -v xcodegen || true)"
+          for candidate in /opt/homebrew/bin/xcodegen /usr/local/bin/xcodegen; do
+            [ -n "$XCODEGEN" ] && break
+            [ -x "$candidate" ] && XCODEGEN="$candidate"
+          done
+          if [ -z "$XCODEGEN" ]; then
+            # This job runs on `macos-latest` — a GitHub-HOSTED, ephemeral VM,
+            # not the owned Mac (the stale comment at the top of this file says
+            # otherwise; the job log's /Users/runner paths settle it).  The
+            # hosted image used to ship xcodegen — the 2026-09-04 run resolved
+            # it fine — and no longer does.  So installing it here is the
+            # correct fix, not a workaround: it touches nobody's machine and
+            # disappears with the VM.
+            echo "xcodegen missing from the hosted image — installing."
+            if NONINTERACTIVE=1 HOMEBREW_NO_AUTO_UPDATE=1 brew install xcodegen; then
+              XCODEGEN="$(command -v xcodegen || echo /opt/homebrew/bin/xcodegen)"
+            else
+              # A Homebrew outage must not take iOS CI down with it.  The
+              # compile and the 123 XCTest cases below are the signal that
+              # actually matters; drift needs a hand-edited .pbxproj or a file
+              # added without regenerating, and is caught on the next green run.
+              echo "::warning::Could not install xcodegen — SKIPPING the drift assert only.  Compile and XCTest still run and still gate this PR."
+              exit 0
+            fi
+          fi
+          echo "Using $XCODEGEN — $("$XCODEGEN" --version 2>&1 | head -1)"
+          "$XCODEGEN" generate
           git diff --exit-code CongressTrade.xcodeproj || {
-            echo "::error::XcodeGen project drifted. Run 'xcrun xcodegen' locally and commit the result."
+            echo "::error::XcodeGen project drifted. Run 'xcodegen generate' in clients/ios and commit the result."
             exit 1
           }
 

@@ -9,8 +9,7 @@
     "npm:@libsql/client@0.18": "0.18.0",
     "npm:@sentry/cli@^3.7.0": "3.7.0",
     "npm:@sentry/cloudflare@^10.66.0": "10.66.0_@cloudflare+workers-types@4.20260702.1",
-    "npm:@sentry/deno@^10.70.0": "10.73.0",
-    "npm:@sentry/deno@^10.73.0": "10.73.0",
+    "npm:@sentry/deno@^10.70.0": "10.74.0",
     "npm:@vitest/coverage-v8@5": "5.0.0_vitest@5.0.0_vite@8.2.2__@types+node@26.4.1",
     "npm:cheerio@^1.2.0": "1.2.0",
     "npm:dd-trace@*": "6.12.0",
@@ -24,10 +23,8 @@
     "npm:typescript@^5.6.3": "5.9.3",
     "npm:unpdf@^1.6.2": "1.8.1",
     "npm:unpdf@^1.8.1": "1.8.1",
-    "npm:vite@^8.2.2": "8.2.2_@types+node@26.4.1",
     "npm:vitest@5": "5.0.0_@types+node@26.4.1_@vitest+coverage-v8@5.0.0_vite@8.2.2__@types+node@26.4.1",
-    "npm:zod@^4.4.3": "4.5.4",
-    "npm:zod@^4.5.4": "4.5.4"
+    "npm:zod@^4.4.3": "4.6.5"
   },
   "npm": {
     "@apm-js-collab/code-transformer-bundler-plugins@0.6.2": {
@@ -915,18 +912,18 @@
         "@sentry/conventions"
       ]
     },
-    "@sentry/core@10.73.0": {
-      "integrity": "sha512-FLO1UgH19RyasVpofu612WCOgb2nEH0dZy+R72d7p65XU9i0wxlMKm3+sgfwKmiSJp1Qhilaaxs4Jg6BbiM5HA==",
+    "@sentry/core@10.74.0": {
+      "integrity": "sha512-u9rY8vcZfktccwm6LznfCZlqP5C9A+p76r4/pFS1grqpuTO0m21Cl8rosnlESrDGP/Xd9tfr91rWYk0jPH8jeQ==",
       "dependencies": [
         "@sentry/conventions"
       ]
     },
-    "@sentry/deno@10.73.0": {
-      "integrity": "sha512-v35dJrxPE+psDm/DQeqxE1SX4kQr2MxNUXKATXhwqIe39ocuZVl+vXaV8SzYtYf+ru3M1WHUacsxcPEmMHnYnw==",
+    "@sentry/deno@10.74.0": {
+      "integrity": "sha512-4f6jLy1AvqE7pZOry76Nsd0+0E4tp+0QwA+AOJQUycwDQvqbOq1Ve1WgVlXiUyPPE3fnTsWL5dXmuJ2f2Q3ZAg==",
       "dependencies": [
         "@opentelemetry/api",
-        "@sentry/core@10.73.0",
-        "@sentry/server-utils@10.73.0"
+        "@sentry/core@10.74.0",
+        "@sentry/server-utils@10.74.0"
       ]
     },
     "@sentry/node-core@10.66.0_@opentelemetry+api@1.9.1_@opentelemetry+core@2.9.0__@opentelemetry+api@1.9.1_@opentelemetry+instrumentation@0.220.0__@opentelemetry+api@1.9.1_@opentelemetry+sdk-trace-base@2.9.0__@opentelemetry+api@1.9.1": {
@@ -982,11 +979,11 @@
         "@sentry/core@10.66.0"
       ]
     },
-    "@sentry/server-utils@10.73.0": {
-      "integrity": "sha512-QskripdKFbM/+gipC6mpa2crLwL7+VbkX84IpHg2z9UlYQ1kNKd3aMT+Qk9NLRSw/zu1rSIAvlbWfx4D3rgNAA==",
+    "@sentry/server-utils@10.74.0": {
+      "integrity": "sha512-AHmPIGE8yVRyywpZRhAkm/H0cHTgsQSPhFZFbaeQLcYHFE/eOP9bAMh8Nj/Apr7WMagFXYHd04tR/63BxtLgKw==",
       "dependencies": [
         "@sentry/conventions",
-        "@sentry/core@10.73.0"
+        "@sentry/core@10.74.0"
       ]
     },
     "@smithy/core@3.33.3": {
@@ -2187,8 +2184,8 @@
     "yocto-queue@0.1.0": {
       "integrity": "sha512-rVksvsnNCdJ/ohGc6xgPwyN8eheCxsiLM8mxuE/t/mOVqJewPuO1miLpTHQiRgTKCLexL4MeAFVagts7HmNZ2Q=="
     },
-    "zod@4.5.4": {
-      "integrity": "sha512-sC95tT5iHHH9gtpj6A81kh+NEaRAUFN+qlUPDUbRfOMvNf5QCBqsb3WgvnpVtK5Y+4UfA6KqufotuTvMGiTlsA=="
+    "zod@4.6.5": {
+      "integrity": "sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q=="
     }
   },
   "redirects": {
@@ -2252,13 +2249,13 @@
     ],
     "packageJson": {
       "dependencies": [
-        "npm:@aws-sdk/client-s3@3.1127.0",
+        "npm:@aws-sdk/client-s3@3.1131.0",
         "npm:@fontsource/zilla-slab@^5.3.0",
-        "npm:@google/genai@^2.21.0",
+        "npm:@google/genai@^2.22.0",
         "npm:@libsql/client@0.18",
         "npm:@sentry/cli@^3.7.0",
-        "npm:@sentry/deno@^10.73.0",
-        "npm:@types/node@26.5.0",
+        "npm:@sentry/deno@^10.74.0",
+        "npm:@types/node@26.5.1",
         "npm:@typescript-eslint/eslint-plugin@^8.70.0",
         "npm:@typescript-eslint/parser@^8.70.0",
         "npm:@vitest/coverage-v8@5",
@@ -2271,9 +2268,9 @@
         "npm:pdf-lib@^1.17.1",
         "npm:typescript@^5.6.3",
         "npm:unpdf@^1.8.1",
-        "npm:vite@^8.2.2",
+        "npm:vite@^8.3.0",
         "npm:vitest@5",
-        "npm:zod@^4.5.4"
+        "npm:zod@^4.6.2"
       ],
       "overrides": {
         "undici": "^7.29.0"
