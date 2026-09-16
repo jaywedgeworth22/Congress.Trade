@@ -111,10 +111,31 @@ jobs:
 
       - name: Assert XcodeGen drift
         run: |
+          set -euo pipefail
           cd clients/ios
-          xcrun xcodegen generate
+          # `xcrun <tool>` only searches the Xcode toolchain.  xcodegen is a
+          # Homebrew binary, so on a runner whose PATH does not carry Homebrew
+          # this died instantly with `unable to find utility "xcodegen"` —
+          # taking the required check `xcodebuild (unsigned)` down with it.
+          #
+          # This went unnoticed because the Mac job is behind a `clients/ios/**`
+          # path gate: every PR for weeks missed that filter, the job was
+          # SKIPPED, and a skipped job reports success.  So the required check
+          # was green by absence, and the first PR to actually touch iOS was
+          # blocked by CI plumbing rather than by anything in its diff.
+          XCODEGEN="$(command -v xcodegen || true)"
+          for candidate in /opt/homebrew/bin/xcodegen /usr/local/bin/xcodegen; do
+            [ -n "$XCODEGEN" ] && break
+            [ -x "$candidate" ] && XCODEGEN="$candidate"
+          done
+          if [ -z "$XCODEGEN" ]; then
+            echo "::error::xcodegen is not on this runner.  Install it (brew install xcodegen) — do not remove this drift check."
+            exit 1
+          fi
+          echo "Using $XCODEGEN — $("$XCODEGEN" --version 2>&1 | head -1)"
+          "$XCODEGEN" generate
           git diff --exit-code CongressTrade.xcodeproj || {
-            echo "::error::XcodeGen project drifted. Run 'xcrun xcodegen' locally and commit the result."
+            echo "::error::XcodeGen project drifted. Run 'xcodegen generate' in clients/ios and commit the result."
             exit 1
           }
 
