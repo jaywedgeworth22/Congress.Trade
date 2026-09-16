@@ -3714,11 +3714,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       <div class="delivery-grid">
         <div class="delivery-card">
           <h4>&rarr; Signed Webhooks &mdash; we call you</h4>
-          <p>We POST the full filing JSON to your URL the instant it lands, retrying automatically on failure.</p>
+          <p>We POST one signed JSON request per transaction to your URL the instant it lands, retrying automatically on failure.&nbsp; A filing that discloses several trades sends several requests, each with its own <code>X-Tx-Id</code>.</p>
         </div>
         <div class="delivery-card">
           <h4>&#8674; Live Stream (SSE) &mdash; you stay on the line</h4>
-          <p>One open HTTPS connection streams each new filing as an event &mdash; a few lines of <code>EventSource</code>, no polling.</p>
+          <p>One open HTTPS connection streams each new transaction as an event &mdash; a few lines of <code>EventSource</code>, no polling.</p>
         </div>
       </div>
       <p class="note">Every request is HMAC-SHA256 signed, and secrets are shown once at creation.&nbsp; Trends, trades, and analytics stay free.</p>

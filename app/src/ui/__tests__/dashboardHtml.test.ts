@@ -4880,8 +4880,13 @@ describe('MONET web punch list 2 (LANE W2 — drawers + delivery)', () => {
     const grid = DASHBOARD_HTML.slice(gridStart, gridEnd);
     expect((grid.match(/<p>/g) || []).length).toBe(2);
     expect(grid).not.toContain('class="note"');
-    expect(grid).toContain('We POST the full filing JSON to your URL the instant it lands, retrying automatically on failure.');
-    expect(grid).toContain('One open HTTPS connection streams each new filing as an event &mdash; a few lines of <code>EventSource</code>, no polling.');
+    // Per TRANSACTION, not per filing: delivery/webhook.ts sends one POST per
+    // tx with its own X-Tx-Id, so "the full filing JSON" told integrators the
+    // wrong granularity and invited dedupe on the shared docId.
+    expect(grid).toContain('We POST one signed JSON request per transaction to your URL the instant it lands, retrying automatically on failure.');
+    expect(grid).toContain('each with its own <code>X-Tx-Id</code>');
+    expect(grid).not.toContain('We POST the full filing JSON');
+    expect(grid).toContain('One open HTTPS connection streams each new transaction as an event &mdash; a few lines of <code>EventSource</code>, no polling.');
     // The one security line (HMAC + secrets-shown-once) survives, stated once.
     expect(DASHBOARD_HTML).toContain('Every request is HMAC-SHA256 signed, and secrets are shown once at creation.');
     expect(DASHBOARD_HTML).toContain('id="subsMarketing"');

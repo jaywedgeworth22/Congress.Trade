@@ -79,6 +79,29 @@ enum SentryTelemetry {
         return false
     }
 
+    /// Report a response body that did not decode.
+    ///
+    /// Exists because `try?` on an optional-by-design analytics section is
+    /// indistinguishable from "the server sent nothing": the Committee Sector
+    /// Conflicts section was hidden on every launch for weeks because a model
+    /// required three keys the route never sent, and nothing anywhere said so.
+    /// A decode mismatch is a client/server contract break, so it should page
+    /// us, not disappear.
+    ///
+    /// Sends the endpoint name and the decoder's own description only — never
+    /// the response body, which on this app carries filing data.
+    static func captureDecodeFailure(endpoint: String, error: Error) {
+        if error is CancellationError { return }
+        guard let decodingError = error as? DecodingError else { return }
+        SentrySDK.capture(message: "Decode failed: \(endpoint)") { scope in
+            scope.setLevel(.warning)
+            scope.setExtras([
+                "endpoint": endpoint,
+                "reason": String(describing: decodingError),
+            ])
+        }
+    }
+
     /// Info.plist string, treating unsubstituted `$(VAR)` build settings as missing.
     private static func plistString(_ key: String) -> String? {
         guard let raw = Bundle.main.object(forInfoDictionaryKey: key) as? String else { return nil }

@@ -1332,13 +1332,22 @@ enum TimeRange: String, CaseIterable, Identifiable, Codable {
         }
     }
 
-    /// Window string for analytics endpoints. Calendar-year cases map to a
-    /// day-count window large enough to cover the range; the feed still uses
-    /// exact `from`/`to` ISO bounds below.
+    /// Window string for analytics endpoints.
+    ///
+    /// The calendar-year cases used to be flattened to `"365d"` on the theory
+    /// that the analytics API only understood day counts.  It does not:
+    /// `app/src/analytics/sql.ts:43` has `CALENDAR_WINDOWS = new Set(['this_cy',
+    /// 'last_cy'])` and validates both as first-class windows, which is what the
+    /// web app sends.  The substitution made two of the ten range chips show
+    /// trailing-365-day figures under a calendar-year label — and disagree with
+    /// the Trades list directly underneath, which has always used the exact
+    /// `from`/`to` bounds from `fromDateISO`/`toDateISO` on this same enum.
     var analyticsWindow: String {
         switch self {
-        case .thisCalendarYear, .lastCalendarYear:
-            return "365d"
+        case .thisCalendarYear:
+            return "this_cy"
+        case .lastCalendarYear:
+            return "last_cy"
         case .all:
             return "all"
         default:
@@ -1659,22 +1668,41 @@ struct ConflictCandidateResponse: Decodable {
     let count: Int?
 }
 
+/// Mirrors `GET /api/analytics/conflicts` exactly (`app/src/analytics/routes.ts`
+/// `r.get('/conflicts')`, documented in `app/docs/client-mobile-api.md`).
+///
+/// The previous shape was invented against an endpoint that never existed: it
+/// required `bioguideId`, `committeeCode` and `date`, none of which the route
+/// emits, so every decode threw and `try?` turned the whole Committee Sector
+/// Conflicts section into "empty" — silently, on every launch, since #1832.
+/// Only `id` is required now; anything the route can null out is optional, so a
+/// single null field can never blank the section again.
 struct ConflictCandidateItem: Decodable, Identifiable {
-    var id: String { "\(bioguideId)_\(committeeCode)_\(ticker)_\(date)" }
-    let bioguideId: String
+    /// The trade id — unique per conflict row, since the route emits at most
+    /// one row per trade.
+    let id: String
+    let ticker: String?
+    let sector: String?
+    let txType: String?
+    let txDate: String?
+    let filerId: String?
     let memberName: String?
+    let chamber: String?
     let partyBucket: String?
-    let photoUrl: String?
-    let committeeCode: String
-    let committeeName: String?
-    let sector: String
-    let ticker: String
-    let companyName: String?
-    let date: String
-    let txType: String
-    let amountMin: Double?
-    let amountMax: Double?
-    let estVolumeUsd: Double?
+    /// Committee names that triggered the flag. The route always sends a
+    /// non-empty array here (rows with none are filtered out server-side).
+    let viaCommittees: [String]?
+    let estAmountUsd: Double?
+
+    /// Stable id for the member sheet: the filer id, falling back to the row id
+    /// so a row missing `filerId` still opens something rather than crashing.
+    var memberTargetId: String { filerId ?? id }
+    var displayName: String { memberName ?? filerId ?? "Unknown filer" }
+    var committees: [String] { viaCommittees ?? [] }
+    /// "Committee · Sector" subtitle, skipping whichever half is absent.
+    var contextLine: String {
+        [committees.first, sector].compactMap { $0 }.joined(separator: " · ")
+    }
 }
 
 // MARK: - Company Name Normalization Helper

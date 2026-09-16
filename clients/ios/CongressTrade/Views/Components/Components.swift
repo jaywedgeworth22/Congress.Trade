@@ -709,16 +709,33 @@ struct DetailRow: View {
 
 struct NoticeView: View {
     let message: String
+    /// Optional recovery action.  Trends is the app's first screen and a failed
+    /// load leaves it as six "—" tiles, so a notice there with no button is a
+    /// dead end until the user guesses at pull-to-refresh.  Callers that sit
+    /// under an obvious refresh control can leave this nil.
+    var retry: (() -> Void)? = nil
 
     var body: some View {
-        Text(message)
-            .font(.footnote)
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
-            .background(AppTheme.panel, in: RoundedRectangle(cornerRadius: 12))
-            .overlay(AppTheme.border(cornerRadius: 12))
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(message)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if let retry {
+                Button("Retry", action: retry)
+                    .font(.footnote.weight(.semibold))
+                    .buttonStyle(.bordered)
+                    .clipShape(Capsule())
+                    .fixedSize()
+                    .accessibilityLabel("Retry")
+                    .accessibilityHint(message)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .background(AppTheme.panel, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(AppTheme.border(cornerRadius: 12))
     }
 }
 
