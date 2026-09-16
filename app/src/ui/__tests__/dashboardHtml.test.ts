@@ -2198,6 +2198,11 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('mailto:support@congress.trade');
     expect(DASHBOARD_HTML).not.toContain('mailto:congress.trade@jays.services');
   });
+
+  it('footer includes subtle Report a Problem trigger', () => {
+    expect(DASHBOARD_HTML).toContain('Report a Problem</a>');
+    expect(DASHBOARD_HTML).toContain('window.openSentryFeedback');
+  });
 });
 
 /**
@@ -6307,7 +6312,7 @@ describe('mobile tab bar centering (#2075 regression) + six-tab shrink + avatar 
     // text-overflow:ellipsis on nav.tabs a::after stays a last resort for
     // pathological cases, not the normal six-tab render path.
     expect(DASHBOARD_HTML).toContain(
-      'nav.tabs a::after { content: attr(data-mobile); display: block; font-size: 10px; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }',
+      'nav.tabs a::after { content: attr(data-mobile) / ""; display: block; font-size: 10px; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }',
     );
   });
 
