@@ -88,16 +88,6 @@ struct PremiumSheet: View {
                         .font(.subheadline.weight(.semibold))
                         .fixedSize(horizontal: false, vertical: true)
 
-                    // Guideline 3.1.2 wants length of subscription and renewal
-                    // terms ON the paywall, for every viewer — not only after
-                    // the products load and not only once signed in.  It sits
-                    // above `actionSection` so it is present even when StoreKit
-                    // returns an empty catalog.
-                    Text(PremiumPricing.renewalTerms)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-
                     actionSection
 
                     if let notice {
@@ -591,15 +581,6 @@ struct PremiumSheet: View {
 /// `docs/rollouts/2026-08-14-premium-trial-asc-verified.md`.
 enum PremiumPricing {
     static let headline = "$5/month  •  $50/year  •  2-week free trial"
-
-    /// Renewal disclosure required on the paywall itself (Guideline 3.1.2).
-    /// Kept factual and free of marketing so it reads the same to App Review
-    /// as it does to a subscriber.
-    static let renewalTerms =
-        "Monthly or yearly subscription.  Payment is charged to your Apple Account at "
-        + "confirmation of purchase, and renews automatically at the same price unless you "
-        + "cancel at least 24 hours before the period ends.  Manage or cancel anytime in "
-        + "Settings › Apple Account › Subscriptions."
 
     /// Empty StoreKit catalog: Restore stays, website checkout does not.
     /// Guideline 3.1.1 — same digital good as IAP.
