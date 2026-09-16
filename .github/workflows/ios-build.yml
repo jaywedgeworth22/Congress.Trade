@@ -129,18 +129,24 @@ jobs:
             [ -x "$candidate" ] && XCODEGEN="$candidate"
           done
           if [ -z "$XCODEGEN" ]; then
-            # Loud, but NOT fatal.  xcodegen is genuinely absent from this
-            # runner right now (it resolved fine on 2026-09-04, so something
-            # pruned it).  Blocking here would mean the compile and the 71
-            # XCTest cases below — the signal that actually matters — cannot
-            # run at all until someone reinstalls a dev tool.  Drift is the
-            # lesser risk: it needs a hand-edited .pbxproj or a new file added
-            # without regenerating, and it is caught the moment the tool is back.
-            #
-            # OWNER ACTION: `brew install xcodegen` on the Mac runner restores
-            # this assert.  Do not delete this step to make the warning go away.
-            echo "::warning::xcodegen not found on this runner — SKIPPING the XcodeGen drift assert.  Compile and XCTest still run and still gate this PR.  Fix with: brew install xcodegen"
-            exit 0
+            # This job runs on `macos-latest` — a GitHub-HOSTED, ephemeral VM,
+            # not the owned Mac (the stale comment at the top of this file says
+            # otherwise; the job log's /Users/runner paths settle it).  The
+            # hosted image used to ship xcodegen — the 2026-09-04 run resolved
+            # it fine — and no longer does.  So installing it here is the
+            # correct fix, not a workaround: it touches nobody's machine and
+            # disappears with the VM.
+            echo "xcodegen missing from the hosted image — installing."
+            if NONINTERACTIVE=1 HOMEBREW_NO_AUTO_UPDATE=1 brew install xcodegen; then
+              XCODEGEN="$(command -v xcodegen || echo /opt/homebrew/bin/xcodegen)"
+            else
+              # A Homebrew outage must not take iOS CI down with it.  The
+              # compile and the 123 XCTest cases below are the signal that
+              # actually matters; drift needs a hand-edited .pbxproj or a file
+              # added without regenerating, and is caught on the next green run.
+              echo "::warning::Could not install xcodegen — SKIPPING the drift assert only.  Compile and XCTest still run and still gate this PR."
+              exit 0
+            fi
           fi
           echo "Using $XCODEGEN — $("$XCODEGEN" --version 2>&1 | head -1)"
           "$XCODEGEN" generate
