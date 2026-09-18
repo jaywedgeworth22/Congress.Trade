@@ -107,11 +107,13 @@ export function looksLikePlausibleTradeTable(text: string): boolean {
 
 /**
  * True when the "asset name" is PTR form chrome (letterhead / column headers),
- * not a tradeable security.
+ * not a tradeable security.  The OGE 278-T footnote "... Your Broker Acted As
+ * Agent" leaks in as a row when a scanned page is OCR'd ("Tion Your Brokor
+ * Acted As Annnt"); the `bro..r acted as` clause matches its OCR variants.
  */
 export function looksLikeHeaderContaminatedAsset(assetName: string | null): boolean {
   if (!assetName) return false;
-  return /(?:\bClerk of the House of Representatives\b|\bLegislative Resource Center\b|\bB-?81 Cannon Building\b|\bCannon Building\b|\bID Owner Asset Transaction Type\b|\bTransaction Type Date Notification Date Amount\b|\bPeriodic Transaction Report\b|Name:\s*Hon\.|Status:\s*Member|State\/District:|\bMember of the U\.?S\.?\s+House\b|\bOfficer or Employee\b|\bOffice Telephone\b|\bEmploying Off(?:ice)?\b|\bunreadable asset\b|HOUSE OF\s+REP|\bCfficar\b|\bDiotict\b|Use oSucem|I certify that|Signature of Reporting|\bFULL ASSET NAME\b|\bif you answered\b|\bfiled in error\b|\bpreviously and erroneously filed\b|\bplease contact\b|\bChief of Staff\b|\bServing the .+ Valley\b)/i.test(
+  return /(?:\bClerk of the House of Representatives\b|\bLegislative Resource Center\b|\bB-?81 Cannon Building\b|\bCannon Building\b|\bID Owner Asset Transaction Type\b|\bTransaction Type Date Notification Date Amount\b|\bPeriodic Transaction Report\b|Name:\s*Hon\.|Status:\s*Member|State\/District:|\bMember of the U\.?S\.?\s+House\b|\bOfficer or Employee\b|\bOffice Telephone\b|\bEmploying Off(?:ice)?\b|\bunreadable asset\b|HOUSE OF\s+REP|\bCfficar\b|\bDiotict\b|Use oSucem|I certify that|Signature of Reporting|\bFULL ASSET NAME\b|\bif you answered\b|\bfiled in error\b|\bpreviously and erroneously filed\b|\bplease contact\b|\bChief of Staff\b|\bServing the .+ Valley\b|\bbro[a-z]{1,4}r\s+acted\s+as\b)/i.test(
     assetName,
   ) || looksLikePtrFormSampleAsset(assetName);
 }

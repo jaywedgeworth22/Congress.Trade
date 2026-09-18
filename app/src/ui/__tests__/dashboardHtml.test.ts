@@ -6956,3 +6956,29 @@ describe('header chrome rework (owner 2026-09-09)', () => {
     expect(DASHBOARD_HTML).toContain("if (!typing && !menuOpen && q && document.documentElement.getAttribute('data-view') === 'trades' && !openOverlayContainer()) {");
   });
 });
+
+// Board row 6c05e09b: nothing on Top Performers or the drawers said the prices
+// were as of a date, while prod prices sat frozen for 46 days.
+describe('Prices as of copy (6c05e09b)', () => {
+  function fmtAsOfFn(): (iso: string | null) => string {
+    const m = /function fmtAsOf\(iso\) \{[\s\S]*?\n\}/.exec(DASHBOARD_HTML);
+    expect(m, 'fmtAsOf is embedded in the dashboard').not.toBeNull();
+    return new Function(`${m![0]}\nreturn fmtAsOf;`)() as (iso: string | null) => string;
+  }
+
+  it('formats an ISO date without a timezone round-trip', () => {
+    const fmt = fmtAsOfFn();
+    expect(fmt('2026-08-03')).toBe('Aug 3, 2026');
+    expect(fmt('2026-08-03T00:00:00.000Z')).toBe('Aug 3, 2026');
+    expect(fmt('2026-12-31')).toBe('Dec 31, 2026');
+    expect(fmt(null)).toBe('');
+    expect(fmt('garbage')).toBe('');
+  });
+
+  it('prints "Prices as of" on Top Performers and on the politician drawer', () => {
+    expect(DASHBOARD_HTML).toContain('id="trPerformersAsOf"');
+    expect(DASHBOARD_HTML).toContain("'Prices as of ' + fmtAsOf(d.pricesAsOf)");
+    expect(DASHBOARD_HTML).toContain("(d.pricesAsOf ? ' · Prices as of ' + esc(fmtAsOf(d.pricesAsOf)) : '')");
+  });
+});
+

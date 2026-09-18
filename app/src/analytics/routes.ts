@@ -289,7 +289,15 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
         dollarsExcludeOptions: true,
         resolvedTickerPct:
           totalTrades > 0 ? round(num(row.resolved_ticker_count) / totalTrades, 4) : null,
+        // Equity-like denominator (public_equity + still-unknown types) so rows that
+        // are probably equities but carry no ticker keep the gap visible.
         resolvedEquityTickerPct:
+          num(row.equity_like_trade_count) > 0
+            ? round(num(row.resolved_equity_like_ticker_count) / num(row.equity_like_trade_count), 4)
+            : null,
+        equityLikeTradeCount: num(row.equity_like_trade_count),
+        // The narrow, pre-2026-09 definition: only rows already typed public_equity.
+        resolvedPublicEquityTickerPct:
           num(row.equity_trade_count) > 0
             ? round(num(row.resolved_equity_ticker_count) / num(row.equity_trade_count), 4)
             : null,
@@ -852,6 +860,11 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
       return meta(f, {
         count: members.length,
         members,
+        // Newest price date behind any ranked member's trades; the board prints "Prices as of".
+        pricesAsOf: rows.reduce<string | null>((best, row) => {
+          const d = str(row.prices_as_of);
+          return d && (!best || d > best) ? d : best;
+        }, null),
         anchor: 'filing_date',
         side: 'buys',
         note: 'Size-weighted average excess return vs S&P 500 from the disclosure date (realizable by a follower), winsorized per-trade at ±200% so one outlier trade cannot dominate; 0% means matched the S&P, +3% means about 3 percentage points better. Buys only, options excluded, public equity only.',
@@ -1099,7 +1112,13 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
     if (isOption || priceAtTrade == null || currentPrice == null) {
       return c.json({ available: false, isOption });
     }
-    const currentSpx = await latestSpxClose(c.env);
+    // The asset's current price is the close on current_price_date, so the S&P's
+    // exit leg is the S&P close on or before that SAME day (board row 6c05e09b);
+    // the latest S&P close is only the fallback when the price has no date.
+    const currentPriceDate = str(row.current_price_date);
+    const currentSpx =
+      (currentPriceDate ? await closeOnOrBefore(c.env, 'spx_eod', currentPriceDate) : null) ??
+      (await latestSpxClose(c.env));
     const perf = computePerformance(priceAtTrade, currentPrice, spxAtTrade, currentSpx);
     const filedDate = str(row.filed_date);
     const priceAtFiling = await closeOnOrBefore(c.env, 'price_eod', filedDate, str(row.ticker));
@@ -1116,7 +1135,9 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
       filedDate,
       priceAtTrade,
       currentPrice,
-      currentPriceDate: str(row.current_price_date),
+      currentPriceDate,
+      // Every return on this response ends on this date (asset and S&P alike).
+      pricesAsOf: currentPriceDate,
       ...perf,
       tradeDatePerformance: { priceAt: priceAtTrade, spxAt: spxAtTrade, ...perf },
       filingDatePerformance:
@@ -1282,10 +1303,17 @@ export function buildAnalyticsRouter(): Hono<{ Bindings: Env }> {
         elapsedDaysSinceFiling:
           row.elapsed_days_since_filing == null ? null : num(row.elapsed_days_since_filing),
         estVolume: row.est_volume == null ? null : num(row.est_volume),
+        currentPriceDate: str(row.current_price_date),
+        spxNow: row.spx_now == null ? null : num(row.spx_now),
       }));
       const dual = aggregateMemberDualPerformance(perfRows, currentSpx);
       return meta(f, {
         filerId: txFilerId,
+        // Newest price date behind any scored trade: the drawer prints "Prices as of".
+        pricesAsOf: perfRows.reduce<string | null>(
+          (best, r) => (r.currentPriceDate && (!best || r.currentPriceDate > best) ? r.currentPriceDate : best),
+          null,
+        ),
         side: dual.side,
         buyCount: dual.buyCount,
         tradeDate: dual.tradeDate,

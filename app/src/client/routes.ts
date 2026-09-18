@@ -304,6 +304,8 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
       currentPrice: row.current_price == null ? null : num(row.current_price),
       elapsedDaysSinceFiling:
         row.elapsed_days_since_filing == null ? null : num(row.elapsed_days_since_filing),
+      currentPriceDate: str(row.current_price_date),
+      spxNow: row.spx_now == null ? null : num(row.spx_now),
     }));
     const dual = aggregateMemberDualPerformance(perfRows, currentSpx);
     // Flat `performance` stays trade-date buy skill for older iOS decoders;
@@ -314,6 +316,12 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
       buyCount: dual.buyCount,
       tradeDate: dual.tradeDate,
       filingDate: dual.filingDate,
+      // Newest price date behind any scored trade: every return above ends on it
+      // (the S&P leg is aligned per ticker to the same day) — clients print "Prices as of".
+      pricesAsOf: perfRows.reduce<string | null>(
+        (best, r) => (r.currentPriceDate && (!best || r.currentPriceDate > best) ? r.currentPriceDate : best),
+        null,
+      ),
     };
 
     const member = memberProfile(resolved.profile, resolved.id);

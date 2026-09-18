@@ -72,6 +72,9 @@ const TICKER_SUFFIX_RE = new RegExp(String.raw`\((${TICKER_PATTERN})\)\s*$`);
 // otherwise be indistinguishable from a real row's leading "# ").
 const TABLE_HEADER_RE = /#\s*[\.,:;]?\s*DESCRIPTION\s+TYPE\s+DATE\s+NOTIFICATION\s+RECEIVED\s+OVER\s+30\s+DAYS\s+AGO\s+AMOUNT/i;
 
+// The row number is up to FIVE digits: a large executive 278-T (Trump's runs past
+// row 3600) numbers its rows into the thousands, and the old `\d{1,3}` could not
+// anchor them at all (board row 3d31c7b9).
 // One flat transaction row, scanned globally over the (whitespace-normalized,
 // header-anchored) document text rather than split by line — see the module
 // comment for why "split by line" doesn't work here. The leading
@@ -84,7 +87,7 @@ const TABLE_HEADER_RE = /#\s*[\.,:;]?\s*DESCRIPTION\s+TYPE\s+DATE\s+NOTIFICATION
 // anchor (e.g. scanning without TABLE_HEADER_RE found) fails fast instead of
 // swallowing hundreds of characters of prose to reach a later real row.
 const ROW_RE =
-  /(?<![\d,.])\d{1,3}[\.,:;]?\s+(.{1,200}?)\s+(Purchase|Sale|Exchange)\s+(\d{1,2}\/\d{1,2}\/\d{2,4})\s+(?:Yes|No)\s+(\$[\d,]+(?:\.\d+)?(?:\s*(?:-|–|—|to)\s*\$?[\d,]+(?:\.\d+)?|\s*\+)?)/gi;
+  /(?<![\d,.])\d{1,5}[\.,:;]?\s+(.{1,200}?)\s+(Purchase|Sale|Exchange)\s+(\d{1,2}\/\d{1,2}\/\d{2,4})\s+(?:Yes|No)\s+(\$[\d,]+(?:\.\d+)?(?:\s*(?:-|–|—|to)\s*\$?[\d,]+(?:\.\d+)?|\s*\+)?)/gi;
 
 const TX_TYPE_MAP: Record<string, TxType> = {
   purchase: 'B',

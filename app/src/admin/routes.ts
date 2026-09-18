@@ -1146,7 +1146,8 @@ export function photoUrlNeedsUpgrade(
 export async function runTickerBackfill(
   env: Env,
   limit = 5000,
-): Promise<{ scanned: number; resolved: number }> {
+  opts: { afterId?: string } = {},
+): Promise<{ scanned: number; resolved: number; lastId?: string | null }> {
   const resolver = await loadResolver(env);
   type BackfillTickerRow = {
     id: string;
@@ -1170,6 +1171,24 @@ export async function runTickerBackfill(
     source: TxSource;
     row_key: string | null;
   };
+  // Cursor mode (opts.afterId, '' = start): page by id so rows that never resolve
+  // (bonds, funds, private assets — most of the ~30k ticker-less rows) cannot
+  // starve the tail.  Without a cursor the legacy ordering (preferred/depositary
+  // rows first, then lowest ids) is preserved exactly.
+  const cursorMode = opts.afterId !== undefined;
+  const preferredSql =
+    "(asset_name LIKE '%Depositary Share%' " +
+    "OR asset_name LIKE '%Preferred%' " +
+    "OR asset_name LIKE '%Preference%' " +
+    "OR asset_name LIKE '%Pfd%' " +
+    "OR asset_name LIKE '%Pref%')";
+  const orderSql = cursorMode
+    ? 'ORDER BY id '
+    : "ORDER BY CASE WHEN ticker IS NOT NULL AND ticker <> '' AND ticker NOT LIKE '%^%' AND " +
+      preferredSql +
+      " THEN 0 WHEN (ticker IS NULL OR ticker = '') AND " +
+      preferredSql +
+      ' THEN 1 ELSE 2 END, id ';
   const rows = await all<BackfillTickerRow>(
     env.DB,
     "SELECT id, ticker, asset_name, tx_date, owner, asset_type, asset_type_name, tx_type, " +
@@ -1177,27 +1196,14 @@ export async function runTickerBackfill(
       "subholding, location, description, supplemental_text, source, row_key FROM transactions " +
       "WHERE asset_name IS NOT NULL AND asset_name <> '' " +
       "AND ((ticker IS NULL OR ticker = '') " +
-      "OR (ticker NOT LIKE '%^%' AND (" +
-      "asset_name LIKE '%Depositary Share%' " +
-      "OR asset_name LIKE '%Preferred%' " +
-      "OR asset_name LIKE '%Preference%' " +
-      "OR asset_name LIKE '%Pfd%' " +
-      "OR asset_name LIKE '%Pref%'))) " +
+      "OR (ticker NOT LIKE '%^%' AND " +
+      preferredSql +
+      ')) ' +
       'AND deprecated_at IS NULL ' +
-      "ORDER BY CASE WHEN ticker IS NOT NULL AND ticker <> '' AND ticker NOT LIKE '%^%' AND (" +
-      "asset_name LIKE '%Depositary Share%' " +
-      "OR asset_name LIKE '%Preferred%' " +
-      "OR asset_name LIKE '%Preference%' " +
-      "OR asset_name LIKE '%Pfd%' " +
-      "OR asset_name LIKE '%Pref%') THEN 0 " +
-      "WHEN (ticker IS NULL OR ticker = '') AND (" +
-      "asset_name LIKE '%Depositary Share%' " +
-      "OR asset_name LIKE '%Preferred%' " +
-      "OR asset_name LIKE '%Preference%' " +
-      "OR asset_name LIKE '%Pfd%' " +
-      "OR asset_name LIKE '%Pref%') THEN 1 ELSE 2 END, id " +
+      (cursorMode ? 'AND id > ? ' : '') +
+      orderSql +
       'LIMIT ?',
-    [Math.min(limit, 20000)],
+    cursorMode ? [opts.afterId as string, Math.min(limit, 20000)] : [Math.min(limit, 20000)],
   );
   const updates: D1PreparedStatement[] = [];
   for (const row of rows) {
@@ -1231,7 +1237,8 @@ export async function runTickerBackfill(
   for (let i = 0; i < updates.length; i += 50) {
     await batchPrepared(env.DB, updates.slice(i, i + 50));
   }
-  return { scanned: rows.length, resolved: updates.length };
+  const summary = { scanned: rows.length, resolved: updates.length };
+  return cursorMode ? { ...summary, lastId: rows.length ? rows[rows.length - 1].id : null } : summary;
 }
 
 function parseRowIndex(rowKey: string | null): number | null {
@@ -10195,7 +10202,27 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   r.post('/resolve-tickers', async (c) => {
     try {
       const limit = Number(c.req.query('limit')) || 5000;
-      return c.json(await runTickerBackfill(c.env, limit));
+      // ?after=<transaction id> pages by id (start with ?after= empty); the response's
+      // lastId is the next cursor.  Without it the legacy ordering applies.
+      const after = c.req.query('after');
+      return c.json(await runTickerBackfill(c.env, limit, after === undefined ? {} : { afterId: after }));
+    } catch (err) {
+      return c.json({ error: (err as Error).message }, 500);
+    }
+  });
+
+  // --- POST /clean-oge-row-numbers ----------------------------------------
+  // Strip the 278-T "#" column that the scanned path glued onto executive asset
+  // names ("3641 Microsoft Corp. Com"), re-resolve tickers over the cleaned
+  // names, and recompute row_key.  Per filing, only when the filing's own rows
+  // show the column.  DRY RUN BY DEFAULT: pass ?dryRun=0 to write.  ?limit caps
+  // the filings per call (default 200).  raw_text is never modified.
+  r.post('/clean-oge-row-numbers', async (c) => {
+    try {
+      const { cleanOgeRowIndexes } = await import('./ogeRowIndexCleanup.ts');
+      const dryRun = c.req.query('dryRun') !== '0';
+      const docLimit = Number(c.req.query('limit')) || undefined;
+      return c.json({ ok: true, ...(await cleanOgeRowIndexes(c.env, { dryRun, docLimit })) });
     } catch (err) {
       return c.json({ error: (err as Error).message }, 500);
     }

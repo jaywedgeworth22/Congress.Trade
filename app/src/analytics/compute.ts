@@ -166,6 +166,14 @@ export interface MemberPerfRow {
   elapsedDaysSinceFiling?: number | null;
   /** Estimated trade volume in USD for size weighting. */
   estVolume?: number | null;
+  /** The day `currentPrice` is from (securities_ref.current_price_date). */
+  currentPriceDate?: string | null;
+  /**
+   * S&P 500 close on or before `currentPriceDate`, so the benchmark's exit leg
+   * ends on the SAME day as the asset's.  When absent the aggregate falls back to
+   * the single `currentSpx` it is handed (the pre-alignment behaviour).
+   */
+  spxNow?: number | null;
 }
 
 /**
@@ -275,7 +283,7 @@ export function aggregateMemberPerformance(
     if (r.isOption) continue;
     const { priceAt, spxAt } = rowAnchors(r, anchor);
     if (priceAt == null || r.currentPrice == null) continue;
-    const perf = computePerformance(priceAt, r.currentPrice, spxAt, currentSpx);
+    const perf = computePerformance(priceAt, r.currentPrice, spxAt, r.spxNow ?? currentSpx);
     if (perf.assetReturn == null) continue;
     returns.push(perf.assetReturn);
     

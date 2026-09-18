@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   evaluatePipelineSignals,
+  tradingDaysBehind,
   type PipelineSignals,
   DEFAULT_PIPELINE_THRESHOLDS,
 } from '../pipelineHealth.ts';
@@ -566,5 +567,75 @@ describe('polling + latency liveness (owner 2026-08-10: never silently off)', ()
     const check = res.checks.find((c) => c.id === 'senate_relay')!;
     expect(check.status).toBe('ok');
     expect(check.detail).toContain('Residential proxy active');
+  });
+});
+
+// Board row 6c05e09b: prod prices sat frozen for 46 days with no health signal.
+describe('price_freshness check', () => {
+  // Tue 2026-09-15 12:00 UTC.
+  const nowMs = Date.parse('2026-09-15T12:00:00Z');
+  const base = {
+    outboxPending: 0, outboxOldestAt: null, outboxFailed: 0, reviewBacklog: 0, reviewEligible: 0,
+    reviewSuppressed: 0, reviewTerminal: 0, extractionAttempts24h: 10, extractionOk24h: 10,
+    lastExtractionSuccessAt: new Date(nowMs - 3600 * 1000).toISOString(), localWorkerActivity24h: 0,
+    autopilotHaltReason: null, latestTxCreatedAt: new Date(nowMs - 3600 * 1000).toISOString(),
+    dishonestResolutionCount: 0, orphanedNeedsReviewCount: 0, strandedFilings: 0,
+    pollSources: null, latencyProviders: null, senateRelay: null,
+  } as PipelineSignals;
+  const check = (s: Partial<PipelineSignals>) =>
+    evaluatePipelineSignals({ ...base, ...s }, nowMs).checks.find((c) => c.id === 'price_freshness');
+
+  it('counts weekdays strictly between the newest bar and today', () => {
+    // Friday bar read on Monday: 0 behind; on Tuesday: 1 (Monday's bar is due).
+    expect(tradingDaysBehind('2026-09-11', Date.parse('2026-09-14T12:00:00Z'))).toBe(0);
+    expect(tradingDaysBehind('2026-09-11', Date.parse('2026-09-15T12:00:00Z'))).toBe(1);
+    // The live prod freeze: last S&P bar 2026-08-03 read on 2026-09-18.
+    expect(tradingDaysBehind('2026-08-03', Date.parse('2026-09-18T12:00:00Z'))).toBe(33);
+    expect(tradingDaysBehind('not a date', nowMs)).toBeNull();
+  });
+
+  it('is skipped entirely for a signal builder that predates the check (existing behaviour preserved)', () => {
+    expect(check({})).toBeUndefined();
+  });
+
+  it('is ok when both series are within three trading days', () => {
+    const c = check({ priceEodLatestDate: '2026-09-14', spxEodLatestDate: '2026-09-14' });
+    expect(c?.status).toBe('ok');
+  });
+
+  it('goes degraded, naming the leg and the dates, when the price cache is frozen (2026-08-03)', () => {
+    const c = check({ priceEodLatestDate: '2026-08-03', spxEodLatestDate: '2026-09-14' });
+    expect(c?.status).toBe('degraded');
+    expect(c?.detail).toContain('price cache newest bar 2026-08-03');
+    expect(c?.detail).not.toContain('S&P 500 series');
+    expect((c?.value ?? 0) > 3).toBe(true);
+  });
+
+  it('flags the S&P series independently', () => {
+    const c = check({ priceEodLatestDate: '2026-09-14', spxEodLatestDate: '2026-08-03' });
+    expect(c?.status).toBe('degraded');
+    expect(c?.detail).toContain('S&P 500 series newest bar 2026-08-03');
+  });
+
+  it('is unknown (never a false ok) when a leg could not be read, and degraded still wins over unknown', () => {
+    expect(check({ priceEodLatestDate: null, spxEodLatestDate: '2026-09-14' })?.status).toBe('unknown');
+    expect(check({ priceEodLatestDate: null, spxEodLatestDate: '2026-08-03' })?.status).toBe('degraded');
+  });
+
+  it('degrades the overall pipeline status', () => {
+    const res = evaluatePipelineSignals(
+      { ...base, priceEodLatestDate: '2026-08-03', spxEodLatestDate: '2026-08-03' },
+      nowMs,
+    );
+    expect(res.status).toBe('degraded');
+  });
+
+  it('honours a custom threshold', () => {
+    const res = evaluatePipelineSignals(
+      { ...base, priceEodLatestDate: '2026-09-10', spxEodLatestDate: '2026-09-10' },
+      nowMs,
+      { ...DEFAULT_PIPELINE_THRESHOLDS, priceMaxAgeTradingDays: 10 },
+    );
+    expect(res.checks.find((c) => c.id === 'price_freshness')?.status).toBe('ok');
   });
 });
