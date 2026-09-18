@@ -97,7 +97,9 @@ struct FeedDashboardView: View {
 
             // Party is also sent as `party=` CSV; keep a local pass for cache.
             if !parties.isEmpty {
-                guard let bucket = PartyFilter.bucket(for: trade.member.party), parties.contains(bucket) else {
+                // `bucket(for:)` is total: a no-party row is "Other / No party",
+                // matching the server's `party=O` (board efd94c45).
+                guard parties.contains(PartyFilter.bucket(for: trade.member.party)) else {
                     return false
                 }
             }

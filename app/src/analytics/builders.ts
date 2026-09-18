@@ -319,7 +319,10 @@ export function buildPartySplitQuery(p: CommonFilters): BuiltQuery {
     'COUNT(DISTINCT t.filer_id) AS members ' +
     ANALYTICS_FROM_JOINS +
     whereSql(where) +
-    'GROUP BY party';
+    // Group by the bucket EXPRESSION, not the `party` alias: in SQLite a bare
+    // GROUP BY identifier binds to the joined `fl.party` column first, which
+    // split every raw spelling ("Democrat"/"Democratic"/"D") into its own row.
+    `GROUP BY ${PARTY_BUCKET_SQL}`;
   return { sql, params };
 }
 
@@ -334,7 +337,8 @@ export function buildPartySplitOverTimeQuery(
     `${BUY} AS buys, ${SELL} AS sells ` +
     ANALYTICS_FROM_JOINS +
     whereSql(allWhere) +
-    'GROUP BY period, party ORDER BY period ASC';
+    // Same alias-vs-column trap as buildPartySplitQuery: group by the bucket.
+    `GROUP BY period, ${PARTY_BUCKET_SQL} ORDER BY period ASC`;
   return { sql, params: [granularityFormat(p.granularity), ...params] };
 }
 

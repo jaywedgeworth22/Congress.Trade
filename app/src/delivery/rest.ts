@@ -77,7 +77,7 @@ import {
   createSubscription,
   getSubscription,
   updateSubscription,
-  validateSubscriptionFilters,
+  validateAndResolveSubscriptionFilters,
   assertSubscriptionQuota,
   SubscriptionQuotaError,
   subscriptionSecretError,
@@ -173,6 +173,17 @@ interface PublicSubscription extends Omit<Subscription, 'secret'> {
    *  it and open /api/stream with `Authorization: Bearer <secret>` instead
    *  (the token-in-URL form leaks into browser history and proxy logs). */
   streamUrl?: string;
+}
+
+/** 400 body for a rejected filter set; lists unresolved member names so clients can highlight them. */
+export function subscriptionFilterErrorBody(result: { error?: string; unresolvedMembers?: string[] }): {
+  error: string;
+  unresolvedMembers?: string[];
+} {
+  return {
+    error: result.error ?? 'invalid filters',
+    ...(result.unresolvedMembers?.length ? { unresolvedMembers: result.unresolvedMembers } : {}),
+  };
 }
 
 function toPublicSubscription(
@@ -1321,8 +1332,8 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
       if (targetUrlError) return c.json({ error: targetUrlError }, 400);
     }
 
-    const validatedFilters = validateSubscriptionFilters(body.filters);
-    if (!validatedFilters.ok) return c.json({ error: (validatedFilters as any).error }, 400);
+    const validatedFilters = await validateAndResolveSubscriptionFilters(c.env, body.filters);
+    if (!validatedFilters.ok) return c.json(subscriptionFilterErrorBody(validatedFilters), 400);
     const secretError = subscriptionSecretError(body.secret);
     if (secretError) return c.json({ error: secretError }, 400);
     const secret = typeof body.secret === 'string' ? body.secret : undefined;
@@ -1392,8 +1403,8 @@ export function buildRestRouter(): Hono<{ Bindings: Env }> {
 
     const patch: Parameters<typeof updateSubscription>[2] = {};
     if (body.filters !== undefined) {
-      const validatedFilters = validateSubscriptionFilters(body.filters);
-      if (!validatedFilters.ok) return c.json({ error: (validatedFilters as any).error }, 400);
+      const validatedFilters = await validateAndResolveSubscriptionFilters(c.env, body.filters);
+      if (!validatedFilters.ok) return c.json(subscriptionFilterErrorBody(validatedFilters), 400);
       patch.filters = validatedFilters.filters;
     }
     if (typeof body.targetUrl === 'string' || body.targetUrl === null) {

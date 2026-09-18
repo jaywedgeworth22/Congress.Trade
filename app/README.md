@@ -138,7 +138,7 @@ without a DB (mirroring `src/delivery/rows.ts`).
 | `GET /ticker/:ticker` | Single-ticker deep dive (series, top buyers/sellers, recent) |
 
 **Common query params:** `window=7d\|30d\|90d\|365d\|all` (default `30d`, by
-`tx_date`), `chamber=house\|senate`, `party=D\|R\|O`, `source=all\|primary\|seed_dataset`
+`tx_date`), `chamber=house\|senate`, `party=D\|R\|O` (CSV; `O` = Other / No party, so D+R+O = all), `source=all\|primary\|seed_dataset`
 (default `all`), `minConf=0..1`, plus per-endpoint `limit` / `sort` / `granularity`
 / `minMembers`.
 

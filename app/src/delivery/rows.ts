@@ -20,7 +20,7 @@ import type {
   TxSource,
   TxType,
 } from '../shared/types.ts';
-import { first, get, parseJson, toBool } from '../shared/db.ts';
+import { all, first, get, parseJson, toBool } from '../shared/db.ts';
 import type { StockActStatus } from '../shared/stockAct.ts';
 import {
   canonicalAssetTypeCategorySql,
@@ -364,6 +364,88 @@ export async function resolveMemberFilerId(env: Env, memberName: string): Promis
   return row?.bioguide_id ?? null;
 }
 
+/** One `filers` row a free-text member name could refer to (see {@link findMemberCandidates}). */
+export interface MemberCandidate {
+  /** Canonical filer id: `COALESCE(merged_into, bioguide_id)`. */
+  filerId: string;
+  name: string | null;
+  /** The name equals the filer's full/display name (case-insensitive) rather than merely containing it. */
+  exact: boolean;
+  /** The canonical filer has at least one live (non-deprecated) transaction. */
+  live: boolean;
+}
+
+/**
+ * Every filer a free-text member name could mean, best first: exact name
+ * matches, then filers with live transactions, then name.  Same WHERE clause as
+ * {@link resolveMemberFilerId}, but it returns several rows so a caller that
+ * must not guess (subscription filters) can tell "one person" from "several".
+ */
+export async function findMemberCandidates(
+  env: Env,
+  memberName: string,
+  limit = 25,
+): Promise<MemberCandidate[]> {
+  const term = memberName.trim();
+  if (!term) return [];
+  const like = `%${escapeLikePattern(term.toLowerCase())}%`;
+  const rows = await all<{ filer_id: string; name: string | null; is_exact: number; is_live: number }>(
+    env.DB,
+    `SELECT COALESCE(f.merged_into, f.bioguide_id) AS filer_id,
+            COALESCE(cf.display_name, cf.full_name, f.display_name, f.full_name) AS name,
+            CASE WHEN LOWER(f.full_name) = LOWER(?) OR LOWER(f.display_name) = LOWER(?) THEN 1 ELSE 0 END AS is_exact,
+            EXISTS(SELECT 1 FROM transactions t
+                    WHERE t.filer_id IN (f.bioguide_id, COALESCE(f.merged_into, f.bioguide_id))
+                      AND t.deprecated_at IS NULL) AS is_live
+       FROM filers f
+       LEFT JOIN filers cf ON cf.bioguide_id = f.merged_into
+      WHERE LOWER(f.full_name) = LOWER(?) OR LOWER(f.full_name) LIKE ? ESCAPE '\\'
+         OR LOWER(f.display_name) = LOWER(?) OR LOWER(f.display_name) LIKE ? ESCAPE '\\'
+      ORDER BY is_exact DESC, is_live DESC, f.full_name
+      LIMIT ?`,
+    [term, term, term, like, term, like, limit],
+  );
+  return rows.map((row) => ({
+    filerId: row.filer_id,
+    name: row.name ? (cleanFilerName(row.name) || row.name) : null,
+    exact: Number(row.is_exact) === 1,
+    live: Number(row.is_live) === 1,
+  }));
+}
+
+export type MemberPick =
+  | { kind: 'match'; filerId: string; name: string | null }
+  | { kind: 'none' }
+  | { kind: 'ambiguous'; candidates: Array<{ filerId: string; name: string | null }> };
+
+/**
+ * Decide whether a name identifies exactly one member.  Duplicate rows of one
+ * canonical filer (an alias tombstone plus its survivor) collapse first; then
+ * exact-name matches win over substring matches, and filers with live trades win
+ * over dormant duplicates (the "Shelley M Capito" seed row).  If more than one
+ * person is still left, the name is ambiguous — never guess.
+ */
+export function pickMemberCandidate(candidates: MemberCandidate[]): MemberPick {
+  const byId = new Map<string, MemberCandidate>();
+  for (const cand of candidates) {
+    const prev = byId.get(cand.filerId);
+    byId.set(
+      cand.filerId,
+      prev
+        ? { ...prev, name: prev.name ?? cand.name, exact: prev.exact || cand.exact, live: prev.live || cand.live }
+        : cand,
+    );
+  }
+  let pool = [...byId.values()];
+  if (pool.length === 0) return { kind: 'none' };
+  const exact = pool.filter((cand) => cand.exact);
+  if (exact.length > 0) pool = exact;
+  const live = pool.filter((cand) => cand.live);
+  if (live.length > 0) pool = live;
+  if (pool.length === 1) return { kind: 'match', filerId: pool[0].filerId, name: pool[0].name };
+  return { kind: 'ambiguous', candidates: pool.map(({ filerId, name }) => ({ filerId, name })) };
+}
+
 // ---------------------------------------------------------------------------
 // Transactions query builder (the REST `?since=` cursor backstop)
 // ---------------------------------------------------------------------------
@@ -404,10 +486,12 @@ export interface TxQueryParams {
    * Multi-select party-bucket filter (D/R/O, bucketed from `filers.party` by
    * first letter — same bucketing as PARTY_BUCKET_SQL in analytics/sql.ts,
    * duplicated locally in {@link PARTY_BUCKET_SQL_LOCAL} so this module stays
-   * dependency-free). ABSENT/empty means no party filter (all parties,
-   * including rows with unknown party). Exposed on the public feed as
-   * `?party=D,R` — the same param shape the Trends analytics endpoints
-   * already accept, so a party chip selection filters both tabs identically.
+   * dependency-free). `O` is "Other / No party": Independents, minor parties
+   * AND rows whose filer has no party on file, so D + R + O always equals the
+   * unfiltered result. ABSENT/empty means no party filter. Exposed on the
+   * public feed as `?party=D,R` — the same param shape the Trends analytics
+   * endpoints already accept, so a party chip selection filters both tabs
+   * identically.
    */
   partyBuckets?: Array<'D' | 'R' | 'O'>;
   type?: TxType;
@@ -580,16 +664,19 @@ const REF_SELECT =
 const CHAMBER_EXPR = 'COALESCE(fl.chamber, f.chamber)';
 
 /**
- * Party bucketed to 'D' | 'R' | 'O' by first letter; unknown stays NULL.
+ * Party bucketed to 'D' | 'R' | 'O' by first letter.  Total: anything that is
+ * not D or R (Independent, minor parties, empty/NULL party, or a transaction
+ * whose filer has no `filers` row) is 'O' ("Other / No party"), never NULL, so
+ * the three buckets partition the feed and `party=D,R,O` equals no filter.
  * Mirrors PARTY_BUCKET_SQL in analytics/sql.ts — duplicated (not imported) so
  * this module stays dependency-free/independently testable, matching this
- * file's existing convention of each surface owning its own filter SQL.
+ * file's existing convention of each surface owning its own filter SQL.  The
+ * two strings are asserted identical in analytics/__tests__/partyPartition.test.ts.
  */
-const PARTY_BUCKET_SQL_LOCAL =
+export const PARTY_BUCKET_SQL_LOCAL =
   "(CASE WHEN UPPER(SUBSTR(TRIM(COALESCE(fl.party, '')), 1, 1)) = 'D' THEN 'D' " +
   "WHEN UPPER(SUBSTR(TRIM(COALESCE(fl.party, '')), 1, 1)) = 'R' THEN 'R' " +
-  "WHEN UPPER(SUBSTR(TRIM(COALESCE(fl.party, '')), 1, 1)) IN ('I', 'O') THEN 'O' " +
-  'ELSE NULL END)';
+  "ELSE 'O' END)";
 
 /**
  * Canonical instrument-category expression over the transaction row itself

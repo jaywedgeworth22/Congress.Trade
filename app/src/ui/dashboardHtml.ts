@@ -3299,7 +3299,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
             <button type="button" class="ios-filter-clear" data-ios-clear="party">All Parties</button>
             <button type="button" class="party-chip ios-filter-item" data-party="D" aria-pressed="false"><span class="party-dot D" aria-hidden="true"></span> Democrats</button>
             <button type="button" class="party-chip ios-filter-item" data-party="R" aria-pressed="false"><span class="party-dot R" aria-hidden="true"></span> Republicans</button>
-            <button type="button" class="party-chip ios-filter-item" data-party="O" aria-pressed="false"><span class="party-dot O" aria-hidden="true"></span> Other / Ind.</button>
+            <button type="button" class="party-chip ios-filter-item" data-party="O" aria-pressed="false"><span class="party-dot O" aria-hidden="true"></span> Other / No party</button>
           </div>
         </div>
         <div class="ios-filter side-chips" id="qSideGroup">
@@ -3451,7 +3451,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
             <button type="button" class="ios-filter-clear" data-ios-clear="party">All Parties</button>
             <button type="button" class="party-chip ios-filter-item" data-party="D" aria-pressed="false"><span class="party-dot D" aria-hidden="true"></span> Democrats</button>
             <button type="button" class="party-chip ios-filter-item" data-party="R" aria-pressed="false"><span class="party-dot R" aria-hidden="true"></span> Republicans</button>
-            <button type="button" class="party-chip ios-filter-item" data-party="O" aria-pressed="false"><span class="party-dot O" aria-hidden="true"></span> Other / Ind.</button>
+            <button type="button" class="party-chip ios-filter-item" data-party="O" aria-pressed="false"><span class="party-dot O" aria-hidden="true"></span> Other / No party</button>
           </div>
         </div>
         <div class="ios-filter side-chips" id="trSideGroup">
@@ -3743,7 +3743,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <label class="field-vh-label" for="newTickers">Tickers</label>
         <input id="newTickers" placeholder="tickers (CSV, optional)" style="flex:1 1 100%;min-width:0" disabled />
         <label class="field-vh-label" for="newMembers">Members</label>
-        <input id="newMembers" placeholder="members (names/ids, optional)" style="flex:1 1 100%;min-width:0" disabled title="Comma-separated filer ids or names" />
+        <input id="newMembers" placeholder="members (names/ids, optional)" style="flex:1 1 100%;min-width:0" disabled title="Comma-separated member names or filer ids.  A name must match exactly one member." />
         <label class="field-vh-label" for="newChambers">Branches</label>
         <select id="newChambers" disabled>
           <option value="">House + Senate + Executive</option>
@@ -7528,6 +7528,19 @@ function subCursorText(s) {
   if (!c || c <= 0) return '—';
   return 'Delivered through event #' + fmtCount(c);
 }
+/* A delivery's members filter as names.  The server sends memberLabels (filer id ->
+   name); entries it could not resolve (free text saved before names were resolved to
+   filer ids) can never match a trade, so they are called out instead of counted. */
+function memberFilterText(s) {
+  var ids = (s.filters && s.filters.members) || [];
+  var labels = s.memberLabels || {};
+  var dead = s.unresolvedMembers || [];
+  var names = ids.filter(function (id) { return dead.indexOf(id) === -1; })
+    .map(function (id) { return labels[id] || id; });
+  var text = names.slice(0, 2).join(', ') + (names.length > 2 ? ' +' + (names.length - 2) + ' more' : '');
+  if (dead.length) text += (text ? ' · ' : '') + 'not matched: ' + dead.join(', ') + ' (Edit to fix)';
+  return text;
+}
 function renderSubs(subs) {
   var body = el('subsBody');
   if (!body) return;
@@ -7546,7 +7559,7 @@ function renderSubs(subs) {
     if (f.sides && f.sides.length) parts.push(f.sides.map(function (x) { return typeName[x] || x; }).join('/'));
     if (f.minAmount) parts.push('≥ ' + fmt(f.minAmount));
     if (f.tickers && f.tickers.length) parts.push(f.tickers.join(','));
-    if (f.members && f.members.length) parts.push(f.members.length + ' member' + (f.members.length === 1 ? '' : 's'));
+    if (f.members && f.members.length) parts.push(memberFilterText(s));
     if (parts.length === 1 && parts[0] === 'all chambers') parts.push('all events');
     var canEdit = isPremium();
     var statusLabel = s.active ? 'active' : 'paused';
@@ -7601,7 +7614,12 @@ function beginEditSubscription(id) {
   if (el('newTarget')) el('newTarget').value = s.targetUrl || '';
   updateNewTargetVisibility();
   if (el('newTickers')) el('newTickers').value = (f.tickers || []).join(', ');
-  if (el('newMembers')) el('newMembers').value = (f.members || []).join(', ');
+  if (el('newMembers')) {
+    // Names round-trip through the server's resolver (a name that is not unique is
+    // rejected, never guessed), so show names where we have them and ids otherwise.
+    var editLabels = s.memberLabels || {};
+    el('newMembers').value = (f.members || []).map(function (id) { return editLabels[id] || id; }).join(', ');
+  }
   if (el('newChambers')) el('newChambers').value = (f.chambers || []).join(',');
   if (el('newSides')) {
     var sidesJoined = (f.sides || []).join(',');
@@ -7658,7 +7676,10 @@ function saveSubscriptionEdits() {
     body: JSON.stringify({ type: 'update_subscription', idempotencyKey: idem, payload: payload })
   })
     .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error((j && j.error) || ('HTTP ' + r.status)); return j; }); })
-    .then(function () {
+    .then(function (j) {
+      /* Validation failures (e.g. a member name that matches no one) come back as a
+         failed command on a 200, not an HTTP error: keep the form and say why. */
+      if (j && j.command && j.command.status === 'failed') throw new Error(j.command.error || 'command failed');
       showToast('Delivery updated.');
       clearDeliveryForm();
       if (el('newDelivery')) el('newDelivery').disabled = false;
@@ -11739,10 +11760,10 @@ function loadTrParties() {
   var box = el('trParties');
   box.innerHTML = skBars(4);
   aGet('party-split?' + trParams()).then(function (d) {
-    var o = d.overall || {}, names = { D: 'Democrat', R: 'Republican', O: 'Other / Ind.' }, keys = ['D', 'R', 'O'];
+    var o = d.overall || {}, names = { D: 'Democrat', R: 'Republican', O: 'Other / No party' }, keys = ['D', 'R', 'O'];
     var maxVol = 1, any = false;
     keys.forEach(function (k) { if (o[k]) { maxVol = Math.max(maxVol, o[k].estVolumeUsd); if (o[k].buys + o[k].sells > 0) any = true; } });
-    if (!any) { box.innerHTML = '<div class="note">No party-attributed trades in this window.</div>'; return; }
+    if (!any) { box.innerHTML = '<div class="note">No trades in this window.</div>'; return; }
     box.innerHTML = keys.map(function (k) {
       var v = o[k] || { buys: 0, sells: 0, estVolumeUsd: 0, estNetFlowUsd: 0, members: 0 };
       var w = Math.round(100 * v.estVolumeUsd / maxVol);

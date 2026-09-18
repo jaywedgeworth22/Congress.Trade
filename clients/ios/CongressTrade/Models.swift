@@ -748,7 +748,7 @@ enum PartyFilter: String, CaseIterable, Identifiable {
         switch self {
         case .democrat: return "Democrats"
         case .republican: return "Republicans"
-        case .other: return "Other / Ind."
+        case .other: return "Other / No party"
         }
     }
 
@@ -765,13 +765,16 @@ enum PartyFilter: String, CaseIterable, Identifiable {
     var summaryLabel: String { rawValue }
 
     /// Buckets a raw member party string (e.g. "Democratic", "R",
-    /// "Independent") the same way the server's `asPartyBucket` does
+    /// "Independent") the same way the server's `PARTY_BUCKET_SQL` does
     /// (`app/src/analytics/sql.ts`): first letter D→Democrat, R→Republican,
-    /// anything else non-empty→Other. `nil` for an empty/unresolved value.
-    /// Still used as a local belt-and-suspenders pass; the feed now also
-    /// accepts `party=` CSV (`asPartyBuckets`).
-    static func bucket(for raw: String?) -> PartyFilter? {
-        guard let first = raw?.trimmingCharacters(in: .whitespacesAndNewlines).first else { return nil }
+    /// EVERYTHING else — Independent, minor parties and an empty or missing
+    /// party (executive-branch / manual / seed filers) — → Other, labelled
+    /// "Other / No party".  Total on purpose: the server's `party=O` returns
+    /// the no-party rows (board efd94c45), so this local belt-and-suspenders
+    /// pass must never drop them.  The feed also accepts `party=` CSV
+    /// (`asPartyBuckets`).
+    static func bucket(for raw: String?) -> PartyFilter {
+        guard let first = raw?.trimmingCharacters(in: .whitespacesAndNewlines).first else { return .other }
         switch first.uppercased() {
         case "D": return .democrat
         case "R": return .republican
@@ -1056,6 +1059,31 @@ struct Subscription: Decodable, Identifiable {
     let hasSecret: Bool
     let secret: String?
     let streamUrl: String?
+    /// filer id -> display name for `filters.members`; sent by
+    /// `GET /api/client/v1/subscriptions` (absent on the create response).
+    let memberLabels: [String: String]?
+    /// `filters.members` entries that are not a known filer id: free text saved
+    /// before the server resolved member names.  They can never match a trade.
+    let unresolvedMembers: [String]?
+
+    /// One-line members-filter description for the Delivery list, `nil` when the
+    /// subscription does not filter by member.
+    var memberSummary: String? {
+        let ids = filters.members ?? []
+        guard !ids.isEmpty else { return nil }
+        let dead = Set(unresolvedMembers ?? [])
+        let names = ids.filter { !dead.contains($0) }.map { memberLabels?[$0] ?? $0 }
+        var parts: [String] = []
+        if !names.isEmpty {
+            let shown = names.prefix(2).joined(separator: ", ")
+            parts.append(names.count > 2 ? "\(shown) +\(names.count - 2) more" : shown)
+        }
+        let unmatched = ids.filter { dead.contains($0) }
+        if !unmatched.isEmpty {
+            parts.append("Not matched: \(unmatched.joined(separator: ", ")) (delete and recreate this delivery)")
+        }
+        return "Members: " + parts.joined(separator: " · ")
+    }
 }
 
 struct DeliveryCredential: Identifiable, Equatable {

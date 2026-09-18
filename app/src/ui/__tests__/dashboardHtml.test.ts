@@ -3409,6 +3409,43 @@ describe('UX wave2 web product (People / conflicts / delivery / mobile)', () => 
     expect(DASHBOARD_HTML).toContain('<option value="B,S">Buys + Sells</option>');
   });
 
+  it('renders a delivery members filter as names and calls out entries that can never match (a6058af2)', () => {
+    const memberFilterText = new Function(
+      loadDashboardFunctions(['memberFilterText']).join('\n\n') + '\nreturn memberFilterText;',
+    )() as (s: Record<string, unknown>) => string;
+    const sub = (over: Record<string, unknown>) => ({ filters: { members: [] }, ...over });
+    expect(
+      memberFilterText(sub({ filters: { members: ['P000197'] }, memberLabels: { P000197: 'Nancy Pelosi' } })),
+    ).toBe('Nancy Pelosi');
+    expect(
+      memberFilterText(
+        sub({
+          filters: { members: ['A', 'B', 'C', 'D'] },
+          memberLabels: { A: 'Ann', B: 'Bob', C: 'Cy', D: 'Di' },
+        }),
+      ),
+    ).toBe('Ann, Bob +2 more');
+    // An id with no label (a filer with no name on file) still shows.
+    expect(memberFilterText(sub({ filters: { members: ['NOFILERROW1'] } }))).toBe('NOFILERROW1');
+    // Free text saved before names were resolved to ids: flagged, not counted as a match.
+    expect(
+      memberFilterText(
+        sub({
+          filters: { members: ['Nancy Pelosi', 'S000510'] },
+          memberLabels: { S000510: 'Adam Smith' },
+          unresolvedMembers: ['Nancy Pelosi'],
+        }),
+      ),
+    ).toBe('Adam Smith · not matched: Nancy Pelosi (Edit to fix)');
+    expect(DASHBOARD_HTML).toContain('parts.push(memberFilterText(s))');
+  });
+
+  it('keeps the Delivery edit form open and says why when the update command failed (a6058af2)', () => {
+    expect(DASHBOARD_HTML).toContain("if (j && j.command && j.command.status === 'failed') throw new Error(j.command.error || 'command failed');");
+    // The edit form shows names where the server labelled them.
+    expect(DASHBOARD_HTML).toContain('editLabels[id] || id');
+  });
+
   it('gives every Delivery create-form control a programmatic label (WEBA11Y-04)', () => {
     // Visible-if-hidden <label for> siblings, not wrapping (wrapping would
     // stop the control being a direct .row-flex child and break the
@@ -3500,7 +3537,7 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
     expect(DASHBOARD_HTML).toContain('id="trChamber"');
     expect(DASHBOARD_HTML).toContain('Democrats');
     expect(DASHBOARD_HTML).toContain('Republicans');
-    expect(DASHBOARD_HTML).toContain('Other / Ind.');
+    expect(DASHBOARD_HTML).toContain('Other / No party');
     // Old per-group anchors are gone.
     expect(DASHBOARD_HTML).not.toContain('id="qChamberInfo"');
     expect(DASHBOARD_HTML).not.toContain('id="trChamberInfo"');
@@ -3680,7 +3717,7 @@ describe('owner feedback: exchange toggle glyph + legend semantic colors', () =>
     expect(DASHBOARD_HTML).toContain('class="side-ex"');
     expect(DASHBOARD_HTML).toContain('Democrats');
     expect(DASHBOARD_HTML).toContain('Republicans');
-    expect(DASHBOARD_HTML).toContain('Other / Ind.');
+    expect(DASHBOARD_HTML).toContain('Other / No party');
   });
 });
 
