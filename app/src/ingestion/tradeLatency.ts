@@ -2629,6 +2629,21 @@ async function matchJustMintedCandidates(
   }
 }
 
+/** Instrument flags the snapshot gate needs. Scan/seed used to drop these. */
+function instrumentFieldsFromPersistedTx(row: {
+  is_option?: number | boolean | null;
+  asset_type?: string | null;
+  asset_type_name?: string | null;
+  asset_name?: string | null;
+}): Pick<Transaction, 'isOption' | 'assetType' | 'assetTypeName' | 'assetName'> {
+  return {
+    isOption: row.is_option === 1 || row.is_option === true,
+    assetType: row.asset_type ?? null,
+    assetTypeName: row.asset_type_name ?? null,
+    assetName: (row.asset_name || '').trim(),
+  };
+}
+
 /** Backfill trade-latency candidates from recent persisted transactions. */
 export async function backfillTradeLatencyCandidates(
   env: Env,
@@ -2650,6 +2665,10 @@ export async function backfillTradeLatencyCandidates(
     source_url: string | null;
     chamber: string | null;
     source: string | null;
+    is_option: number | boolean | null;
+    asset_type: string | null;
+    asset_type_name: string | null;
+    asset_name: string | null;
   }>(
     env.DB,
     `SELECT t.id, t.doc_id, t.ticker, t.tx_date, t.tx_type, t.source AS source,
@@ -2658,7 +2677,8 @@ export async function backfillTradeLatencyCandidates(
             t.created_at AS created_at,
             fil.full_name AS full_name,
             f.source_url AS source_url,
-            f.chamber AS chamber
+            f.chamber AS chamber,
+            t.is_option, t.asset_type, t.asset_type_name, t.asset_name
        FROM transactions t
        LEFT JOIN filings f ON f.doc_id = t.doc_id
        LEFT JOIN filers fil ON fil.bioguide_id = COALESCE(t.filer_id, f.filer_id)
@@ -2693,13 +2713,10 @@ export async function backfillTradeLatencyCandidates(
       filerId: null,
       txDate: row.tx_date,
       owner: null,
-      assetName: '',
       ticker: row.ticker,
-      assetType: null,
       txType: (row.tx_type as Transaction['txType']) || 'E',
       amountMin: null,
       amountMax: null,
-      isOption: false,
       capGainsOver200: false,
       rawText: '',
       confidence: 1,
@@ -2710,6 +2727,7 @@ export async function backfillTradeLatencyCandidates(
       filedDate: row.filed_date,
       firstSeenAt,
       sourceUrl: row.source_url,
+      ...instrumentFieldsFromPersistedTx(row),
     });
   }
   await recordTradeLatencyCandidates(env, asTx, nowIso);
@@ -2868,12 +2886,17 @@ async function seedCandidatesFromRecentObservations(
       chamber: string | null;
       filed_date: string | null;
       source: string | null;
+      is_option: number | boolean | null;
+      asset_type: string | null;
+      asset_type_name: string | null;
+      asset_name: string | null;
     }>(
       env.DB,
       `SELECT t.id, t.doc_id, t.ticker, t.tx_date, t.tx_type, t.created_at, t.source AS source,
               COALESCE(t.first_seen_at, f.first_seen_at, t.created_at) AS first_seen_at,
               fil.full_name AS full_name, f.source_url AS source_url,
-              f.chamber AS chamber, COALESCE(t.filed_date, f.filed_date) AS filed_date
+              f.chamber AS chamber, COALESCE(t.filed_date, f.filed_date) AS filed_date,
+              t.is_option, t.asset_type, t.asset_type_name, t.asset_name
          FROM transactions t
          LEFT JOIN filings f ON f.doc_id = t.doc_id
          LEFT JOIN filers fil ON fil.bioguide_id = COALESCE(t.filer_id, f.filer_id)
@@ -2899,6 +2922,10 @@ async function seedCandidatesFromRecentObservations(
       chamber: string | null;
       filed_date: string | null;
       source: string | null;
+      is_option: number | boolean | null;
+      asset_type: string | null;
+      asset_type_name: string | null;
+      asset_name: string | null;
     }>);
 
     for (const r of rows) {
@@ -2929,13 +2956,10 @@ async function seedCandidatesFromRecentObservations(
         filerId: null,
         txDate: r.tx_date,
         owner: null,
-        assetName: '',
         ticker: r.ticker,
-        assetType: null,
         txType: (r.tx_type as Transaction['txType']) || 'E',
         amountMin: null,
         amountMax: null,
-        isOption: false,
         capGainsOver200: false,
         rawText: '',
         confidence: 1,
@@ -2946,6 +2970,7 @@ async function seedCandidatesFromRecentObservations(
         filedDate: r.filed_date,
         firstSeenAt: firstSeen,
         sourceUrl: r.source_url,
+        ...instrumentFieldsFromPersistedTx(r),
       });
     }
   }
