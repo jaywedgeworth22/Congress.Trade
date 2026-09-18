@@ -6836,6 +6836,40 @@ describe('header chrome rework (owner 2026-09-09)', () => {
     expect(DASHBOARD_HTML).toContain('<select id="mobileSortKey" aria-label="Sort by" title="Sort by" onchange="handleMobileSortKeyChange()"></select>');
   });
 
+  it('names the empty filter chips on wide desktops and keeps the short labels below 1200px', () => {
+    expect(DASHBOARD_HTML).toContain("try { wide = !!(window.matchMedia && window.matchMedia('(min-width: 1200px)').matches); } catch (_e) {}");
+    expect(DASHBOARD_HTML).toContain("setSummary(id, on.length ? on.join('+') : (wide ? 'Branches' : 'All'), on.length > 0);");
+    expect(DASHBOARD_HTML).toContain("setSummary(id, on.length ? on.join('+') : (wide ? 'Parties' : 'All'), on.length > 0);");
+    expect(DASHBOARD_HTML).toContain("setSummary(id, on.length ? on.join('+') : (wide ? 'Types' : ''), on.length > 0);");
+    // Re-evaluated on resize alongside the rows-per-page labels.
+    expect(DASHBOARD_HTML).toContain('    syncPageSizeLabels();\n    refreshIosFilterSummaries();\n  });');
+  });
+
+  it('uses guillemet pager arrows with the accessible names on the buttons', () => {
+    const document = parse(DASHBOARD_HTML);
+    for (const [attr, glyph, name] of [['data-pager-first', '\u00ab', 'First page'], ['data-pager-prev', '\u2039', 'Previous page'], ['data-pager-next', '\u203a', 'Next page'], ['data-pager-last', '\u00bb', 'Last page']] as const) {
+      const btns = document.querySelectorAll('[' + attr + ']');
+      expect(btns.length, attr).toBe(2);
+      for (const b of btns) {
+        expect(b.textContent.trim(), attr).toBe(glyph);
+        expect(b.getAttribute('aria-label'), attr).toBe(name);
+      }
+    }
+    expect(DASHBOARD_HTML).not.toContain('>&lt;&lt;</button>');
+    expect(DASHBOARD_HTML).toContain('.pager-controls .btn.sm { font-size: 16px; line-height: 1; }');
+  });
+
+  it('drops the inert #trendsSharedFilters halves of the phone chip selectors (mirror is display:none)', () => {
+    expect(DASHBOARD_HTML).not.toContain('#tradesSharedFilters, #trendsSharedFilters {');
+    expect(DASHBOARD_HTML).not.toContain('#trendsSharedFilters > .pill-select.pill-cal');
+    expect(DASHBOARD_HTML).not.toContain('#trendsSharedFilters .branch-toggle');
+    expect(DASHBOARD_HTML).not.toContain('#trendsSharedFilters.toolbar');
+    // The Trades halves and the mirror's own hide rules stay.
+    expect(DASHBOARD_HTML).toContain('#tradesSharedFilters > .pill-select.pill-cal {\n      flex: 0 0 auto; width: max-content;');
+    expect(DASHBOARD_HTML).toContain('#tradesSharedFilters .branch-toggle, #tradesSharedFilters .party-chip, #tradesSharedFilters .side-chip {\n      min-width: 30px; padding: 0 6px;');
+    expect(DASHBOARD_HTML).toContain('#trendsSharedFilters[data-filter-mirror] { display: none !important; }');
+  });
+
   it('adds the Reset chip, aria-current, active-tab re-tap and the "/" search shortcut', () => {
     expect(DASHBOARD_HTML).toContain('<button type="button" class="btn ghost sm ct-filter-reset" id="ctFilterReset" onclick="resetSharedFilters()" title="Reset filters to defaults" hidden>Reset</button>');
     expect(DASHBOARD_HTML).toContain('function resetSharedFilters() {');
