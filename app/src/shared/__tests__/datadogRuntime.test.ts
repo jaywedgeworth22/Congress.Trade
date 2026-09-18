@@ -181,6 +181,34 @@ describe('fail-closed Datadog RUM config', () => {
     });
   });
 
+  it('fails closed when DD_RUM_ENABLED is off even with tokens', () => {
+    expect(resolveDatadogRum({
+      DD_CLIENT_TOKEN: 'pub_token',
+      DD_APPLICATION_ID: 'app-id-1',
+      DD_RUM_ENABLED: 'false',
+    })).toEqual({ enabled: false, reason: 'disabled' });
+    expect(datadogPublicStatus({
+      DD_API_KEY: 'abc',
+      DD_SITE: 'us5.datadoghq.com',
+      DD_CLIENT_TOKEN: 'pub_token',
+      DD_APPLICATION_ID: 'app-id-1',
+      DD_RUM_ENABLED: 'false',
+    })).toEqual({ logs: true, apm: true, rum: false });
+  });
+
+  it('carries DD_HOSTNAME as a host tag, not the Agent address', () => {
+    const backend = resolveDatadogBackend({
+      DD_API_KEY: 'abc',
+      DD_SITE: 'us5.datadoghq.com',
+      DD_HOSTNAME: 'fleet-hetzner-nbg1',
+      DD_AGENT_HOST: '127.0.0.1',
+    });
+    expect(backend.enabled).toBe(true);
+    if (!backend.enabled) return;
+    expect(backend.hostname).toBe('fleet-hetzner-nbg1');
+    expect(backend.agentHost).toBe('127.0.0.1');
+  });
+
   it('never puts the API key in the public snippet', () => {
     const html = renderDatadogRumScript(resolveDatadogRum({
       DD_API_KEY: 'secret-api-key-must-not-leak',

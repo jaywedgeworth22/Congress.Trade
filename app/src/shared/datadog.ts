@@ -5,6 +5,7 @@
 
 import type { MiddlewareHandler } from 'hono';
 import {
+  FLEET_DD_HOSTNAME,
   resolveDatadogBackend,
   resolveDatadogRum,
   type DatadogBackendConfig,
@@ -104,6 +105,11 @@ export async function tryInitDdTracer(backend: DatadogBackendConfig): Promise<Dd
         proc.env.DD_TRACE_EXPERIMENTAL_EXPORTER = 'agentless';
       }
       proc.env.DD_SITE = backend.site;
+      // Host *tag*.  initOptions.hostname is the Agent address, not DD_HOSTNAME.
+      const hostTag = backend.hostname
+        || proc.env.DD_HOSTNAME
+        || ((proc.env.COOLIFY_FQDN || proc.env.COOLIFY_RESOURCE_UUID) ? FLEET_DD_HOSTNAME : '');
+      if (hostTag) proc.env.DD_HOSTNAME = hostTag;
     }
     const initOptions: Record<string, unknown> = {
       service: backend.service,
