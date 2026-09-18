@@ -1,5 +1,16 @@
 # Current Handoff
 
+## 2026-09-18 CURSOR — Effort Issues Sync Crons margin (FLEET-INFRA-23)
+
+Sentry `ci-congress-trade-effort-issues-sync` misses at 06:27Z every day
+because GitHub starts `effort-issues-sync.yml` 4.3-7.4h late.  Reporter
+`CHECKIN_MARGIN_OVERRIDES["Effort Issues Sync"] = 600`.  Cron and sync
+unchanged.  Do not rematch with a second margin PR, in_progress PR, or
+sync dispatch.  Do not copy 600 onto 30-min macos ship crons.  Do not
+`Fixes FLEET-INFRA-23` on merge; wait for the next scheduled upsert.
+Rollout: `docs/rollouts/2026-09-18-effort-issues-sync-monitor-margin.md`.
+Did not touch `docs/EFFORT-LOG.md` (sync-1 holds effort-log-reconcile).
+
 ## 2026-09-13 FX — drop hardcoded ADMIN_TOKEN scratch script
 
 Deleted `filed_date_week_latency.ts` from git (hardcoded bearer to `/api/admin/debug-sql`).  Owner must rotate `ADMIN_TOKEN`.  Boards `010936c8` `ab7cf3be`.  Branch `fx/drop-admin-token-script`.
