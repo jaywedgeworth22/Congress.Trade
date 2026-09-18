@@ -603,6 +603,17 @@ were verified live on 2026-08-11 and pinned by
   `title` field is on the `member.profile` object from `GET
   /api/client/v1/member/:memberIdOrName` and on `GET /api/analytics/member/
   :filerId`'s `profile`.
+- `performance.pricesAsOf` (added 2026-09-18) on `GET /api/client/v1/member/
+  :memberIdOrName`, and `pricesAsOf` on `GET /api/analytics/member-performance`,
+  `GET /api/analytics/member/:filerId/performance` and `GET
+  /api/analytics/performance/:txId`, is the newest price date (`YYYY-MM-DD`)
+  behind any scored trade.  Every return on the same response ends on that date:
+  the S&P 500 leg is the close on or before each ticker's own
+  `current_price_date`, not one global latest close.  Clients should print
+  "Prices as of <date>" beside performance figures; `null` when nothing was
+  scored.  `GET /api/analytics/summary` `resolvedEquityTickerPct` now uses an
+  equity-like denominator (`public_equity` plus still-`unknown` types); the old
+  public-equity-only figure is `resolvedPublicEquityTickerPct`.
 - Each feed item's `asset` object carries `name` (the disclosed asset text),
   `ticker`, raw disclosure `type`, `typeName`, canonical cross-chamber
   `typeCategory` / `typeCategoryLabel`, `sector`, and `marketCapBucket`, plus
