@@ -418,16 +418,16 @@ function lastRequestBody(fetchMock: ReturnType<typeof vi.fn>, call = 0): Record<
 }
 
 describe('gemini37FlashProviderPreference', () => {
-  it('pins Flash latest and 3.7 (plus batch) to Vertex/Google with fallbacks', () => {
+  it('pins Flash latest and 3.8 (plus batch) to Vertex/Google with fallbacks', () => {
     expect(gemini37FlashProviderPreference('~google/gemini-flash-latest')).toEqual({
       order: ['Google'],
       allow_fallbacks: true,
     });
-    expect(gemini37FlashProviderPreference('google/gemini-3.7-flash')).toEqual({
+    expect(gemini37FlashProviderPreference('google/gemini-3.8-flash')).toEqual({
       order: ['Google'],
       allow_fallbacks: true,
     });
-    expect(gemini37FlashProviderPreference('google/gemini-3.7-flash:batch')).toEqual({
+    expect(gemini37FlashProviderPreference('google/gemini-3.8-flash:batch')).toEqual({
       order: ['Google'],
       allow_fallbacks: true,
     });
@@ -449,7 +449,7 @@ describe('supportsNativeVision', () => {
   it('matches Gemini Flash latest and DeepSeek Flash Vision without paying mistral-ocr', () => {
     expect(supportsNativeVision('~google/gemini-flash-latest')).toBe(true);
     expect(supportsNativeVision('google/gemini-flash-latest')).toBe(true);
-    expect(supportsNativeVision('google/gemini-3.7-flash')).toBe(true);
+    expect(supportsNativeVision('google/gemini-3.8-flash')).toBe(true);
     expect(supportsNativeVision('deepseek/deepseek-v4-flash-vision-exp')).toBe(true);
   });
   it('rejects models without native PDF / vision input', () => {
@@ -468,7 +468,7 @@ describe('prefersPageImages', () => {
   });
   it('does not force images on native-PDF models', () => {
     expect(prefersPageImages('x-ai/grok-4.5')).toBe(false);
-    expect(prefersPageImages('google/gemini-3.7-flash')).toBe(false);
+    expect(prefersPageImages('google/gemini-3.8-flash')).toBe(false);
     expect(prefersPageImages('anthropic/claude-sonnet-5')).toBe(false);
   });
 });
@@ -551,15 +551,15 @@ describe('OpenRouterVisionExtractor OpenRouter features', () => {
     });
   });
 
-  it('still pins Vertex/Google when an explicit 3.7 Flash slug is requested', async () => {
+  it('still pins Vertex/Google when an explicit 3.8 Flash slug is requested', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(okPayload());
     vi.stubGlobal('fetch', fetchMock);
 
-    const ex = new OpenRouterVisionExtractor(env, { model: 'google/gemini-3.7-flash' });
+    const ex = new OpenRouterVisionExtractor(env, { model: 'google/gemini-3.8-flash' });
     await ex.extract({ filing: filing(), bytes: new TextEncoder().encode('x').buffer as ArrayBuffer });
 
     const body = lastRequestBody(fetchMock);
-    expect(body.model).toBe('google/gemini-3.7-flash');
+    expect(body.model).toBe('google/gemini-3.8-flash');
     expect(body.provider.order).toEqual(['Google']);
   });
 

@@ -236,7 +236,7 @@ describe('priceBenchmarkUsage', () => {
     expect(result.costSource).toBe('usage_priced');
     expect(result.costUsd).toBeCloseTo(30, 10);
     expect(result.costDetail).toMatchObject({
-      rateCardVersion: 'openrouter-static-2026-07-19',
+      rateCardVersion: 'openrouter-static-2026-09-18',
       rates: { inputUsdPerMillion: 5, outputUsdPerMillion: 25 },
     });
   });
