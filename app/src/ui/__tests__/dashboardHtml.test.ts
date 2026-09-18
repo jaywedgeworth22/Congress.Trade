@@ -3500,7 +3500,7 @@ describe('web toolbar/filter/chrome work order (LANE A1)', () => {
     expect(DASHBOARD_HTML).toContain('id="trChamber"');
     expect(DASHBOARD_HTML).toContain('Democrats');
     expect(DASHBOARD_HTML).toContain('Republicans');
-    expect(DASHBOARD_HTML).toContain('Other / Ind.');
+    expect(DASHBOARD_HTML).toContain('Other / No party');
     // Old per-group anchors are gone.
     expect(DASHBOARD_HTML).not.toContain('id="qChamberInfo"');
     expect(DASHBOARD_HTML).not.toContain('id="trChamberInfo"');
@@ -3680,7 +3680,7 @@ describe('owner feedback: exchange toggle glyph + legend semantic colors', () =>
     expect(DASHBOARD_HTML).toContain('class="side-ex"');
     expect(DASHBOARD_HTML).toContain('Democrats');
     expect(DASHBOARD_HTML).toContain('Republicans');
-    expect(DASHBOARD_HTML).toContain('Other / Ind.');
+    expect(DASHBOARD_HTML).toContain('Other / No party');
   });
 });
 

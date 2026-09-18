@@ -3299,7 +3299,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
             <button type="button" class="ios-filter-clear" data-ios-clear="party">All Parties</button>
             <button type="button" class="party-chip ios-filter-item" data-party="D" aria-pressed="false"><span class="party-dot D" aria-hidden="true"></span> Democrats</button>
             <button type="button" class="party-chip ios-filter-item" data-party="R" aria-pressed="false"><span class="party-dot R" aria-hidden="true"></span> Republicans</button>
-            <button type="button" class="party-chip ios-filter-item" data-party="O" aria-pressed="false"><span class="party-dot O" aria-hidden="true"></span> Other / Ind.</button>
+            <button type="button" class="party-chip ios-filter-item" data-party="O" aria-pressed="false"><span class="party-dot O" aria-hidden="true"></span> Other / No party</button>
           </div>
         </div>
         <div class="ios-filter side-chips" id="qSideGroup">
@@ -3451,7 +3451,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
             <button type="button" class="ios-filter-clear" data-ios-clear="party">All Parties</button>
             <button type="button" class="party-chip ios-filter-item" data-party="D" aria-pressed="false"><span class="party-dot D" aria-hidden="true"></span> Democrats</button>
             <button type="button" class="party-chip ios-filter-item" data-party="R" aria-pressed="false"><span class="party-dot R" aria-hidden="true"></span> Republicans</button>
-            <button type="button" class="party-chip ios-filter-item" data-party="O" aria-pressed="false"><span class="party-dot O" aria-hidden="true"></span> Other / Ind.</button>
+            <button type="button" class="party-chip ios-filter-item" data-party="O" aria-pressed="false"><span class="party-dot O" aria-hidden="true"></span> Other / No party</button>
           </div>
         </div>
         <div class="ios-filter side-chips" id="trSideGroup">
@@ -11739,10 +11739,10 @@ function loadTrParties() {
   var box = el('trParties');
   box.innerHTML = skBars(4);
   aGet('party-split?' + trParams()).then(function (d) {
-    var o = d.overall || {}, names = { D: 'Democrat', R: 'Republican', O: 'Other / Ind.' }, keys = ['D', 'R', 'O'];
+    var o = d.overall || {}, names = { D: 'Democrat', R: 'Republican', O: 'Other / No party' }, keys = ['D', 'R', 'O'];
     var maxVol = 1, any = false;
     keys.forEach(function (k) { if (o[k]) { maxVol = Math.max(maxVol, o[k].estVolumeUsd); if (o[k].buys + o[k].sells > 0) any = true; } });
-    if (!any) { box.innerHTML = '<div class="note">No party-attributed trades in this window.</div>'; return; }
+    if (!any) { box.innerHTML = '<div class="note">No trades in this window.</div>'; return; }
     box.innerHTML = keys.map(function (k) {
       var v = o[k] || { buys: 0, sells: 0, estVolumeUsd: 0, estNetFlowUsd: 0, members: 0 };
       var w = Math.round(100 * v.estVolumeUsd / maxVol);

@@ -404,10 +404,12 @@ export interface TxQueryParams {
    * Multi-select party-bucket filter (D/R/O, bucketed from `filers.party` by
    * first letter — same bucketing as PARTY_BUCKET_SQL in analytics/sql.ts,
    * duplicated locally in {@link PARTY_BUCKET_SQL_LOCAL} so this module stays
-   * dependency-free). ABSENT/empty means no party filter (all parties,
-   * including rows with unknown party). Exposed on the public feed as
-   * `?party=D,R` — the same param shape the Trends analytics endpoints
-   * already accept, so a party chip selection filters both tabs identically.
+   * dependency-free). `O` is "Other / No party": Independents, minor parties
+   * AND rows whose filer has no party on file, so D + R + O always equals the
+   * unfiltered result. ABSENT/empty means no party filter. Exposed on the
+   * public feed as `?party=D,R` — the same param shape the Trends analytics
+   * endpoints already accept, so a party chip selection filters both tabs
+   * identically.
    */
   partyBuckets?: Array<'D' | 'R' | 'O'>;
   type?: TxType;
@@ -580,16 +582,19 @@ const REF_SELECT =
 const CHAMBER_EXPR = 'COALESCE(fl.chamber, f.chamber)';
 
 /**
- * Party bucketed to 'D' | 'R' | 'O' by first letter; unknown stays NULL.
+ * Party bucketed to 'D' | 'R' | 'O' by first letter.  Total: anything that is
+ * not D or R (Independent, minor parties, empty/NULL party, or a transaction
+ * whose filer has no `filers` row) is 'O' ("Other / No party"), never NULL, so
+ * the three buckets partition the feed and `party=D,R,O` equals no filter.
  * Mirrors PARTY_BUCKET_SQL in analytics/sql.ts — duplicated (not imported) so
  * this module stays dependency-free/independently testable, matching this
- * file's existing convention of each surface owning its own filter SQL.
+ * file's existing convention of each surface owning its own filter SQL.  The
+ * two strings are asserted identical in analytics/__tests__/partyPartition.test.ts.
  */
-const PARTY_BUCKET_SQL_LOCAL =
+export const PARTY_BUCKET_SQL_LOCAL =
   "(CASE WHEN UPPER(SUBSTR(TRIM(COALESCE(fl.party, '')), 1, 1)) = 'D' THEN 'D' " +
   "WHEN UPPER(SUBSTR(TRIM(COALESCE(fl.party, '')), 1, 1)) = 'R' THEN 'R' " +
-  "WHEN UPPER(SUBSTR(TRIM(COALESCE(fl.party, '')), 1, 1)) IN ('I', 'O') THEN 'O' " +
-  'ELSE NULL END)';
+  "ELSE 'O' END)";
 
 /**
  * Canonical instrument-category expression over the transaction row itself

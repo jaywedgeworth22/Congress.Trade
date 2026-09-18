@@ -357,7 +357,12 @@ starts `/billing/checkout`.
   and it is CSV multi-select capable (`?party=D,R`), on both this endpoint and
   `/api/transactions`; it narrows `total` like every other server filter.
   Verified in production: unfiltered `total` 89,422 vs `party=D` 48,443 and
-  `party=R` 39,126.
+  `party=R` 39,126.  **`party=O` is "Other / No party"** (2026-09-18, board
+  efd94c45): Independents, minor parties AND filers with no party on file
+  (executive-branch, manual and seed filers, or a transaction with no `filers`
+  row).  The bucket is total, so `party=D,R,O` equals no party filter and the
+  three buckets always sum to `total`.  Row-level `partyBucket` fields stay
+  `null` when no party is on file; those rows are returned by `party=O`.
   - iOS's Chamber/Party/Trade Type filter pills are multi-select (owner
     directive, 2026-08-09), matching the web's own multi-select chip
     semantics: `chamber` is genuinely CSV-capable server-side (`asChambers`),

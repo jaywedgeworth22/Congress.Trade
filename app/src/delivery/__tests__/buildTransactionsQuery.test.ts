@@ -169,8 +169,7 @@ describe('buildTransactionsQuery', () => {
     expect(q.sql).toContain(
       "(CASE WHEN UPPER(SUBSTR(TRIM(COALESCE(fl.party, '')), 1, 1)) = 'D' THEN 'D' " +
         "WHEN UPPER(SUBSTR(TRIM(COALESCE(fl.party, '')), 1, 1)) = 'R' THEN 'R' " +
-        "WHEN UPPER(SUBSTR(TRIM(COALESCE(fl.party, '')), 1, 1)) IN ('I', 'O') THEN 'O' " +
-        'ELSE NULL END) IN (?)',
+        "ELSE 'O' END) IN (?)",
     );
     expect(q.params).toEqual([0, 'D']);
     expect(q.sql).toContain('SELECT t.* FROM transactions t');
