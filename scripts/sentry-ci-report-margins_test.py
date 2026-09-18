@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Assert Effort Issues Sync uses the 600-minute GitHub-delay margin.
+"""Assert the GitHub-delay monitors (CI backstop, Effort Issues Sync) use the 600-minute margin.
 
 Run: python3 scripts/sentry-ci-report-margins_test.py
 """
@@ -29,10 +29,14 @@ def main() -> int:
     schedules = _assign_value(tree, "CRON_SCHEDULES")
 
     assert default == 15, default
-    assert overrides == {"Effort Issues Sync": 600}, overrides
+    assert overrides == {"CI": 600, "Effort Issues Sync": 600}, overrides
     assert schedules.get("Effort Issues Sync") == "12 6 * * *", schedules
+    # ci.yml's hourly backstop; the reporter raises an unmapped-schedule drift event
+    # (FLEET-INFRA-BJ) on every scheduled CI run when this key is missing.
+    assert schedules.get("CI") == "23 * * * *", schedules
     print("MARGIN_PARSE_OK", overrides)
     print("EFFORT_SYNC_CRON_OK", schedules["Effort Issues Sync"])
+    print("CI_CRON_OK", schedules["CI"])
     return 0
 
 

@@ -1,5 +1,16 @@
 # Current Handoff
 
+## 2026-09-18 CLAUDE — Map the CI backstop schedule in the Crons reporter (FLEET-INFRA-BJ)
+
+`ci.yml` has an hourly `23 * * * *` backstop tick, but `CRON_SCHEDULES` in
+`scripts/sentry-ci-report.py` had no `"CI"` key, so every scheduled CI run raised an
+`unmapped-schedule` drift warning (`FLEET-INFRA-BJ`, ~400 events, archived forever, which
+hid the drift).  Added `"CI": "23 * * * *"` and `CHECKIN_MARGIN_OVERRIDES["CI"] = 600`
+(GitHub runs the hourly tick every 4-8h: median 260 min, worst 467 min over 60 runs).  Do not
+tighten the margin, and do not copy 600 onto 30-min macos ship crons.  Do not
+`Fixes FLEET-INFRA-BJ` on merge; the monitor upserts on the next scheduled check-in.
+Rollout: `docs/rollouts/2026-09-18-ci-backstop-cron-map.md`.
+
 ## 2026-09-18 CURSOR — Effort Issues Sync Crons margin (FLEET-INFRA-23)
 
 Sentry `ci-congress-trade-effort-issues-sync` misses at 06:27Z every day

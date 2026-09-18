@@ -89,6 +89,7 @@ from pathlib import Path
 APP = "congress-trade"
 
 CRON_SCHEDULES = {
+    "CI": "23 * * * *",
     "Effort Issues Sync": "12 6 * * *",
     "Security": "41 10 * * 1",
     "Shared Package Pin Check": "0 13 * * 1",
@@ -104,7 +105,16 @@ DEFAULT_CHECKIN_MARGIN = 15
 # 4.3-7.4h after 06:12Z (worst retained 2026-08-31 13:35Z, ~7h 23m).
 # Do not copy this onto 30-min macos ship crons (FLEET-INFRA-CC / DA / CX):
 # those drop ticks entirely.
+# "CI" is the hourly `23 * * * *` BACKSTOP tick in ci.yml (see the comment at the top of
+# that file), mapped 2026-09-18 for FLEET-INFRA-BJ ("no CRON_SCHEDULES entry for scheduled
+# workflow 'CI'", one drift warning per scheduled run since 2026-08-13).  GitHub does not
+# honour the hourly cadence: across the last 60 scheduled runs (2026-09-08..09-18) the gap
+# between runs had median ~260 min, p90 ~347 min, worst 467 min, and every run succeeded.
+# 600 min covers the worst observed gap with headroom and matches Socratic.Trade #3387 and
+# #3389 (merged); Usage-Monitor uses 480 for the same reason.  The dispatch latency is on
+# GitHub's side, so a tighter margin would only page on healthy runs.
 CHECKIN_MARGIN_OVERRIDES = {
+    "CI": 600,
     "Effort Issues Sync": 600,
 }
 _CHECKIN_MARGINS_FOLDED = {name.casefold(): margin for name, margin in CHECKIN_MARGIN_OVERRIDES.items()}
