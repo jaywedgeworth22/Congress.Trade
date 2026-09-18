@@ -7,7 +7,7 @@ Board `f03c5542`.  `/api/health` reported `datadog.rum=true` because Infisical h
 ## Changes Made
 
 - `resolveDatadogRum` honors `DD_RUM_ENABLED` / `NEXT_PUBLIC_DD_RUM_ENABLED`.  `false`/`0`/`off`/`no` fail-closes even when tokens exist, so health reports `rum: false` and the public snippet is empty.
-- APM host tag: copy `DD_HOSTNAME` onto `process.env` before dd-trace init.  Coolify fallback is `fleet-hetzner-nbg1`.  Do not put that value in `initOptions.hostname` (that field is the Agent address).
+- APM host tag: copy `DD_HOSTNAME` onto `process.env` and patch `os.hostname()` before dd-trace init.  Agentless export uses `os.hostname()`, which is the container id.  Coolify fallback is `fleet-hetzner-nbg1`.  Do not put that value in `initOptions.hostname` (that field is the Agent address).
 - Infisical prod already has `DD_HOSTNAME=fleet-hetzner-nbg1`, `DD_RUM_ENABLED=false`, `NEXT_PUBLIC_DD_RUM_ENABLED=false`.
 - Files: `app/src/shared/datadogRuntime.ts`, `app/src/shared/datadog.ts`, `app/src/shared/types.ts`, `app/src/admin/routes.ts`, tests.
 
