@@ -1309,15 +1309,19 @@ final class CongressTradeTests: XCTestCase {
         XCTAssertFalse(TradeTypeFilter.exchange.matches(txType: "B"))
     }
 
-    func testPartyFilterBucketsMirrorServerAsPartyBucket() {
-        // Mirrors `asPartyBucket` in `app/src/analytics/sql.ts`: first
-        // letter D/R, anything else non-empty is Other, empty/nil unresolved.
+    func testPartyFilterBucketsMirrorServerPartyBucketSQL() {
+        // Mirrors `PARTY_BUCKET_SQL` in `app/src/analytics/sql.ts`: first
+        // letter D/R, EVERYTHING else (incl. empty/nil = no party on file) is
+        // Other, so D + R + O partitions the feed (board efd94c45).
         XCTAssertEqual(PartyFilter.bucket(for: "Democratic"), .democrat)
         XCTAssertEqual(PartyFilter.bucket(for: "d"), .democrat)
         XCTAssertEqual(PartyFilter.bucket(for: "Republican"), .republican)
         XCTAssertEqual(PartyFilter.bucket(for: "Independent"), .other)
-        XCTAssertNil(PartyFilter.bucket(for: ""))
-        XCTAssertNil(PartyFilter.bucket(for: nil))
+        XCTAssertEqual(PartyFilter.bucket(for: "Libertarian"), .other)
+        XCTAssertEqual(PartyFilter.bucket(for: ""), .other)
+        XCTAssertEqual(PartyFilter.bucket(for: "   "), .other)
+        XCTAssertEqual(PartyFilter.bucket(for: nil), .other)
+        XCTAssertEqual(PartyFilter.other.label, "Other / No party")
     }
 
     func testTimeRangeCalendarYearBounds() {

@@ -748,7 +748,7 @@ enum PartyFilter: String, CaseIterable, Identifiable {
         switch self {
         case .democrat: return "Democrats"
         case .republican: return "Republicans"
-        case .other: return "Other / Ind."
+        case .other: return "Other / No party"
         }
     }
 
@@ -765,13 +765,16 @@ enum PartyFilter: String, CaseIterable, Identifiable {
     var summaryLabel: String { rawValue }
 
     /// Buckets a raw member party string (e.g. "Democratic", "R",
-    /// "Independent") the same way the server's `asPartyBucket` does
+    /// "Independent") the same way the server's `PARTY_BUCKET_SQL` does
     /// (`app/src/analytics/sql.ts`): first letter D→Democrat, R→Republican,
-    /// anything else non-empty→Other. `nil` for an empty/unresolved value.
-    /// Still used as a local belt-and-suspenders pass; the feed now also
-    /// accepts `party=` CSV (`asPartyBuckets`).
-    static func bucket(for raw: String?) -> PartyFilter? {
-        guard let first = raw?.trimmingCharacters(in: .whitespacesAndNewlines).first else { return nil }
+    /// EVERYTHING else — Independent, minor parties and an empty or missing
+    /// party (executive-branch / manual / seed filers) — → Other, labelled
+    /// "Other / No party".  Total on purpose: the server's `party=O` returns
+    /// the no-party rows (board efd94c45), so this local belt-and-suspenders
+    /// pass must never drop them.  The feed also accepts `party=` CSV
+    /// (`asPartyBuckets`).
+    static func bucket(for raw: String?) -> PartyFilter {
+        guard let first = raw?.trimmingCharacters(in: .whitespacesAndNewlines).first else { return .other }
         switch first.uppercased() {
         case "D": return .democrat
         case "R": return .republican

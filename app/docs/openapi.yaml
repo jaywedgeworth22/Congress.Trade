@@ -1235,8 +1235,13 @@ components:
     party:
       name: party
       in: query
-      schema: { type: string, enum: [D, R, I] }
-      description: Party bucket filter.
+      schema: { type: string, example: "D,R", description: "One or a comma-separated list of D, R, O." }
+      description: >-
+        Party bucket filter, CSV multi-select (`D`, `R`, `O`).  `O` is
+        "Other / No party": Independents, minor parties and filers with no party
+        on file (executive-branch and manual filers, seed rows).  The three
+        buckets partition the data, so `party=D,R,O` returns exactly what no
+        party filter returns.
     source:
       name: source
       in: query

@@ -38,7 +38,7 @@ import {
   buildVolumeOverTimeQuery,
   momentumOffsets,
 } from '../builders.ts';
-import { STOCK_MIDPOINT_SQL, granularityFormat } from '../sql.ts';
+import { PARTY_BUCKET_SQL, STOCK_MIDPOINT_SQL, granularityFormat } from '../sql.ts';
 
 describe('buildSummaryQuery', () => {
   it('aggregates corpus totals and uses the bracket midpoint for $', () => {
@@ -181,12 +181,16 @@ describe('buildPartySplitQuery', () => {
   it('groups by the party bucket', () => {
     const q = buildPartySplitQuery({ window: '365d' });
     expect(q.sql).toContain('AS party');
-    expect(q.sql).toContain('GROUP BY party');
+    // Group by the bucket expression, never the bare `party` identifier (it
+    // binds to the joined fl.party column and splits each raw spelling).
+    expect(q.sql).toContain(`GROUP BY ${PARTY_BUCKET_SQL}`);
+    expect(q.sql).not.toMatch(/GROUP BY party\b/);
     expect(q.params).toEqual(['-365 days']);
   });
   it('over-time variant binds the format first', () => {
     const q = buildPartySplitOverTimeQuery({ window: '365d', granularity: 'month' });
     expect(q.sql).toContain('strftime(?, t.tx_date)');
+    expect(q.sql).toContain(`GROUP BY period, ${PARTY_BUCKET_SQL}`);
     expect(q.params).toEqual([granularityFormat('month'), '-365 days']);
   });
 });
