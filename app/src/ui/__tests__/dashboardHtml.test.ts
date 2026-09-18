@@ -247,10 +247,10 @@ describe('DASHBOARD_HTML', () => {
     // The former "Live Feed" tab is now labelled "Trades" — canonical id is
     // now "trades" too (owner follow-up batch #25), not the pre-rename "feed".
     expect(DASHBOARD_HTML).toContain('data-view="trades" data-mobile="Trades"');
-    expect(DASHBOARD_HTML).toContain('aria-controls="view-trades">Trades</a>');
+    expect(DASHBOARD_HTML).toContain('aria-controls="view-trades" aria-label="Trades"><span aria-hidden="true">Trades</span></a>');
     // People tab is Directory (owner rename); view id stays "people" for deep links.
     expect(DASHBOARD_HTML).toContain('data-view="people" data-mobile="Directory"');
-    expect(DASHBOARD_HTML).toContain('aria-controls="view-people">Directory</a>');
+    expect(DASHBOARD_HTML).toContain('aria-controls="view-people" aria-label="Directory"><span aria-hidden="true">Directory</span></a>');
     // Trends is warmed on boot since it is the landing view.
     expect(DASHBOARD_HTML).toContain('loadTrends(); // Trends is the default landing view');
   });
@@ -264,6 +264,44 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('<a href="/?view=subs" data-view="subs"');
     expect(DASHBOARD_HTML).not.toMatch(/<button[^>]+data-view=/);
     expect(DASHBOARD_HTML).toContain("if (e && e.preventDefault) e.preventDefault();");
+  });
+
+  it('gives every primary tab exactly one accessible name (aria-label + aria-hidden inner text, #2186)', () => {
+    // Issue #2186: the CSS3 `content: attr(data-icon) / ""` alt-text spec is not
+    // honored by every screen reader, so the visible "Trends" text inside the tab
+    // could double up with the data-icon ::before content.  The belt-and-suspenders
+    // fix is: aria-label on the tab + aria-hidden inner span, so screen readers
+    // hear exactly the canonical label once.
+    const tabIds = ['trends', 'trades', 'people', 'review', 'subs', 'admin'];
+    for (const id of tabIds) {
+      // Anchor carries aria-label + aria-controls (attr order is from the source
+      // markup, not assumed by this regex) + inner aria-hidden span.  Review
+      // and Admin tabs nest a badge span inside the aria-hidden label; allow
+      // an optional nested span so the regex matches both shapes.
+      const inner = '<span aria-hidden="true">(?:[^<]+<span[^>]*></span>|[^<]+)</span>';
+      const anchorRe = new RegExp(
+        '<a[^>]+id="tab-' + id + '"[^>]*>\\s*' + inner + '\\s*</a>',
+      );
+      expect(DASHBOARD_HTML, 'tab-' + id).toMatch(anchorRe);
+      expect(DASHBOARD_HTML, 'tab-' + id).toContain('id="tab-' + id + '"');
+      expect(DASHBOARD_HTML, 'tab-' + id).toMatch(
+        new RegExp('id="tab-' + id + '"[^>]*aria-label="[^"]+"'),
+      );
+      expect(DASHBOARD_HTML, 'tab-' + id).toMatch(
+        new RegExp('id="tab-' + id + '"[^>]*aria-controls="view-' + id + '"'),
+      );
+    }
+    // Benchmark tablist also exposes three buttons with aria-label + aria-hidden
+    // span so the CSS3 alt-text fallback path is not the only accessibility gate.
+    for (const id of ['House', 'Senate', 'Exec']) {
+      const btnRe = new RegExp(
+        '<button[^>]+id="btnBench' + id + '"[^>]*>\\s*<span aria-hidden="true">[^<]+</span>\\s*</button>',
+      );
+      expect(DASHBOARD_HTML, 'btnBench' + id).toMatch(btnRe);
+      expect(DASHBOARD_HTML, 'btnBench' + id).toMatch(
+        new RegExp('id="btnBench' + id + '"[^>]*aria-label="[^"]+"'),
+      );
+    }
   });
 
   it('gives entity deep links (drawer "Copy link", Directory member/ticker cells) real hrefs (SEOSOCIAL-02)', () => {
@@ -405,7 +443,7 @@ describe('DASHBOARD_HTML', () => {
   });
 
   it('exposes a public Delivery tab with account-gated management', () => {
-    expect(DASHBOARD_HTML).toMatch(/<a[^>]+data-view="subs"[^>]*>Delivery<\/a>/);
+    expect(DASHBOARD_HTML).toMatch(/<a[^>]+data-view="subs"[^>]*aria-label="Delivery"[^>]*><span aria-hidden="true">Delivery<\/span><\/a>/);
     expect(DASHBOARD_HTML).toMatch(/data-mobile="Delivery"/);
     expect(DASHBOARD_HTML).not.toMatch(/<a[^>]+data-view="subs"[^>]+data-admin-tab/);
     expect(DASHBOARD_HTML).toContain('id="subsManage"');
@@ -6723,8 +6761,8 @@ describe('header chrome rework (owner 2026-09-09)', () => {
     // Short label is decorative (alt "") so the accessible name stays
     // "Review Queue" / "Admin · Cadence"; the full text is the tooltip.
     expect(DASHBOARD_HTML).toContain('@media (min-width: 769px) and (hover: hover) {\n    nav.tabs a[data-admin-tab] { font-size: 0; }\n    nav.tabs a[data-admin-tab]::before { content: attr(data-mobile) / ""; font-size: 13px; }');
-    expect(DASHBOARD_HTML).toContain('data-admin-tab="true" title="Review Queue" hidden>Review Queue');
-    expect(DASHBOARD_HTML).toContain('data-admin-tab="true" title="Admin · Cadence" hidden>Admin · Cadence');
+    expect(DASHBOARD_HTML).toContain('data-admin-tab="true" title="Review Queue" hidden aria-label="Review Queue"><span aria-hidden="true">Review Queue');
+    expect(DASHBOARD_HTML).toContain('data-admin-tab="true" title="Admin · Cadence" hidden aria-label="Admin · Cadence"><span aria-hidden="true">Admin · Cadence');
     // Laptop widths: the filter row may wrap instead of overflowing its track;
     // the search field has no inline min-width:0 so its 180px floor applies.
     expect(DASHBOARD_HTML).toContain('grid-template-rows: var(--control-h, 34px) minmax(var(--control-h, 34px), auto);');
