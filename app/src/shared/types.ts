@@ -811,6 +811,11 @@ export interface Env {
   DD_TRACE_URL?: string;
   /** Optional APM trace sample rate (0.0 to 1.0, defaults to 0.2). */
   DD_TRACE_SAMPLE_RATE?: string;
+  /** Host tag.  Prefer fleet-hetzner-nbg1 so APM does not mint extra Free hosts. */
+  DD_HOSTNAME?: string;
+  /** RUM kill switch.  false/0/off/no fail-closes even when client tokens exist. */
+  DD_RUM_ENABLED?: string;
+  NEXT_PUBLIC_DD_RUM_ENABLED?: string;
   /** Public RUM client token.  Aliases: DD_RUM_CLIENT_TOKEN, NEXT_PUBLIC_DD_CLIENT_TOKEN. */
   DD_CLIENT_TOKEN?: string;
   DD_RUM_CLIENT_TOKEN?: string;

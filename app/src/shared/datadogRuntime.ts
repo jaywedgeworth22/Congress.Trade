@@ -44,7 +44,8 @@ export type DatadogRumReason =
   | 'missing-application-id'
   | 'missing-site'
   | 'invalid-site'
-  | 'partial';
+  | 'partial'
+  | 'disabled';
 
 export interface DatadogInitInput {
   DD_API_KEY?: string;
@@ -59,6 +60,11 @@ export interface DatadogInitInput {
   DD_TRACE_AGENT_HOSTNAME?: string;
   DD_TRACE_URL?: string;
   DD_TRACE_SAMPLE_RATE?: string;
+  /** Host tag for APM.  Prefer fleet-hetzner-nbg1 so traces do not mint extra Free hosts. */
+  DD_HOSTNAME?: string;
+  /** Explicit RUM kill switch.  `false`/`0`/`off`/`no` fail-closes even when tokens exist. */
+  DD_RUM_ENABLED?: string;
+  NEXT_PUBLIC_DD_RUM_ENABLED?: string;
   DD_CLIENT_TOKEN?: string;
   DD_RUM_CLIENT_TOKEN?: string;
   NEXT_PUBLIC_DD_CLIENT_TOKEN?: string;
@@ -85,6 +91,7 @@ export interface DatadogBackendConfig {
   service: string;
   env: string;
   version?: string;
+  hostname?: string;
   logsIntakeUrl: string;
   tracesIntakeUrl: string;
 }
@@ -121,6 +128,13 @@ const SITE_SET = new Set<string>(DATADOG_SITES);
 function trimOrEmpty(value: string | undefined): string {
   return value?.trim() ?? '';
 }
+
+export function flagOff(value: string | undefined): boolean {
+  const normalized = trimOrEmpty(value).toLowerCase();
+  return normalized === '0' || normalized === 'false' || normalized === 'no' || normalized === 'off';
+}
+
+export const FLEET_DD_HOSTNAME = 'fleet-hetzner-nbg1';
 
 export function firstNonEmpty(...values: Array<string | undefined>): string {
   for (const value of values) {
@@ -252,12 +266,16 @@ export function resolveDatadogBackend(input: DatadogInitInput | undefined): Data
     service: firstNonEmpty(input?.DD_SERVICE, DATADOG_BACKEND_SERVICE),
     env: resolveDatadogEnvName(input),
     version: resolveDatadogVersion(input),
+    hostname: firstNonEmpty(input?.DD_HOSTNAME) || undefined,
     logsIntakeUrl: datadogLogsIntakeUrl(site),
     tracesIntakeUrl: datadogTracesIntakeUrl(site),
   };
 }
 
 export function resolveDatadogRum(input: DatadogInitInput | undefined): DatadogRumResolution {
+  if (flagOff(input?.DD_RUM_ENABLED) || flagOff(input?.NEXT_PUBLIC_DD_RUM_ENABLED)) {
+    return { enabled: false, reason: 'disabled' };
+  }
   const clientToken = resolveDatadogClientToken(input);
   const applicationId = resolveDatadogApplicationId(input);
   const siteRaw = resolveDatadogSiteRaw(input);
@@ -309,6 +327,9 @@ const DATADOG_RESOLVE_KEYS = [
   'DD_TRACE_AGENT_HOSTNAME',
   'DD_TRACE_URL',
   'DD_TRACE_SAMPLE_RATE',
+  'DD_HOSTNAME',
+  'DD_RUM_ENABLED',
+  'NEXT_PUBLIC_DD_RUM_ENABLED',
   'DD_CLIENT_TOKEN',
   'DD_RUM_CLIENT_TOKEN',
   'NEXT_PUBLIC_DD_CLIENT_TOKEN',
@@ -343,6 +364,9 @@ export async function resolveProductionDatadogEnv(
     DD_TRACE_AGENT_HOSTNAME: fromInfisical.DD_TRACE_AGENT_HOSTNAME || env.DD_TRACE_AGENT_HOSTNAME,
     DD_TRACE_URL: fromInfisical.DD_TRACE_URL || env.DD_TRACE_URL,
     DD_TRACE_SAMPLE_RATE: fromInfisical.DD_TRACE_SAMPLE_RATE || env.DD_TRACE_SAMPLE_RATE,
+    DD_HOSTNAME: fromInfisical.DD_HOSTNAME || env.DD_HOSTNAME,
+    DD_RUM_ENABLED: fromInfisical.DD_RUM_ENABLED || env.DD_RUM_ENABLED,
+    NEXT_PUBLIC_DD_RUM_ENABLED: fromInfisical.NEXT_PUBLIC_DD_RUM_ENABLED || env.NEXT_PUBLIC_DD_RUM_ENABLED,
     DD_CLIENT_TOKEN: fromInfisical.DD_CLIENT_TOKEN || env.DD_CLIENT_TOKEN,
     DD_RUM_CLIENT_TOKEN: fromInfisical.DD_RUM_CLIENT_TOKEN || env.DD_RUM_CLIENT_TOKEN,
     NEXT_PUBLIC_DD_CLIENT_TOKEN: fromInfisical.NEXT_PUBLIC_DD_CLIENT_TOKEN || env.NEXT_PUBLIC_DD_CLIENT_TOKEN,
