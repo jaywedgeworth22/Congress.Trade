@@ -269,7 +269,7 @@ async function queryMembersRoster(db: D1Database): Promise<{ members: unknown[];
     district: row.district,
     txCount: row.tx_count,
     photoUrl: row.photo_url ?? null,
-    title: executiveTitleFor(row.filer_id),
+    title: executiveTitleFor(row.filer_id, row.chamber),
   }));
   return { members, count: members.length };
 }

@@ -658,6 +658,8 @@ export async function maybeRunDailyFilerJobs(env: Env, now = new Date()): Promis
       bioguideResolved: r.bioguideResolved,
       displayNamesSet: r.displayNamesSet,
       unresolved: r.unresolved,
+      chambersCorrected: r.chambersCorrected,
+      staleResolutionsFixed: r.staleResolutionsFixed,
     }));
   } catch (err) {
     console.warn('identity sync failed:', (err as Error).message);
