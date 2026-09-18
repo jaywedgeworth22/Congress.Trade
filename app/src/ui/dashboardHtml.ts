@@ -1057,7 +1057,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   .pager-controls { display:flex; flex:0 0 auto; gap:0px; align-items:center; flex-wrap:nowrap; margin-left:auto; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius-ctl); overflow: hidden; width:auto; height: var(--control-h, 34px); box-sizing: border-box; }
   .pager-controls button { border: none !important; border-radius: 0 !important; min-width: 2.25rem; height: 100%; min-height: 0; font-size: 13px; }
   .pager-controls .trades-page-msg { font-size: 13px; }
-  .pager-controls .btn.sm { font-size: 13px; }
+  /* Guillemet arrows (« ‹ › ») read small at the control size; one step up. */
+  .pager-controls .btn.sm { font-size: 16px; line-height: 1; }
   .trades-page-msg .pg-short { display: none; }
   /* The generic .pager-controls span padding/borders belong to the counter
      box, not to its inner long/short text spans. */
@@ -2020,8 +2021,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      grid rules.  The Trends copy (#trendsSharedFilters) is a hidden state
      mirror: trParams()/getTrWindow() still read it and the chip sync keeps
      it in step with the header controls. */
-  .trades-toolbars .toolbar,
-  #trendsSharedFilters.toolbar { margin-bottom: 0; }
+  .trades-toolbars .toolbar { margin-bottom: 0; }
   #trendsSharedFilters[data-filter-mirror] { display: none !important; }
   /* Owner punch list #9: desktop (>768px) merges the Trades feed's two
      toolbars onto one row — timeframe pill, segmented groups + ⓘ, then the
@@ -2490,7 +2490,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
        gives way, and it never falls below the width of "9 / 99". */
     #view-trades .pager-top .pager-controls { flex: 1 1 0; min-width: 0; margin: 0; height: 40px; box-sizing: border-box; border-radius: var(--radius-ctl); }
     #view-trades .pager-top [data-pager-first], #view-trades .pager-top [data-pager-last] { display: none; }
-    #view-trades .pager-top [data-pager-prev], #view-trades .pager-top [data-pager-next] { flex: 0 0 34px; width: 34px; min-width: 34px; height: 38px; min-height: 0; padding: 0; font-size: 13px; }
+    #view-trades .pager-top [data-pager-prev], #view-trades .pager-top [data-pager-next] { flex: 0 0 34px; width: 34px; min-width: 34px; height: 38px; min-height: 0; padding: 0; font-size: 17px; line-height: 1; }
     #view-trades .pager-top .trades-page-msg { flex: 1 1 0; min-width: 0; text-align: center; padding: 0 2px; font-size: 12px; font-weight: 600; color: var(--text); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; }
     #view-trades .pager-top .trades-page-msg .pg-long { display: none; }
     #view-trades .pager-top .trades-page-msg .pg-short { display: inline; }
@@ -2508,38 +2508,34 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     /* Shared filter row: timeframe + chamber/party/type stay on ONE row.
        Timeframe is content-sized (not flex-grown).  ID selectors beat the
        later 720px toolbar flex-wrap re-flex. */
-    #tradesSharedFilters, #trendsSharedFilters {
+    #tradesSharedFilters {
       display: flex; flex-wrap: nowrap; align-items: center; gap: 6px;
       overflow: visible;
     }
-    #tradesSharedFilters > .pill-select.pill-cal, #trendsSharedFilters > .pill-select.pill-cal {
+    #tradesSharedFilters > .pill-select.pill-cal {
       flex: 0 0 auto; width: max-content;
     }
-    #tradesSharedFilters > .pill-select-el, #trendsSharedFilters > .pill-select-el,
-    #tradesSharedFilters .pill-select-el, #trendsSharedFilters .pill-select-el {
+    #tradesSharedFilters > .pill-select-el,
+    #tradesSharedFilters .pill-select-el {
       width: auto; field-sizing: content;
     }
-    #tradesSharedFilters > .filter-groups, #trendsSharedFilters > .filter-groups {
+    #tradesSharedFilters > .filter-groups {
       flex: 0 0 auto; width: auto; display: flex; flex-wrap: nowrap; justify-content: flex-start; gap: 6px;
     }
     #tradesExtraFilters {
       display: flex; align-items: center; gap: 8px; margin-top: 6px;
     }
     #tradesExtraFilters .icon-field { flex: 1 1 auto; min-width: 0; }
-    #tradesSharedFilters .branch-filters, #trendsSharedFilters .branch-filters { margin: 0; }
-    #tradesSharedFilters .branch-toggle, #tradesSharedFilters .party-chip, #tradesSharedFilters .side-chip,
-    #trendsSharedFilters .branch-toggle, #trendsSharedFilters .party-chip, #trendsSharedFilters .side-chip {
+    #tradesSharedFilters .branch-filters { margin: 0; }
+    #tradesSharedFilters .branch-toggle, #tradesSharedFilters .party-chip, #tradesSharedFilters .side-chip {
       min-width: 30px; padding: 0 6px;
     }
     #tradesSharedFilters .ios-filter-item.branch-toggle,
     #tradesSharedFilters .ios-filter-item.party-chip,
-    #tradesSharedFilters .ios-filter-item.side-chip,
-    #trendsSharedFilters .ios-filter-item.branch-toggle,
-    #trendsSharedFilters .ios-filter-item.party-chip,
-    #trendsSharedFilters .ios-filter-item.side-chip {
+    #tradesSharedFilters .ios-filter-item.side-chip {
       min-width: 0; padding: 9px 10px;
     }
-    #tradesSharedFilters .filters-info-wrap .branch-info, #trendsSharedFilters .filters-info-wrap .branch-info {
+    #tradesSharedFilters .filters-info-wrap .branch-info {
       width: 26px; height: 26px; font-size: 15px;
     }
     .search-panel.open {
@@ -3359,11 +3355,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
       </div>
       <span class="note trades-count-msg" id="tradesCountMsgTop" data-trades-count></span>
       <div class="pager-controls" role="navigation" aria-label="Trades pagination top">
-        <button class="btn ghost sm" data-pager-first onclick="firstTradesPage()" title="First page" aria-label="First page">&lt;&lt;</button>
-        <button class="btn ghost sm" data-pager-prev onclick="prevTradesPage()" title="Previous page" aria-label="Previous page">&lt;</button>
+        <button class="btn ghost sm" data-pager-first onclick="firstTradesPage()" title="First page" aria-label="First page">&laquo;</button>
+        <button class="btn ghost sm" data-pager-prev onclick="prevTradesPage()" title="Previous page" aria-label="Previous page">&lsaquo;</button>
         <span class="note trades-page-msg" data-trades-page></span>
-        <button class="btn ghost sm" data-pager-next onclick="nextTradesPage()" title="Next page" aria-label="Next page">&gt;</button>
-        <button class="btn ghost sm" data-pager-last onclick="lastTradesPage()" title="Last page" aria-label="Last page">&gt;&gt;</button>
+        <button class="btn ghost sm" data-pager-next onclick="nextTradesPage()" title="Next page" aria-label="Next page">&rsaquo;</button>
+        <button class="btn ghost sm" data-pager-last onclick="lastTradesPage()" title="Last page" aria-label="Last page">&raquo;</button>
       </div>
       <div class="pager-tools">
         <select data-page-size onchange="setPageSize(this.value)" title="Rows shown per page" aria-label="Rows per page">
@@ -3389,11 +3385,11 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <div class="row-flex pager pager-bottom" data-pager="bottom">
       <span class="note trades-count-msg" id="tradesCountMsg" data-trades-count></span>
       <div class="pager-controls" role="navigation" aria-label="Trades pagination">
-        <button class="btn ghost sm" id="firstPageBtn" data-pager-first onclick="firstTradesPage()" title="First page" aria-label="First page">&lt;&lt;</button>
-        <button class="btn ghost sm" id="prevPageBtn" data-pager-prev onclick="prevTradesPage()" title="Previous page" aria-label="Previous page">&lt;</button>
+        <button class="btn ghost sm" id="firstPageBtn" data-pager-first onclick="firstTradesPage()" title="First page" aria-label="First page">&laquo;</button>
+        <button class="btn ghost sm" id="prevPageBtn" data-pager-prev onclick="prevTradesPage()" title="Previous page" aria-label="Previous page">&lsaquo;</button>
         <span class="note trades-page-msg" id="tradesPageMsg" data-trades-page></span>
-        <button class="btn ghost sm" id="nextPageBtn" data-pager-next onclick="nextTradesPage()" title="Next page" aria-label="Next page">&gt;</button>
-        <button class="btn ghost sm" id="lastPageBtn" data-pager-last onclick="lastTradesPage()" title="Last page" aria-label="Last page">&gt;&gt;</button>
+        <button class="btn ghost sm" id="nextPageBtn" data-pager-next onclick="nextTradesPage()" title="Next page" aria-label="Next page">&rsaquo;</button>
+        <button class="btn ghost sm" id="lastPageBtn" data-pager-last onclick="lastTradesPage()" title="Last page" aria-label="Last page">&raquo;</button>
       </div>
       <div class="pager-tools">
         <select id="pageSize" data-page-size onchange="setPageSize(this.value)" title="Rows shown per page" aria-label="Rows per page">
@@ -13670,6 +13666,12 @@ function syncChromeMetrics() {
   }
 }
 function refreshIosFilterSummaries() {
+  // Empty-state chip text: on wide desktops the chip names its dimension
+  // ("Branches" / "Parties" / "Types") so the row reads as three filters at a
+  // glance; below 1200px the shorter "All" (sides: icons only) keeps the row
+  // beside the wordmark on one line.  Re-run on resize (initIosFilterMenus).
+  var wide = false;
+  try { wide = !!(window.matchMedia && window.matchMedia('(min-width: 1200px)').matches); } catch (_e) {}
   function setSummary(id, text, has) {
     var f = el(id); if (!f) return;
     var lbl = f.querySelector('[data-ios-summary]');
@@ -13680,13 +13682,13 @@ function refreshIosFilterSummaries() {
     var g = el(id); if (!g) return;
     var on = [];
     g.querySelectorAll('.branch-toggle.on').forEach(function (b) { on.push(b.textContent.trim()); });
-    setSummary(id, on.length ? on.join('+') : 'All', on.length > 0);
+    setSummary(id, on.length ? on.join('+') : (wide ? 'Branches' : 'All'), on.length > 0);
   }
   function partySummary(id) {
     var g = el(id); if (!g) return;
     var on = [];
     g.querySelectorAll('.party-chip.on').forEach(function (b) { on.push(b.getAttribute('data-party')); });
-    setSummary(id, on.length ? on.join('+') : 'All', on.length > 0);
+    setSummary(id, on.length ? on.join('+') : (wide ? 'Parties' : 'All'), on.length > 0);
   }
   function sideSummary(id) {
     var g = el(id); if (!g) return;
@@ -13695,7 +13697,7 @@ function refreshIosFilterSummaries() {
       var s = b.getAttribute('data-side');
       on.push(s === 'B' ? 'Buys' : s === 'S' ? 'Sells' : 'Exch');
     });
-    setSummary(id, on.length ? on.join('+') : '', on.length > 0);
+    setSummary(id, on.length ? on.join('+') : (wide ? 'Types' : ''), on.length > 0);
   }
   chamberSummary('qChamber'); chamberSummary('trChamber');
   partySummary('qPartyGroup'); partySummary('trPartyGroup');
@@ -13785,6 +13787,7 @@ function initIosFilterMenus() {
     syncChromeMetrics();
     repositionOpenIosFilters();
     syncPageSizeLabels();
+    refreshIosFilterSummaries();
   });
   refreshIosFilterSummaries();
 }
