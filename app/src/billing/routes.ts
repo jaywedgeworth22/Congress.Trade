@@ -55,6 +55,18 @@ import { clientRedeemWouldResurrectRevoked, getAppleSubscription, upsertAppleSub
 const DEFAULT_TRIAL_DAYS = 14;
 const REQUEST_ID_RE = /^[A-Za-z0-9._:-]{1,128}$/;
 
+/**
+ * Stripe statuses that are deliberately NOT premium (see entitlement.ts) but
+ * still mean a subscription object is live on the customer, so a second
+ * Checkout Session would stack a duplicate subscription on top of it. The way
+ * out of these is the Billing Portal (fix the payment method), never a re-buy.
+ *
+ * Terminal and never-started statuses are absent on purpose: `canceled` and
+ * `incomplete_expired` are dead, and `incomplete` is a checkout that never
+ * completed — re-subscribing after any of those is legitimate and must work.
+ */
+const LIVE_NON_PREMIUM_STATUSES: ReadonlySet<string> = new Set(['past_due', 'unpaid', 'paused']);
+
 function requestIdForStripe(c: Context): { id: string } | { error: string } {
   const supplied = c.req.header('Idempotency-Key');
   if (supplied == null) return { error: 'Idempotency-Key required' };
@@ -115,6 +127,44 @@ export function buildBillingRouter(): Hono<{ Bindings: Env }> {
     if (!priceId) return c.json({ error: `no Stripe price configured for ${plan} plan` }, 503);
     const requestId = requestIdForStripe(c);
     if ('error' in requestId) return c.json({ error: requestId.error }, 400);
+
+    // Duplicate-subscription guard — deliberately the last thing before any
+    // Stripe write, so nothing can reach Checkout around it. Stripe will
+    // happily open a SECOND subscription on a customer that already has one,
+    // so a Premium user who reaches the pricing modal (via /pricing,
+    // ?pricing=1, the footer link or the PDF redirect) would be charged twice
+    // once the trials end. The cross-store case is the same defect: an Apple
+    // IAP subscriber buying here would be billed by Apple and Stripe at once.
+    // resolveEntitlementAsync closes both holes in one check — it ORs the
+    // apple_subscriptions ledger onto the Stripe `users` columns.
+    const entitlement = await resolveEntitlementAsync(c.env, user);
+    if (entitlement.premium) {
+      return c.json(
+        {
+          error: 'already_subscribed',
+          message: entitlement.source === 'apple'
+            ? 'You already have Premium through the App Store.'
+            : 'You already have an active Premium subscription.',
+          source: entitlement.source ?? 'stripe',
+          status: entitlement.status,
+        },
+        409,
+      );
+    }
+    // Entitlement has lapsed but a subscription object is still live on the
+    // customer, so a new Checkout would stack a duplicate on top of it. The
+    // way out of these statuses is the Billing Portal, never a re-buy.
+    if (user.subscriptionStatus != null && LIVE_NON_PREMIUM_STATUSES.has(user.subscriptionStatus)) {
+      return c.json(
+        {
+          error: 'already_subscribed',
+          message: 'Your Premium subscription needs a payment update, not a new one.',
+          source: 'stripe',
+          status: user.subscriptionStatus,
+        },
+        409,
+      );
+    }
 
     try {
       // Create the Stripe customer up-front (if needed) so the customer<->user
