@@ -2459,7 +2459,16 @@ export async function recordTradeLatencyCandidates(
   // stamp for live imports), so the very next per-minute tick can capture it
   // LIVE instead of it aging into a backfill before a row even exists. See
   // latencyPriceSnapshots.ts's module header.
-  const ctPublishRows: Array<{ trade_hash: string; ticker: string | null; provider: ProviderId; congress_first_seen_at: string }> = [];
+  const ctPublishRows: Array<{
+    trade_hash: string;
+    ticker: string | null;
+    provider: ProviderId;
+    congress_first_seen_at: string;
+    isOption?: boolean | null;
+    assetType?: string | null;
+    assetTypeName?: string | null;
+    assetName?: string | null;
+  }> = [];
   for (const provider of DIRECT_PROVIDER_IDS) {
     for (const tx of transactions) {
       const ctx = contexts.get(tx.id);
@@ -2484,7 +2493,16 @@ export async function recordTradeLatencyCandidates(
       const firstSeen = raceFirstSeenAt(firstSeenRaw, nowIso, LATENCY_PROVIDER_MATCH_LOOKBACK_HOURS);
       const congressWindowStart = ctx?.prev_probe_at || null;
       mintedHashes.add(trade_hash);
-      ctPublishRows.push({ trade_hash, ticker: tx.ticker || ctx?.ticker || null, provider, congress_first_seen_at: firstSeen });
+      ctPublishRows.push({
+        trade_hash,
+        ticker: tx.ticker || ctx?.ticker || null,
+        provider,
+        congress_first_seen_at: firstSeen,
+        isOption: tx.isOption,
+        assetType: tx.assetType,
+        assetTypeName: tx.assetTypeName ?? null,
+        assetName: tx.assetName,
+      });
       updates.push([
         `INSERT INTO trade_latency_candidates
            (trade_hash, doc_id, provider, chamber, source_url, filed_date, filer_name, ticker, tx_date, tx_type,

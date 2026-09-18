@@ -68,6 +68,7 @@ import {
   X_AUTH_SCHEMA_STATEMENTS,
   GOV_PROBE_INTERVALS_SCHEMA_STATEMENTS,
   UNBLOCK_NOT_FOUND_HOUSE_PHANTOMS_STATEMENTS,
+  LATENCY_TIME_PROVENANCE_SCHEMA_STATEMENTS,
 } from '../migrations.ts';
 import { BENCHMARK_SCHEMA_STATEMENTS } from '../../benchmark/schema.ts';
 import {
@@ -294,6 +295,7 @@ describe('admin migration bootstrap', () => {
       ...LATENCY_SNAPSHOT_12H_SWEEP_SCHEMA_STATEMENTS,
       ...GOV_PROBE_INTERVALS_SCHEMA_STATEMENTS,
       ...UNBLOCK_NOT_FOUND_HOUSE_PHANTOMS_STATEMENTS,
+      ...LATENCY_TIME_PROVENANCE_SCHEMA_STATEMENTS,
     ]);
   });
 
@@ -303,6 +305,13 @@ describe('admin migration bootstrap', () => {
     expect(sql).toContain("error LIKE '%phantom%'");
     expect(sql).toContain("DELETE FROM ingestion_outbox");
     expect(sql).toContain("DELETE FROM filings");
+  });
+
+  it('adds observed-vs-claimed time provenance on latency snapshots (0098)', () => {
+    const sql = LATENCY_TIME_PROVENANCE_SCHEMA_STATEMENTS.join('\n');
+    expect(sql).toContain('ADD COLUMN time_provenance TEXT');
+    expect(sql).toContain("time_provenance = 'observed'");
+    expect(sql).toContain("event = 'ct_publish'");
   });
 
   it('includes the persisted admin allowlist + audit trail (0090)', () => {

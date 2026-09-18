@@ -15,6 +15,8 @@
  *                 POST /api/client/v1/commands {type:'create_subscription'}
  *   Admin cadence GET/PUT /api/admin/poll-config
  *   Source health GET /api/admin/sources/health
+ *   Instrument pricing GET /api/admin/instrument-pricing
+ *                 GET /api/admin/instrument-pricing/at?ticker=&at=
  *
  * Dependency-free vanilla JS. Loading / empty / error states are handled for
  * every panel; the "illustrative sample data" banner is removed the moment real
@@ -3932,6 +3934,23 @@ ${speedProofSectionHtml(true)}
         <div id="sourceTimelineGraphic" style="margin-bottom:16px;background:var(--bg-card);padding:14px;border:1px solid var(--border);border-radius:6px"></div>
         <div id="sourceRecentErrors"></div>
       </div>
+    </div>
+    <div class="section">
+      <h3>Instrument Pricing</h3>
+      <p class="sub">Capability boundary for exact-time (minute-level) prints.&nbsp; Equities (long) and crypto use Socratic.Trade 1-minute bars.&nbsp; Options and Kalshi event contracts are not priced from equity bars.&nbsp; Committee assignments stay cross-referenced to GICS sectors on Trends conflicts.</p>
+      <div id="instrumentPricingCaps" aria-live="polite"></div>
+      <h4 style="margin:14px 0 8px">Exact-time lookup</h4>
+      <div class="row-flex">
+        <label class="lbl" for="ipTicker">Ticker</label>
+        <input id="ipTicker" type="text" maxlength="8" placeholder="AAPL" style="width:100px" title="Equity or crypto ticker" />
+        <label class="lbl" for="ipAt">At (UTC)</label>
+        <input id="ipAt" type="text" placeholder="2026-08-16T15:00:00.000Z" style="width:220px" title="ISO-8601 instant" />
+        <label class="me-check" title="Marks this lookup as an options contract rather than a plain equity."><input id="ipOption" type="checkbox" /> Option</label>
+        <button class="btn" type="button" onclick="lookupExactPrice()">Look up</button>
+        <button class="btn ghost sm" type="button" onclick="loadInstrumentPricing()">Reload</button>
+        <span id="ipLookupMsg" class="note"></span>
+      </div>
+      <div id="ipLookupResult" class="note" style="margin-top:8px"></div>
     </div>
     <div class="section">
       <h3>Market Data Coverage</h3>
@@ -8662,6 +8681,66 @@ function loadLlmSpendPanel(forceRefresh) {
     });
 }
 
+function loadInstrumentPricing() {
+  var box = el('instrumentPricingCaps');
+  if (box) box.innerHTML = '<div class="state">Loading instrument pricing…</div>';
+  return fetch('/api/admin/instrument-pricing', { headers: adminHeaders() })
+    .then(okOrThrow)
+    .then(function (data) {
+      var caps = data.capabilities || [];
+      var rows = caps.map(function (c) {
+        var minute = c.minutePricing === 'minute' ? 'Yes (1-minute PIT)' : 'No';
+        var eod = c.eodPricing ? 'Yes' : 'No';
+        return '<tr class="row"><td>' + esc(c.label || c.class) + '</td>' +
+          '<td>' + esc(minute) + '</td>' +
+          '<td>' + esc(eod) + '</td>' +
+          '<td class="muted">' + esc(c.sessions || '—') + '</td>' +
+          '<td class="muted">' + esc(c.note || '') + '</td></tr>';
+      }).join('');
+      var ci = data.committeeIndustry || {};
+      var prov = data.snapshotProvenance || [];
+      var provLine = prov.length
+        ? prov.map(function (p) { return esc(p.timeProvenance) + ': ' + esc(p.n); }).join(' · ')
+        : 'no snapshot rows yet';
+      if (box) box.innerHTML =
+        '<div class="table-wrap"><table><thead><tr><th>Class</th><th>Minute PIT</th><th>EOD</th><th>Session</th><th>Notes</th></tr></thead><tbody>' +
+        (rows || '<tr><td class="state" colspan="5">No capability rows.</td></tr>') +
+        '</tbody></table></div>' +
+        '<p class="note" style="margin-top:10px">Committee→industry map <strong>' + esc(ci.version || '—') + '</strong> · ' +
+        esc(ci.ruleCount || 0) + ' rules.&nbsp; ' + esc(ci.note || '') + '</p>' +
+        '<p class="note">Snapshot timestamp provenance — ' + provLine + '.</p>';
+    })
+    .catch(function (e) {
+      if (box) box.innerHTML = '<div class="state">Could not load instrument pricing. ' + esc((e && e.message) || 'error') + '</div>';
+    });
+}
+
+function lookupExactPrice() {
+  var ticker = (el('ipTicker') && el('ipTicker').value || '').trim();
+  var at = (el('ipAt') && el('ipAt').value || '').trim();
+  var isOption = !!(el('ipOption') && el('ipOption').checked);
+  var msg = el('ipLookupMsg');
+  var out = el('ipLookupResult');
+  if (msg) msg.textContent = 'Looking up…';
+  if (out) out.textContent = '';
+  var qs = 'ticker=' + encodeURIComponent(ticker) + '&at=' + encodeURIComponent(at) + (isOption ? '&isOption=1' : '');
+  return fetch('/api/admin/instrument-pricing/at?' + qs, { headers: adminHeaders() })
+    .then(okOrThrow)
+    .then(function (data) {
+      if (msg) msg.textContent = '';
+      if (!out) return;
+      if (data.ok) {
+        out.textContent = data.ticker + ' at ' + data.barAt + ' → $' + data.price + ' (' + (data.source || 'peer') + ', ' + (data.instrumentClass || '') + ')';
+      } else {
+        out.textContent = (data.message || 'No price') + (data.instrumentClass ? ' [' + data.instrumentClass + ']' : '');
+      }
+    })
+    .catch(function (e) {
+      if (msg) msg.textContent = '';
+      if (out) out.textContent = (e && e.message) || 'Lookup failed.';
+    });
+}
+
 function loadMarketCoverage() {
   var box = el('marketCoverage');
   var msg = el('mdMsg');
@@ -13311,7 +13390,7 @@ document.querySelectorAll('nav.tabs a').forEach(function (b) {
       loadSubs();
       renderSpeedProof();
     }
-    if (b.dataset.view === 'admin') { loadAdminList(); loadLogoSetting(); loadPollConfig(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); loadExtractionIncident(); }
+    if (b.dataset.view === 'admin') { loadAdminList(); loadLogoSetting(); loadPollConfig(); loadHealth(); loadInstrumentPricing(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); loadExtractionIncident(); }
   };
 });
 
@@ -14121,7 +14200,7 @@ loadMe().then(function () {
       loadSubs();
       fetchLatencySummary().then(renderAlertsMini).catch(function () {});
     }
-    if (initialView === 'admin') { loadAdminList(); loadLogoSetting(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); loadExtractionIncident(); }
+    if (initialView === 'admin') { loadAdminList(); loadLogoSetting(); loadHealth(); loadInstrumentPricing(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); loadExtractionIncident(); }
   } else {
     // The head script may have stamped html[data-view] from a ?view= /
     // remembered tab that then fell back here (admin-gated, unknown) —

@@ -1328,6 +1328,19 @@ export const GOV_PROBE_INTERVALS_SCHEMA_STATEMENTS = [
 /**
  * 0097_unblock_not_found_house_phantoms.sql
  */
+/**
+ * 0098_latency_time_provenance.sql
+ * Observed vs claimed timestamp provenance on latency_price_snapshots.
+ * Independent of confidence (exact / bracketed / unbounded).
+ */
+export const LATENCY_TIME_PROVENANCE_SCHEMA_STATEMENTS = [
+  'ALTER TABLE latency_price_snapshots ADD COLUMN time_provenance TEXT',
+  `UPDATE latency_price_snapshots
+      SET time_provenance = 'observed'
+    WHERE event = 'ct_publish'
+      AND time_provenance IS NULL`,
+] as const;
+
 export const UNBLOCK_NOT_FOUND_HOUSE_PHANTOMS_STATEMENTS = [
   `DELETE FROM ingestion_outbox
    WHERE doc_id IN (
@@ -1480,6 +1493,8 @@ export const POST_0024_SCHEMA_STATEMENTS = [
   ...GOV_PROBE_INTERVALS_SCHEMA_STATEMENTS,
   // 0097_unblock_not_found_house_phantoms.sql
   ...UNBLOCK_NOT_FOUND_HOUSE_PHANTOMS_STATEMENTS,
+  // 0098_latency_time_provenance.sql
+  ...LATENCY_TIME_PROVENANCE_SCHEMA_STATEMENTS,
 ] as const;
 
 export const INGESTION_DECISIONS_SCHEMA_STATEMENTS = [
