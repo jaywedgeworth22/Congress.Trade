@@ -736,6 +736,35 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).not.toContain('Email me a one-click sign-in link');
   });
 
+  it('never renders a sign-in provider whose start route would bounce to auth_error', () => {
+    // Regression guard for the dead "Sign In with Apple" button (board
+    // 68c2884d).  /auth/apple/start 302s to /?auth_error=apple_web_not_configured
+    // whenever web SIWA has no Services ID / key, and production STILL reports
+    // {"enabled":true,"web":false} — so the button is only safe because it
+    // ships hidden and is revealed by a server capability flag.  Both halves
+    // are load-bearing: delete the inline display:none and every visitor gets
+    // the dead button back; delete the ME.auth gate and it never appears even
+    // once Apple web is configured.
+    expect(DASHBOARD_HTML).toContain(
+      '<a class="auth-btn abtn" id="appleSignInBtn" href="/auth/apple/start" style="display:none">',
+    );
+    expect(DASHBOARD_HTML).toContain(
+      '<a class="auth-btn xbtn" id="xSignInBtn" href="/auth/x/start" onclick="loginX()" style="display:none">',
+    );
+    // Revealed only by the capabilities /auth/me reports (auth.appleWeb / auth.xWeb).
+    expect(DASHBOARD_HTML).toContain('function syncAppleSignInButton()');
+    expect(DASHBOARD_HTML).toContain('if (ME.auth && ME.auth.appleWeb) {');
+    expect(DASHBOARD_HTML).toContain('if (ME.auth && ME.auth.xWeb) {');
+    // Fail closed: a /auth/me that never resolves must leave both hidden, so
+    // the gate runs on the success path AND the catch path.
+    expect(DASHBOARD_HTML).toContain("ME.auth = { appleWeb: false }");
+    // Google is configured in production and must NOT be hidden by default —
+    // otherwise this guard would silently take out the only working provider.
+    expect(DASHBOARD_HTML).toContain(
+      '<button class="auth-btn gbtn" id="googleSignInBtn" onclick="loginGoogle()">',
+    );
+  });
+
   it('owner follow-up batch #6: removes the "pols" abbreviation — bare numbers in Politicians-headed table columns, full word only in prose', () => {
     // The u-full/u-abbr responsive-word mechanism and its polWord/polCell
     // helpers are gone entirely — dead once nothing renders "pol(s)" anymore.
