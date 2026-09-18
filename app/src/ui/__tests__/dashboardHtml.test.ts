@@ -1728,6 +1728,17 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('Missing Asset Samples');
   });
 
+  it('surfaces the Instrument Pricing capability pane and exact-time lookup in Admin', () => {
+    expect(DASHBOARD_HTML).toContain('Instrument Pricing');
+    expect(DASHBOARD_HTML).toContain('id="instrumentPricingCaps"');
+    expect(DASHBOARD_HTML).toContain('function loadInstrumentPricing(');
+    expect(DASHBOARD_HTML).toContain("fetch('/api/admin/instrument-pricing'");
+    expect(DASHBOARD_HTML).toContain('function lookupExactPrice(');
+    expect(DASHBOARD_HTML).toContain("fetch('/api/admin/instrument-pricing/at?");
+    expect(DASHBOARD_HTML).toContain('Kalshi event contracts');
+    expect(DASHBOARD_HTML).toContain('loadInstrumentPricing()');
+  });
+
   it('keeps the dollar-estimate + educational framing without the removed Trends banner (owner punch list #3)', () => {
     expect(DASHBOARD_HTML.toLowerCase()).toContain('bracket');
     expect(DASHBOARD_HTML).toContain('from STOCK Act amount ranges');
@@ -4053,10 +4064,10 @@ describe('owner UX work order (LANE A2 — latency placement + entity click-thro
       // the click handler and the boot-time restore-saved-tab path) instead
       // of relying only on the Trends-tab intersection observer.
       expect(DASHBOARD_HTML).toContain(
-        "if (b.dataset.view === 'admin') { loadAdminList(); loadLogoSetting(); loadPollConfig(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); loadExtractionIncident(); }",
+        "if (b.dataset.view === 'admin') { loadAdminList(); loadLogoSetting(); loadPollConfig(); loadHealth(); loadInstrumentPricing(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); loadExtractionIncident(); }",
       );
       expect(DASHBOARD_HTML).toContain(
-        "if (initialView === 'admin') { loadAdminList(); loadLogoSetting(); loadHealth(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); loadExtractionIncident(); }",
+        "if (initialView === 'admin') { loadAdminList(); loadLogoSetting(); loadHealth(); loadInstrumentPricing(); loadMarketCoverage(); loadDiagnostics(); loadBenchmarkHistory(); renderSpeedProof(); loadLlmSpendPanel(); loadExtractionIncident(); }",
       );
     });
   });

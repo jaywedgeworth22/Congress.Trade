@@ -2270,7 +2270,7 @@
         "npm:unpdf@^1.8.1",
         "npm:vite@^8.3.0",
         "npm:vitest@5",
-        "npm:zod@^4.6.2"
+        "npm:zod@^4.6.5"
       ],
       "overrides": {
         "undici": "^7.29.0"

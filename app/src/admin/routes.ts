@@ -9,6 +9,8 @@
  *   GET   /review-queue             -> list unresolved review items
  *   POST  /review/:docId            -> {decision:'confirm'|'reject', edits?}
  *   GET   /sources/health           -> ingest_log aggregates per source
+ *   GET   /instrument-pricing       -> equities/crypto/options/event-contract capability matrix
+ *   GET   /instrument-pricing/at    -> exact-time minute bar lookup (refuses options/event contracts)
  *   GET   /diagnostics              -> connection status + recent app errors
  *   GET   /premium-roster           -> Premium members (trial vs paid, Stripe vs Apple)
  *   GET   /subscriptions            -> admin list of subscriptions
@@ -97,6 +99,7 @@ import { deprecatePredecessorFilingTransactions, duplicateLineupReason, enqueueA
 import { acknowledgeAutopilotHalt, getAutopilotStatus } from '../extraction/autopilot.ts';
 import { providerHealthDiagnostics } from '../extraction/providerHealth.ts';
 import { buildCoverageScorecard } from './coverageScorecard.ts';
+import { instrumentPricingPayload, lookupExactPriceForAdmin } from './instrumentPricing.ts';
 import {
   readOpenRouterBudgetCircuit,
   resolveOpenRouterBudgetCircuitKnobs,
@@ -3888,6 +3891,25 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       fetchLlamaParseCredits(c.env, { forceRefresh }),
     ]);
     return c.json({ ok: true, spend, llamaParseCredits: credits });
+  });
+
+  // --- GET /instrument-pricing --------------------------------------------
+  // Capability matrix for Equities (long) / Crypto / Options / Event Contracts
+  // plus observed-vs-claimed snapshot provenance. Exact-time lookup is the
+  // sibling GET /instrument-pricing/at.
+  r.get('/instrument-pricing', async (c) => {
+    return c.json(await instrumentPricingPayload(c.env));
+  });
+
+  r.get('/instrument-pricing/at', async (c) => {
+    const result = await lookupExactPriceForAdmin(c.env, {
+      ticker: c.req.query('ticker'),
+      at: c.req.query('at'),
+      isOption: c.req.query('isOption'),
+      assetType: c.req.query('assetType'),
+      assetName: c.req.query('assetName'),
+    });
+    return c.json(result);
   });
 
   // --- GET /diagnostics ---------------------------------------------------
