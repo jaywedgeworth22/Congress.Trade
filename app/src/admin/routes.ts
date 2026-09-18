@@ -72,7 +72,7 @@ import {
   rotateSubscriptionSecretError,
   SubscriptionQuotaError,
   subscriptionSecretError,
-  validateSubscriptionFilters,
+  validateAndResolveSubscriptionFilters,
   webhookTargetLengthError,
 } from '../delivery/subscriptions.ts';
 import { localWebhookTargetsAllowed, validatePublicWebhookTarget } from '../delivery/webhookTarget.ts';
@@ -10393,8 +10393,18 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       });
       if (targetError) return c.json({ error: targetError }, 400);
     }
-    const validatedFilters = validateSubscriptionFilters(body.filters);
-    if (!validatedFilters.ok) return c.json({ error: (validatedFilters as any).error }, 400);
+    const validatedFilters = await validateAndResolveSubscriptionFilters(c.env, body.filters);
+    if (!validatedFilters.ok) {
+      return c.json(
+        {
+          error: validatedFilters.error,
+          ...(validatedFilters.unresolvedMembers?.length
+            ? { unresolvedMembers: validatedFilters.unresolvedMembers }
+            : {}),
+        },
+        400,
+      );
+    }
     const secretError = subscriptionSecretError(body.secret);
     if (secretError) return c.json({ error: secretError }, 400);
     const secret = typeof body.secret === 'string' ? body.secret : undefined;

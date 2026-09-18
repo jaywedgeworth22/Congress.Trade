@@ -67,6 +67,30 @@ The current router implements `update_preferences`, `create_subscription`,
 `unregister_device`, `redeem_apple_purchase`, and `delete_account`; `start_checkout` and
 `request_export` are defined in the shared type set but still return `501`.
 
+### Delivery `members` filter (`create_subscription` / `update_subscription`)
+
+`filters.members` is matched against the trade's filer id, so the server stores
+**filer ids** and resolves what it is given (2026-09-18, board a6058af2):
+
+- An entry is a filer id (`filerId` from `GET /api/members`; case-insensitive, a
+  merged alias maps to its canonical filer) **or a member name**.  A name must
+  identify exactly one member: an exact full/display-name match wins, then a
+  filer with live trades over a dormant duplicate.
+- An id must exist: on the `filers` roster or on at least one transaction.  A typo
+  is rejected like an unknown name rather than saved as a subscription that never
+  fires.
+- A name that matches nobody, or several people (`"Smith"`), fails the command
+  (`failed`, `error` lists every offending entry; REST `POST/PATCH
+  /api/subscriptions` answers `400` with the same `error` plus
+  `unresolvedMembers: string[]`).  Nothing is saved.  Prefer sending ids — the
+  iOS Delivery screen picks members from the People directory and sends `filerId`.
+- `GET /api/client/v1/subscriptions` adds `memberLabels` (`{ filerId: name }`) to
+  each subscription that filters by member, so clients can show names, and
+  `unresolvedMembers` when the stored filter holds an entry that is not a known
+  filer id.  Subscriptions created before names were resolved may hold raw text
+  such as `"Nancy Pelosi"`: those never delivered anything, are not rewritten by
+  the server, and are fixed by Edit → Save (which resolves or rejects them).
+
 ### Account deletion — `delete_account`
 
 Guideline 5.1.1(v).  Signed-in only.  Permanently deletes the account:
