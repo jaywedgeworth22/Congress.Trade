@@ -353,6 +353,21 @@ describe('repairCompetitorAttribution: last-name-minted MANUAL-* phantoms', () =
     expect(getTx(id2).filer_id).not.toBe('EXEC-DOUGLAS-J-BURGUM');
   });
 
+  it('does not count a row as unmatched when the attribution-mismatch step later reassigns it in the same run', async () => {
+    insertFiler({ id: 'MANUAL-SMITH', fullName: 'Jane Smith', chamber: 'senate', state: 'ME' });
+    const id = insertCompetitorTx({
+      filerId: 'MANUAL-SMITH',
+      rawText: JSON.stringify({ name: 'Jane Smith', member_type: 'house', District: 'GA10' }),
+    });
+
+    const result = await repairCompetitorAttribution(env, { dryRun: false });
+
+    expect(result.rekeyed).toBe(0);
+    expect(result.reassigned).toBe(1);
+    expect(result.unmatchedMinted).toBe(0);
+    expect(getTx(id).filer_id).not.toBe('MANUAL-SMITH');
+  });
+
   it('leaves a row alone when two live filers match (ambiguous)', async () => {
     insertFiler({ id: 'house-md06-april-mcclain-delaney', fullName: 'April McClain Delaney', chamber: 'house', state: 'MD' });
     insertFiler({ id: 'house-md06-april-delaney', fullName: 'April Delaney', chamber: 'house', state: 'MD' });

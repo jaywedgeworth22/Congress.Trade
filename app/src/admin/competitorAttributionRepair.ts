@@ -192,6 +192,8 @@ export async function repairCompetitorAttribution(
 
     // --- 0) last-name-minted phantom: re-key onto the existing real filer ----
     let rekeyedThisRow = false;
+    let unmatchedThisRow = false;
+    let reassignedThisRow = false;
     if (isMintedCompetitorFilerId(row.filer_id)) {
       const target = findExistingFilerForCompetitorReporter({
         names: competitorReporterNames(row.raw_text),
@@ -224,7 +226,9 @@ export async function repairCompetitorAttribution(
         rekeyed += 1;
         rekeyedThisRow = true;
       } else {
-        unmatchedMinted += 1;
+        // Counted only once the whole row is settled (below): step 1 may still
+        // reassign it, and a row that ends up moved is not "left in place".
+        unmatchedThisRow = true;
       }
     }
 
@@ -284,9 +288,12 @@ export async function repairCompetitorAttribution(
             await run(env.DB, `UPDATE transactions SET filer_id = ? WHERE id = ?`, [newFilerId, row.id]);
           }
           reassigned += 1;
+          reassignedThisRow = true;
         }
       }
     }
+
+    if (unmatchedThisRow && !reassignedThisRow) unmatchedMinted += 1;
 
     // --- 2) crypto disclosures mis-typed as equity -----------------------
     const alreadyCrypto = (row.asset_type ?? '').trim().toUpperCase() === 'CT';
