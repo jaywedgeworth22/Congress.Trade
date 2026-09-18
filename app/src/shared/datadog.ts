@@ -92,9 +92,22 @@ export function resetDatadogForTests(): void {
 export async function tryInitDdTracer(backend: DatadogBackendConfig): Promise<DdTracer | null> {
   if (activeTracer) return activeTracer;
   try {
+    const proc = (globalThis as any).process;
+    const hostTag = backend.hostname
+      || proc?.env?.DD_HOSTNAME
+      || ((proc?.env?.COOLIFY_FQDN || proc?.env?.COOLIFY_RESOURCE_UUID) ? FLEET_DD_HOSTNAME : '');
+    if (hostTag && proc?.env) proc.env.DD_HOSTNAME = hostTag;
+    // Agentless dd-trace tags host from os.hostname() (the container id), not DD_HOSTNAME.
+    if (hostTag) {
+      try {
+        const os = await import('node:os');
+        os.hostname = () => hostTag;
+      } catch {
+        // Continue; host tag may stay the container id.
+      }
+    }
     const mod = await import('npm:dd-trace');
     const tracer = (mod.default || mod) as unknown as DdTracer;
-    const proc = (globalThis as any).process;
     if (proc?.env) {
       if (backend.agentUrl) {
         proc.env.DD_TRACE_AGENT_URL = backend.agentUrl;
@@ -105,11 +118,6 @@ export async function tryInitDdTracer(backend: DatadogBackendConfig): Promise<Dd
         proc.env.DD_TRACE_EXPERIMENTAL_EXPORTER = 'agentless';
       }
       proc.env.DD_SITE = backend.site;
-      // Host *tag*.  initOptions.hostname is the Agent address, not DD_HOSTNAME.
-      const hostTag = backend.hostname
-        || proc.env.DD_HOSTNAME
-        || ((proc.env.COOLIFY_FQDN || proc.env.COOLIFY_RESOURCE_UUID) ? FLEET_DD_HOSTNAME : '');
-      if (hostTag) proc.env.DD_HOSTNAME = hostTag;
     }
     const initOptions: Record<string, unknown> = {
       service: backend.service,
