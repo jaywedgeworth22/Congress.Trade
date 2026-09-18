@@ -329,6 +329,41 @@ final class CongressTradeTests: XCTestCase {
         XCTAssertEqual(decoded, filters, "Every documented SubscriptionFilters field must survive an encode/decode round trip")
     }
 
+    func testSubscriptionMemberSummaryNamesMembersAndFlagsUnmatchedEntries() throws {
+        // `GET /api/client/v1/subscriptions` adds memberLabels (filer id -> name) and
+        // unresolvedMembers (free text saved before names were resolved; board a6058af2).
+        let json = """
+        {"id":"sub_1","delivery":"sse","targetUrl":null,
+         "filters":{"members":["P000197","S000510","C001047","Nancy Pelosii"]},
+         "cursor":0,"active":true,"createdAt":"2026-01-01T00:00:00.000Z","hasSecret":true,
+         "memberLabels":{"P000197":"Nancy Pelosi","S000510":"Adam Smith","C001047":"Shelley Moore Capito"},
+         "unresolvedMembers":["Nancy Pelosii"]}
+        """
+        let sub = try JSONDecoder().decode(Subscription.self, from: Data(json.utf8))
+        XCTAssertEqual(
+            sub.memberSummary,
+            "Members: Nancy Pelosi, Adam Smith +1 more · Not matched: Nancy Pelosii (delete and recreate this delivery)"
+        )
+
+        // No members filter, or an old server that sends no labels, must not break decoding.
+        let plain = try JSONDecoder().decode(
+            Subscription.self,
+            from: Data("""
+            {"id":"sub_2","delivery":"sse","filters":{},"cursor":0,"active":true,
+             "createdAt":"2026-01-01T00:00:00.000Z","hasSecret":true}
+            """.utf8)
+        )
+        XCTAssertNil(plain.memberSummary)
+        let unlabeled = try JSONDecoder().decode(
+            Subscription.self,
+            from: Data("""
+            {"id":"sub_3","delivery":"sse","filters":{"members":["EXEC-FRANK-J-BISIGNANO"]},"cursor":0,
+             "active":true,"createdAt":"2026-01-01T00:00:00.000Z","hasSecret":true}
+            """.utf8)
+        )
+        XCTAssertEqual(unlabeled.memberSummary, "Members: EXEC-FRANK-J-BISIGNANO")
+    }
+
     func testSubscriptionFiltersDecodeDoesNotDropBackendOnlyFields() throws {
         // A subscription created elsewhere (e.g. the web/PWA client) with the
         // full filter set the backend documents in app/src/shared/types.ts.

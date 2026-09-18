@@ -13,6 +13,7 @@ import { getCurrentUserFromRequest } from '../auth/session.ts';
 import { resolveEntitlementAsync } from '../billing/entitlement.ts';
 import { normalizeTickerLogoSymbol } from '../ui/tickerLogos.ts';
 import { serveDocumentPdf } from '../delivery/rest.ts';
+import { describeSubscriptionMembers } from '../delivery/subscriptions.ts';
 import { redeemAppleEntitlementAnonymously } from './entitlements.ts';
 import {
   claimCommandResultSecret,
@@ -361,7 +362,8 @@ export function buildClientRouter(): Hono<{ Bindings: Env }> {
     try {
       const user = await requireUser(c);
       const subs = await listUserSubscriptions(c.env, user);
-      return c.json({ subscriptions: subs.map((sub) => publicSubscription(sub)) });
+      const memberInfo = await describeSubscriptionMembers(c.env, subs);
+      return c.json({ subscriptions: subs.map((sub) => publicSubscription(sub, false, memberInfo.get(sub.id))) });
     } catch (err) {
       const e = err as ClientInputError;
       return c.json({ error: e.message }, errorStatus(e));
