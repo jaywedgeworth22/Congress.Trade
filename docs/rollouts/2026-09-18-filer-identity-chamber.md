@@ -25,7 +25,7 @@ Automatic, on the next daily filer lane (`maybeRunDailyFilerJobs`, which runs `r
 - 58 filer rows change, 44 of them chamber corrections and 5 impossible resolutions fixed.
 - `MANUAL-*` after: 51 house with a party, 25 executive with no party, 4 still senate (Banks and Husted are real Senators; Sullivan merges away; one unresolved).
 - 21 alias tombstones: `MANUAL-BUCK`, `-COSTA`, `-ELVIRA`, `-FLEISHMANN`, `-GRIJALVA`, `-JORDAN`, `-KEAN`, `-LANGEVIN`, `-LOWENTHAL`, `-NICOLAS`, `-SCHRIER` into their `house-*` filers, `-SULLIVAN` into `senate-dan-sullivan`, `-CAWTHORN` and `-HOLLINGSWORTH` into their `house-*` filers, and `-BAILEY`, `-BISIGNANO`, `-BURGUM`, `-KRATSIOS`, `-KUPOR`, `-MCMAHON`, `-MCMASTER` into their `EXEC-*` twins (the `EXEC-*` id is canonical: it carries the curated title).
-- Not merged by the automatic passes and left for the repair route: `MANUAL-DELANEY` (mixed people, row-by-row), `MANUAL-WRIGHT` (joins `EXEC-CWRIGHT` once labelled executive, by the curated alias), `MANUAL-DUFFY`.
+- `MANUAL-WRIGHT` and `MANUAL-DUFFY` are absent from that list only because the sampling run had no payload evidence for them.  Their live payloads say `member_type: executive`, so on the real run they are labelled executive and merge into `EXEC-CWRIGHT` (through the curated alias, since "Christopher A Wright" and "Chris Wright" differ as name keys) and `EXEC-SEAN-DUFFY`.  `MANUAL-DELANEY` is left to the repair route: it fuses two people and can only be split row by row.
 
 Manual, after deploy (needs an admin token; nothing here is scheduled):
 
