@@ -226,10 +226,10 @@ describe('priceBenchmarkUsage', () => {
     });
   });
 
-  it('prices OpenRouter claude-opus-4.8 at the verified listed rate', () => {
+  it('prices OpenRouter claude-opus-5 at the verified listed rate', () => {
     const result = priceBenchmarkUsage({
       provider: 'openrouter',
-      model: 'anthropic/claude-opus-4.8',
+      model: 'anthropic/claude-opus-5',
       invoked: true,
       usage: { promptTokens: 1_000_000, completionTokens: 1_000_000 },
     });
@@ -401,11 +401,11 @@ describe('DEFAULT_CANDIDATES rate-card drift gate', () => {
 
   it('prices Grok 4.5 at OpenRouter $2/$6 rates (not the Grok 4.3 card)', () => {
     const below = priceBenchmarkUsage({
-      provider: 'openrouter', model: 'x-ai/grok-4.5', invoked: true,
+      provider: 'openrouter', model: 'x-ai/grok-4.6', invoked: true,
       usage: { promptTokens: 100_000, completionTokens: 1_000 },
     });
     const above = priceBenchmarkUsage({
-      provider: 'openrouter', model: 'x-ai/grok-4.5', invoked: true,
+      provider: 'openrouter', model: 'x-ai/grok-4.6', invoked: true,
       usage: { promptTokens: 300_000, completionTokens: 1_000 },
     });
     expect(below.costUsd).toBeCloseTo((100_000 * 2 + 1_000 * 6) / 1_000_000, 8);

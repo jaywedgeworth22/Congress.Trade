@@ -69,7 +69,7 @@ import { IngestRetryError } from '../ingestion/fetcher.ts';
  */
 export const OPENROUTER_GEMINI_FLASH = '~google/gemini-flash-latest';
 /** Pinned 3.7 batch/offline slug (the latest alias has no `:batch` variant). */
-export const OPENROUTER_GEMINI_FLASH_BATCH = 'google/gemini-3.7-flash:batch';
+export const OPENROUTER_GEMINI_FLASH_BATCH = 'google/gemini-3.8-flash:batch';
 const DEFAULT_MODEL = OPENROUTER_GEMINI_FLASH;
 
 function isOpenRouterGeminiFlashLatest(model: string): boolean {
@@ -79,7 +79,7 @@ function isOpenRouterGeminiFlashLatest(model: string): boolean {
 
 function isOpenRouterGemini37Flash(model: string): boolean {
   const base = model.trim().replace(/:batch$/i, '').replace(/^~/, '').toLowerCase();
-  return base === 'google/gemini-3.7-flash' || base === 'gemini-3.7-flash';
+  return base === 'google/gemini-3.8-flash' || base === 'gemini-3.8-flash';
 }
 
 /**
