@@ -51,6 +51,7 @@ name: Sentry CI Report
 # run and raises a Sentry issue on drift, so a rename cannot silently kill a
 # monitor the way "Shared package pin check" did between 2026-07-27 and
 # 2026-08-12:
+#   CI                       -> "23 * * * *"  (ci.yml, hourly backstop tick)
 #   Effort Issues Sync       -> "12 6 * * *"  (effort-issues-sync.yml, daily)
 #   Security                 -> "41 10 * * 1" (security.yml, Mondays)
 #   Shared Package Pin Check -> "0 13 * * 1"  (shared-package-pin-check.yml, Mondays)
