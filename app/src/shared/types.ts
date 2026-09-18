@@ -555,7 +555,7 @@ export interface Env {
   /** Vision/text LLM key (e.g. Gemini) for scanned-PDF extraction. */
   GEMINI_API_KEY?: string;
   GEMINI_RPM_LIMIT?: string;
-  /** Primary vision model override (defaults to 'gemini-3.7-flash'). */
+  /** Primary vision model override (defaults to 'gemini-3.8-flash'). */
   VISION_PRIMARY_MODEL?: string;
   /** Secondary arbitration extractor key. Presence enables arbitration. */
   ARBITRATION_API_KEY?: string;
@@ -567,7 +567,7 @@ export interface Env {
   OPENAI_API_KEY?: string;
   /** Mistral API key — `mistral-ocr-latest` candidate in the extractor bake-off. */
   MISTRAL_API_KEY?: string;
-  /** xAI API key — Grok (Files API → grok-4.3) candidate in the extractor bake-off. */
+  /** xAI API key — Grok (Files API → grok-4.6) candidate in the extractor bake-off. */
   XAI_API_KEY?: string;
   /** OpenRouter API key — the unified transport for ALL live LLM extraction. */
   OPENROUTER_API_KEY?: string;

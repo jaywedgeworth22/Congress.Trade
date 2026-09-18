@@ -1896,7 +1896,7 @@ export async function resolveAgreementEnv(env: Env): Promise<AgreementEnv> {
   ])) as AgreementEnv;
 }
 
-const DEFAULT_MODEL_C = 'openrouter:x-ai/grok-4.5';
+const DEFAULT_MODEL_C = 'openrouter:x-ai/grok-4.6';
 const DEFAULT_MODEL_D = 'openrouter:~google/gemini-flash-latest';
 const DEFAULT_MODEL_E = 'openrouter:anthropic/claude-haiku-4.5';
 

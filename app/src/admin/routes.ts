@@ -6640,7 +6640,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         ? body.model
         : provider === 'anthropic' ? 'claude-sonnet-5'
         : provider === 'openai' ? 'gpt-5.6-terra'
-        : provider === 'xai' ? 'grok-4.3'
+        : provider === 'xai' ? 'grok-4.6'
         : 'mistral-ocr-latest';
     if (isRetiredDisclosureCandidate({ provider, model })) {
       return c.json({ error: 'GPT-4o is retired for new disclosure extraction; use gpt-5.6-terra, gpt-5.6-luna, or gpt-5.6-sol' }, 400);
