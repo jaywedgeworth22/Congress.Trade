@@ -61,6 +61,18 @@ describe('buildSummaryQuery', () => {
   });
 });
 
+describe('buildSummaryQuery equity-like coverage (16b46688)', () => {
+  it('widens the equity denominator to public_equity + unknown so ticker-less equities stay visible', () => {
+    const q = buildSummaryQuery({ window: 'all' });
+    expect(q.sql).toContain("IN ('public_equity', 'unknown') THEN 1 ELSE 0 END) AS equity_like_trade_count");
+    expect(q.sql).toContain("IN ('public_equity', 'unknown') AND");
+    expect(q.sql).toContain('AS resolved_equity_like_ticker_count');
+    // The narrow public_equity-only counters remain for the back-compat field.
+    expect(q.sql).toContain('AS equity_trade_count');
+    expect(q.sql).toContain('AS resolved_equity_ticker_count');
+  });
+});
+
 describe('buildTickerLeaderboardQuery', () => {
   it('excludes null tickers, groups by ticker, and joins the securities master', () => {
     const q = buildTickerLeaderboardQuery({ window: 'all' });
@@ -382,8 +394,13 @@ describe('buildMemberPerformanceLeaderboardQuery', () => {
     expect(q.sql).toContain('p.price_at_filing');
     expect(q.sql).toContain('p.spx_at_filing');
     expect(q.sql).not.toContain('price_at_trade');
-    // Latest SPX brought in via a one-row cross join.
-    expect(q.sql).toContain('SELECT close AS spx_now FROM spx_eod ORDER BY date DESC LIMIT 1');
+    // Exit legs share ONE as-of date per ticker: the S&P close on or before the
+    // ticker's own current_price_date (board row 6c05e09b), not a single latest close.
+    expect(q.sql).toContain('WITH px AS MATERIALIZED (');
+    expect(q.sql).toContain('SELECT s.close FROM spx_eod s WHERE s.date <= r.current_price_date ORDER BY s.date DESC LIMIT 1');
+    expect(q.sql).toContain('JOIN px ON px.ticker = t.ticker');
+    expect(q.sql).toContain('px.spx_now / p.spx_at_filing');
+    expect(q.sql).not.toContain('CROSS JOIN sx');
     expect(q.sql).toContain("t.tx_type IN ('B', 'P')");
     expect(q.sql).toContain('t.is_option = 0');
     expect(q.sql).toContain("julianday('now') - julianday(COALESCE(f.filed_date, f.first_seen_at, t.tx_date))");

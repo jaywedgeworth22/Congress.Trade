@@ -51,6 +51,14 @@ import {
 import { resolveContinuousTicker } from '@jaywedgeworth22/congress-trading-shared';
 import { flushDeliveryOutbox } from '../delivery/outbox.ts';
 import { deprecatePredecessorFilingTransactions } from './agreement.ts';
+import { stripOgeRowIndexes } from './ogeRowIndex.ts';
+import {
+  addIssuerName,
+  emptyIssuerNameIndex,
+  loadIssuerNameIndex,
+  resolveTickerByIssuerName,
+  type IssuerNameIndex,
+} from '../enrichment/nameTickerBackfill.ts';
 import { parseAmountRange } from './amounts.ts';
 import { canonicalizeTxType } from '../shared/txType.ts';
 import {
@@ -292,13 +300,17 @@ export async function recomputeTransactions(
 ): Promise<FlaggedTx[]> {
   const nowIso = new Date().toISOString();
   const [resolver, nameIndex] = await Promise.all([loadResolver(env), loadNameIndex(env)]);
-  return parsed.map((p, rowIndex) =>
+  // An executive 278-T's "#" column arrives glued onto the asset name on the
+  // scanned path ("3641 Microsoft Corp. Com"); strip it before the resolver sees
+  // the name, when the filing itself shows the pattern (board row 3d31c7b9).
+  const rows = filing.chamber === 'executive' ? stripOgeRowIndexes(parsed) : parsed;
+  return rows.map((p, rowIndex) =>
     buildTransaction(p, filing, resolver, nowIso, rowIndex, sourceOverride, nameIndex),
   );
 }
 
 /** securities_master row shape. `aliases` is a JSON string array. */
-interface SecRow {
+export interface SecRow {
   ticker: string;
   name: string | null;
   aliases: string | null;
@@ -1009,7 +1021,10 @@ export async function loadResolver(env: Env): Promise<TickerResolver> {
     return resolverCache.resolver;
   }
   const secRows = await all<SecRow>(env.DB, 'SELECT ticker, name, aliases FROM securities_master');
-  const resolver = buildResolver(secRows);
+  // securities_ref carries the enriched, current company names (94%+ of tickered
+  // trades resolve to one); it is what lets a no-ticker description resolve by issuer name.
+  const issuerIndex = await loadIssuerNameIndex(env);
+  const resolver = buildResolver(secRows, issuerIndex);
   resolverCache = { loadedAt: now, resolver };
   return resolver;
 }
@@ -1019,10 +1034,14 @@ export async function loadResolver(env: Env): Promise<TickerResolver> {
  *   1. exact ticker symbol match (case-insensitive),
  *   2. exact alias match (alias JSON array, case-insensitive),
  *   3. exact security name match (case-insensitive).
+ *   4. (no ticker supplied only) unique issuer-name match through the
+ *      legal-form/descriptor-stripped index in enrichment/nameTickerBackfill.ts
+ *      — "Uber Technologies Inc. CMN" -> UBER (board row 16b46688).
  * Returns the canonical ticker, or null when nothing matches.
  */
-function buildResolver(rows: SecRow[]): TickerResolver {
+export function buildResolver(rows: SecRow[], issuerIndex?: IssuerNameIndex): TickerResolver {
   const byTicker = new Map<string, string>();
+  const issuerNames = issuerIndex ?? emptyIssuerNameIndex();
   const byAlias = new Map<string, string>();
   const byName = new Map<string, string>();
   const bySimplifiedName = new Map<string, string>();
@@ -1032,6 +1051,7 @@ function buildResolver(rows: SecRow[]): TickerResolver {
     if (!canonical) continue;
     byTicker.set(canonical, canonical);
     if (r.name) {
+      addIssuerName(issuerNames, canonical, r.name);
       byName.set(r.name.trim().toLowerCase(), canonical);
       const simplified = simplifyCompanyName(r.name);
       if (simplified && !bySimplifiedName.has(simplified)) {
@@ -1069,6 +1089,13 @@ function buildResolver(rows: SecRow[]): TickerResolver {
     if (simplifiedName && bySimplifiedName.has(simplifiedName)) return bySimplifiedName.get(simplifiedName)!;
     if (name && byAlias.has(name)) return byAlias.get(name)!;
     if (name && byName.has(name)) return byName.get(name)!;
+    // No ticker supplied: resolve the description by issuer name.  Only ever when
+    // there is NO ticker input — a row that carries its own (even unlisted)
+    // symbol keeps the deterministic path below and is never re-pointed by name.
+    if (!t) {
+      const byIssuer = resolveTickerByIssuerName(issuerNames, assetName);
+      if (byIssuer) return byIssuer;
+    }
     // Also try the raw ticker as an alias (sometimes asset name lands in ticker).
     const tl = t.toLowerCase();
     if (tl && byAlias.has(tl)) return byAlias.get(tl)!;

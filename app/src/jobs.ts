@@ -686,11 +686,39 @@ export async function maybeRunDailyFilerJobs(env: Env, now = new Date()): Promis
   if (await dailyBudgetExceeded(env, 'ticker backfill')) return 'budget';
 
   try {
-    await runTickerBackfill(env, 5000);
+    // Cursor-paged: most ticker-less rows are bonds/funds/private assets that never
+    // resolve, so an unpaged "lowest 5000 ids" scan would re-read the same rows
+    // forever and never reach the rest (board row 16b46688).  The cursor advances
+    // through the whole table over successive days, then wraps.
+    const cursor = await readTickerBackfillCursor(env);
+    const r = await runTickerBackfill(env, TICKER_BACKFILL_BATCH, { afterId: cursor });
+    const next = r && r.scanned >= TICKER_BACKFILL_BATCH && r.lastId ? r.lastId : '';
+    await writeTickerBackfillCursor(env, next);
+    if (r) console.log('ticker backfill:', JSON.stringify({ scanned: r.scanned, resolved: r.resolved, wrapped: next === '' }));
   } catch (err) {
     console.warn('ticker backfill failed:', (err as Error).message);
   }
   return 'ran';
+}
+
+const TICKER_BACKFILL_BATCH = 5000;
+const TICKER_BACKFILL_CURSOR_KEY = 'jobs:ticker-backfill:cursor';
+
+async function readTickerBackfillCursor(env: Env): Promise<string> {
+  try {
+    return (await env.CONFIG_KV.get(TICKER_BACKFILL_CURSOR_KEY)) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+async function writeTickerBackfillCursor(env: Env, cursor: string): Promise<void> {
+  try {
+    if (cursor) await env.CONFIG_KV.put(TICKER_BACKFILL_CURSOR_KEY, cursor, { expirationTtl: 30 * 86400 });
+    else await env.CONFIG_KV.delete(TICKER_BACKFILL_CURSOR_KEY);
+  } catch {
+    // Best effort: a lost cursor just restarts the sweep from the beginning.
+  }
 }
 
 /**

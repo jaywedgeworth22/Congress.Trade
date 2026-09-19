@@ -3508,6 +3508,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
         <summary class="tf-h">Top Performers <span class="info-tip" tabindex="0" aria-label="Measured from each trade's public filing date to now.  5+ buys, stocks only, +/-200% cap per trade." title="Measured from each trade's public filing date to now.  5+ buys, stocks only, +/-200% cap per trade.">ⓘ</span><span class="fold-cue" aria-hidden="true"></span></summary>
         <p class="sub">Politicians whose disclosed <strong>buys</strong> beat the S&amp;P 500 after the trade was <strong>disclosed</strong>, shown as an <strong>average excess return</strong> (matching the benchmark = 0%).</p>
         <p class="sub">5+ buys&nbsp;&nbsp; &bull;&nbsp;&nbsp;&nbsp;stocks only&nbsp;&nbsp; &bull;&nbsp;&nbsp;&nbsp;+/-200% cap per trade</p>
+        <p class="sub" id="trPerformersAsOf" aria-live="polite"></p>
         <div class="table-wrap"><table><tbody id="trPerformers"></tbody></table></div>
       </details>
     </div>
@@ -11575,10 +11576,19 @@ function pctSigned(n) {
   var v = Number(n) * 100, cls = v > 0 ? 'pos' : v < 0 ? 'neg' : '';
   return '<span class="net ' + cls + '">' + (v > 0 ? '+' : '') + v.toFixed(1) + '%</span>';
 }
+/* "Aug 3, 2026" from an ISO YYYY-MM-DD date, without a timezone round-trip. */
+function fmtAsOf(iso) {
+  var m = /^(\\d{4})-(\\d{2})-(\\d{2})/.exec(String(iso || ''));
+  if (!m) return '';
+  var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return MONTHS[Number(m[2]) - 1] + ' ' + Number(m[3]) + ', ' + m[1];
+}
 function loadTrPerformers() {
   var body = el('trPerformers');
   body.innerHTML = skRows(2, 6);
   aGet('member-performance?' + trParams() + '&limit=15').then(function (d) {
+    var asOf = el('trPerformersAsOf');
+    if (asOf) asOf.textContent = d && d.pricesAsOf ? 'Prices as of ' + fmtAsOf(d.pricesAsOf) + '.  Excess return is measured to that date.' : '';
     var rows = d.members || [];
     if (!rows.length) { body.innerHTML = stateRow(2, 'Not enough priced, filing-anchored buys to rank yet — this fills in as the price cache backfills.'); return; }
     body.innerHTML = rows.map(function (r, i) {
@@ -12523,6 +12533,7 @@ function memberPerfHtml(d) {
     ) +
     '<div class="note" style="margin-top:4px">Buys only · observational, not a forecast' +
       (buyCount != null ? ' · ' + fmtCount(buyCount) + ' disclosed buys' + horizonPhrase : '') +
+      (d.pricesAsOf ? ' · Prices as of ' + esc(fmtAsOf(d.pricesAsOf)) : '') +
       '</div>';
 }
 

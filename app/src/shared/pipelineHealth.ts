@@ -130,6 +130,14 @@ export interface PipelineSignals {
   } | null;
   /** True when a residential proxy is configured (retires the legacy scout relay). */
   residentialProxyConfigured?: boolean;
+  /**
+   * Newest daily price bar we hold for any ticker (MAX securities_ref.latest_price_date,
+   * an indexed column — price_eod itself is 1.4M rows).  Absent = the signal builder
+   * predates this check (skipped); null = collection failed or no prices at all (unknown).
+   */
+  priceEodLatestDate?: string | null;
+  /** Newest S&P 500 daily bar (MAX spx_eod.date).  Same absent/null semantics. */
+  spxEodLatestDate?: string | null;
 }
 
 export interface PipelineThresholds {
@@ -146,6 +154,8 @@ export interface PipelineThresholds {
   latencyProviderSilenceHours: number;
   /** Max minutes since the last Senate-relay /health probe before the check goes stale. */
   senateRelayProbeMaxAgeMinutes: number;
+  /** Max trading days the newest price/S&P bar may lag before price_freshness degrades (default 3). */
+  priceMaxAgeTradingDays?: number;
 }
 
 export const DEFAULT_PIPELINE_THRESHOLDS: PipelineThresholds = {
@@ -169,7 +179,31 @@ export const DEFAULT_PIPELINE_THRESHOLDS: PipelineThresholds = {
   latencyObservationMaxAgeHours: 24,
   latencyProviderSilenceHours: 48,
   senateRelayProbeMaxAgeMinutes: 20,
+  priceMaxAgeTradingDays: 3,
 };
+
+/**
+ * Weekdays strictly between `latestIso` (a YYYY-MM-DD bar date) and today (UTC).
+ * Today itself is excluded because today's bar does not exist until after the
+ * close, so a Friday bar read on Monday is 0 trading days behind and read on
+ * Tuesday is 1.  Holidays are not modelled (a holiday adds at most one day of
+ * slack, well inside the threshold).  Returns null for an unparseable date.
+ */
+export function tradingDaysBehind(latestIso: string, nowMs: number): number | null {
+  const latest = Date.parse(`${latestIso.slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(latest)) return null;
+  const today = Date.UTC(
+    new Date(nowMs).getUTCFullYear(),
+    new Date(nowMs).getUTCMonth(),
+    new Date(nowMs).getUTCDate(),
+  );
+  let count = 0;
+  for (let d = latest + 86_400_000; d < today; d += 86_400_000) {
+    const dow = new Date(d).getUTCDay();
+    if (dow !== 0 && dow !== 6) count += 1;
+  }
+  return count;
+}
 
 const STATUS_WEIGHT: Record<PipelineStatus, number> = {
   ok: 0,
@@ -620,6 +654,54 @@ export function evaluatePipelineSignals(
     }
   }
 
+  // Price / S&P cache freshness (board row 6c05e09b).  Every "excess vs S&P" figure
+  // is current_price against the latest S&P close, so a stalled price cache turns
+  // into confidently wrong performance numbers with nothing alerting: prod sat
+  // frozen at 2026-08-03 (S&P) / 2026-07-24 (NVDA) for 46 days.  Degraded, not
+  // stalled: the site still serves; and it is deliberately NOT in the phone-page
+  // set (LIVENESS_ALARM_CHECK_IDS) until the stale cache is repaired.
+  if (s.priceEodLatestDate !== undefined || s.spxEodLatestDate !== undefined) {
+    const maxDays = t.priceMaxAgeTradingDays ?? 3;
+    const legs: Array<{ label: string; date: string | null | undefined }> = [
+      { label: 'price cache', date: s.priceEodLatestDate },
+      { label: 'S&P 500 series', date: s.spxEodLatestDate },
+    ];
+    const known = legs.filter((l) => l.date !== undefined);
+    const stale: string[] = [];
+    let worstBehind = 0;
+    let anyUnknown = false;
+    for (const l of known) {
+      if (l.date === null || l.date === undefined) {
+        anyUnknown = true;
+        continue;
+      }
+      const behind = tradingDaysBehind(l.date, nowMs);
+      if (behind === null) {
+        anyUnknown = true;
+        continue;
+      }
+      worstBehind = Math.max(worstBehind, behind);
+      if (behind > maxDays) stale.push(`${l.label} newest bar ${l.date.slice(0, 10)} (${behind} trading days behind)`);
+    }
+    if (stale.length > 0) {
+      checks.push({
+        id: 'price_freshness',
+        status: 'degraded',
+        detail: `${stale.join('; ')}; threshold ${maxDays} — excess-vs-S&P and current prices are stale`,
+        value: worstBehind,
+      });
+    } else if (anyUnknown) {
+      checks.push({ id: 'price_freshness', status: 'unknown', detail: 'Price cache freshness uncollected', value: null });
+    } else {
+      checks.push({
+        id: 'price_freshness',
+        status: 'ok',
+        detail: `Price and S&P series within ${maxDays} trading days (worst ${worstBehind})`,
+        value: worstBehind,
+      });
+    }
+  }
+
   for (const c of checks) {
     overall = worstStatus(overall, c.status);
   }
@@ -652,6 +734,19 @@ export async function checkPipelineHealth(env: Env, now = new Date()): Promise<P
   let dishonestResolutionCount: number | null = null;
   let orphanedNeedsReviewCount: number | null = null;
   let strandedFilings: number | null = null;
+  let priceEodLatestDate: string | null = null;
+  let spxEodLatestDate: string | null = null;
+
+  try {
+    // securities_ref.latest_price_date is indexed (migration 0043); scanning price_eod (1.4M rows) for MAX(date) is not.
+    const res = await get<{ d: string | null }>(env.DB, 'SELECT MAX(latest_price_date) AS d FROM securities_ref');
+    priceEodLatestDate = res?.d ?? null;
+  } catch {}
+
+  try {
+    const res = await get<{ d: string | null }>(env.DB, 'SELECT MAX(date) AS d FROM spx_eod');
+    spxEodLatestDate = res?.d ?? null;
+  } catch {}
 
   try {
     const res = await get<{ n: number; oldest: string | null }>(
@@ -908,6 +1003,8 @@ export async function checkPipelineHealth(env: Env, now = new Date()): Promise<P
     latencyProviders,
     senateRelay,
     residentialProxyConfigured,
+    priceEodLatestDate,
+    spxEodLatestDate,
   };
 
   const evaluated = evaluatePipelineSignals(signals, nowMs);
