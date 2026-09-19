@@ -599,7 +599,9 @@ were verified live on 2026-08-11 and pinned by
   2026-08-10) is a curated agency/position label for executive-branch filers
   (`filerId` starting `EXEC-`) — e.g. `"Treasury Secretary"` — sourced from
   `shared/executiveTitles.ts`; `null` for House/Senate filers, and
-  `"Executive Branch"` for an `EXEC-*` filer with no curated entry. The same
+  `"Executive Branch"` for an `EXEC-*` filer with no curated entry, and for any
+  other filer filed under `chamber: "executive"` (a competitor-minted `MANUAL-*`
+  official; no title is guessed). The same
   `title` field is on the `member.profile` object from `GET
   /api/client/v1/member/:memberIdOrName` and on `GET /api/analytics/member/
   :filerId`'s `profile`.
