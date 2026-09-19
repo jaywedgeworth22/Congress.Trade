@@ -4094,6 +4094,7 @@ ${speedProofSectionHtml(true)}
       </label>
     </div>
     <p class="trial-note" id="pricingTrialNote">2-week free trial. No charge today.</p>
+    <p class="note" id="pricingPremiumNote" style="text-align:center" hidden></p>
     <button class="btn" style="width:100%;padding:11px" id="subscribeBtn" onclick="startCheckout()">Start Free Trial</button>
     <p class="note" id="pricingMsg"></p>
   </div>
@@ -12702,6 +12703,10 @@ var ME = {
 var selectedPlan = 'monthly';
 var checkoutRequestId = null;
 var portalRequestId = null;
+/* Sticky refusal from POST /billing/checkout's duplicate-subscription guard
+   (409 already_subscribed).  Held across the loadMe() repaint that follows, so
+   the reason survives; cleared when the modal is opened afresh. */
+var pricingBlockedMsg = '';
 
 function isPremium() { return !!(ME.entitlement && ME.entitlement.premium); }
 function checkoutConfigured() { return !!(ME.billing && ME.billing.checkoutConfigured); }
@@ -13015,24 +13020,47 @@ function pricingCopy(intent) {
     ],
   };
 }
+/* Copy for the already-Premium state of the pricing modal.  Sentence gaps are
+   NBSP entities, not two ASCII spaces, because this is rendered HTML. */
+function pricingPremiumCopy() {
+  return (ME.entitlement && ME.entitlement.source === 'apple')
+    ? 'You have Premium through the App Store.&nbsp; Manage it in your Apple subscriptions.'
+    : 'You have Premium.&nbsp; Manage your plan in the billing portal.';
+}
 function applyPricingAvailability() {
   var ready = !!ME.billingReady;
-  var available = ready && checkoutConfigured();
+  var premium = ready && isPremium();
+  /* Never offer a second purchase to someone who already pays.  A Stripe
+     Checkout Session on an existing customer opens a SECOND subscription, and
+     an Apple IAP subscriber buying here would be billed by Apple and Stripe at
+     once.  POST /billing/checkout returns 409 already_subscribed for the same
+     reason; pricingBlocked carries that refusal (which also covers past_due,
+     where a live subscription exists but the entitlement has lapsed). */
+  var blocked = !!pricingBlockedMsg;
+  var manage = premium || blocked;
+  var available = ready && checkoutConfigured() && !manage;
   if (el('pricingPlans')) el('pricingPlans').hidden = !available;
   if (el('pricingTrialNote')) el('pricingTrialNote').hidden = !available;
+  if (el('pricingPremiumNote')) {
+    el('pricingPremiumNote').hidden = !premium;
+    if (premium) el('pricingPremiumNote').innerHTML = pricingPremiumCopy();
+  }
   if (el('subscribeBtn')) {
-    el('subscribeBtn').disabled = !available;
-    el('subscribeBtn').textContent = !ready ? 'Checking Checkout…' : (available ? 'Start Free Trial' : 'Billing Unavailable');
+    el('subscribeBtn').disabled = !available && !manage;
+    el('subscribeBtn').textContent = manage
+      ? 'Manage Subscription'
+      : (!ready ? 'Checking Checkout…' : (available ? 'Start Free Trial' : 'Billing Unavailable'));
   }
   if (el('pricingMsg')) {
-    el('pricingMsg').textContent = !ready
+    el('pricingMsg').textContent = pricingBlockedMsg || (!ready
       ? 'Checking whether Premium checkout is ready…'
-      : (available ? '' : 'Premium checkout is not available yet.');
+      : (manage || available ? '' : 'Premium checkout is not available yet.'));
   }
 }
 function openPricing(intent) {
   focusTrapReturnEl = document.activeElement;
   closeAcctMenu();
+  pricingBlockedMsg = '';
   pricingIntent = intent || 'default';
   var copy = pricingCopy(pricingIntent);
   if (el('pricingTitle')) el('pricingTitle').textContent = copy.title;
@@ -13074,6 +13102,10 @@ function selectPlan(p) {
   if (ar) ar.checked = selectedPlan === 'annual';
 }
 function startCheckout() {
+  /* Already paying (or a live subscription the server refused to duplicate) —
+     send them to management instead of opening a second subscription.  Apple
+     subscribers land on the App Store, Stripe ones on the billing portal. */
+  if (isPremium() || pricingBlockedMsg) { closePricing(); manageBilling(); return; }
   if (!checkoutConfigured()) {
     el('pricingMsg').textContent = 'Premium checkout is not available yet.';
     return;
@@ -13093,6 +13125,15 @@ function startCheckout() {
       // Preserve the key across ambiguous failures so retry cannot create a
       // second Stripe write. Selecting a different plan starts a new operation.
       if (res.status === 401) { closePricing(); openLogin(); return; }
+      if (res.status === 409) {
+        /* Duplicate-subscription guard: our ME snapshot was stale (another tab,
+           an iOS purchase, or a webhook that landed since sign-in).  Repaint
+           from the server rather than trusting the local copy. */
+        pricingBlockedMsg = (res.j && res.j.message) || 'You already have a Premium subscription.';
+        applyPricingAvailability();
+        loadMe();
+        return;
+      }
       el('pricingMsg').textContent = (res.j && res.j.error) || 'Could not start checkout.';
       if (btn) btn.disabled = false;
     })
