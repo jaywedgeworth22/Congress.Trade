@@ -433,6 +433,21 @@ describe('gemini37FlashProviderPreference', () => {
     });
   });
 
+  // Regression guard for sentry[bot] review on #2529: the provider-preference
+  // function must recognise every spelling the production caller can pass
+  // (OpenRouter forwarders occasionally normalise away the `google/` prefix;
+  // users can paste the slug with a leading `~`; a future caller may pass the
+  // bare slug from a config var). All of these must route through the
+  // 75%-off Vertex endpoint, not the 50%-off AI Studio default.
+  it('recognises every spelling of gemini-3.8-flash and routes to Vertex', () => {
+    const expected = { order: ['Google'], allow_fallbacks: true };
+    expect(gemini37FlashProviderPreference('google/gemini-3.8-flash')).toEqual(expected);
+    expect(gemini37FlashProviderPreference('~google/gemini-3.8-flash')).toEqual(expected);
+    expect(gemini37FlashProviderPreference('gemini-3.8-flash')).toEqual(expected);
+    expect(gemini37FlashProviderPreference('  google/gemini-3.8-flash  ')).toEqual(expected);
+    expect(gemini37FlashProviderPreference('GOOGLE/GEMINI-3.8-FLASH')).toEqual(expected);
+  });
+
   it('does not pin other models', () => {
     expect(gemini37FlashProviderPreference('anthropic/claude-sonnet-5')).toEqual({});
     expect(gemini37FlashProviderPreference('google/gemini-3.5-flash-lite')).toEqual({});
