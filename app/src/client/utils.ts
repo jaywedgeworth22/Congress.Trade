@@ -381,6 +381,6 @@ export function memberProfile(row: MemberProfileRow | null, id: string) {
     photoUrl: profilePhotoUrl(row),
     // Curated agency/position label for executive-branch filers (see
     // shared/executiveTitles.ts); null for House/Senate filers.
-    title: executiveTitleFor(row.bioguide_id),
+    title: executiveTitleFor(row.bioguide_id, row.chamber),
   };
 }

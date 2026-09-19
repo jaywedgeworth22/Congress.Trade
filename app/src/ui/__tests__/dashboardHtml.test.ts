@@ -690,6 +690,88 @@ describe('DASHBOARD_HTML', () => {
     expect(DASHBOARD_HTML).toContain('applyPricingAvailability()');
   });
 
+  // ---- duplicate-subscription guard (pricing modal) ------------------------
+  // Stripe opens a SECOND subscription on a customer that already has one, so
+  // every route into the pricing modal while Premium (/pricing, ?pricing=1, the
+  // footer link, the PDF redirect) was a double-billing hole. POST
+  // /billing/checkout returns 409 already_subscribed; this is the surface half.
+  describe('pricing modal duplicate-subscription guard', () => {
+    interface FakeNode { hidden: boolean; disabled: boolean; textContent: string; innerHTML: string }
+
+    function runApplyPricingAvailability(state: {
+      billingReady?: boolean;
+      premium?: boolean;
+      source?: string | null;
+      checkoutConfigured?: boolean;
+      blocked?: string;
+    }): Record<string, FakeNode> {
+      const copy = DASHBOARD_HTML.match(/function pricingPremiumCopy\(\) \{[\s\S]*?\n\}/);
+      const apply = DASHBOARD_HTML.match(/function applyPricingAvailability\(\) \{[\s\S]*?\n\}/);
+      if (!copy || !apply) throw new Error('pricing availability functions were not found in DASHBOARD_HTML');
+      const nodes: Record<string, FakeNode> = {};
+      for (const id of ['pricingPlans', 'pricingTrialNote', 'pricingPremiumNote', 'subscribeBtn', 'pricingMsg']) {
+        nodes[id] = { hidden: false, disabled: false, textContent: '', innerHTML: '' };
+      }
+      new Function(
+        'ME', 'el', 'isPremium', 'checkoutConfigured', 'pricingBlockedMsg',
+        `${copy[0]}\n${apply[0]}\napplyPricingAvailability();`,
+      )(
+        { billingReady: state.billingReady !== false, entitlement: { premium: !!state.premium, source: state.source ?? null } },
+        (id: string) => nodes[id],
+        () => !!state.premium,
+        () => state.checkoutConfigured !== false,
+        state.blocked ?? '',
+      );
+      return nodes;
+    }
+
+    it('replaces the plan grid with Manage Subscription for a Premium (Stripe) user', () => {
+      const n = runApplyPricingAvailability({ premium: true, source: 'stripe' });
+      expect(n.pricingPlans.hidden).toBe(true);
+      expect(n.pricingTrialNote.hidden).toBe(true);
+      expect(n.pricingPremiumNote.hidden).toBe(false);
+      expect(n.pricingPremiumNote.innerHTML).toContain('You have Premium.');
+      expect(n.pricingPremiumNote.innerHTML).toContain('billing portal');
+      expect(n.subscribeBtn.textContent).toBe('Manage Subscription');
+      expect(n.subscribeBtn.disabled).toBe(false);
+      expect(n.pricingMsg.textContent).toBe('');
+    });
+
+    it('points an Apple IAP subscriber at the App Store, not a second Stripe purchase', () => {
+      const n = runApplyPricingAvailability({ premium: true, source: 'apple' });
+      expect(n.pricingPlans.hidden).toBe(true);
+      expect(n.pricingPremiumNote.innerHTML).toContain('App Store');
+      expect(n.pricingPremiumNote.innerHTML).toContain('Apple subscriptions');
+      expect(n.subscribeBtn.textContent).toBe('Manage Subscription');
+    });
+
+    it('still offers the plan grid to a non-Premium visitor', () => {
+      const n = runApplyPricingAvailability({ premium: false });
+      expect(n.pricingPlans.hidden).toBe(false);
+      expect(n.pricingTrialNote.hidden).toBe(false);
+      expect(n.pricingPremiumNote.hidden).toBe(true);
+      expect(n.subscribeBtn.textContent).toBe('Start Free Trial');
+      expect(n.subscribeBtn.disabled).toBe(false);
+    });
+
+    it('keeps the server 409 reason visible through the loadMe repaint', () => {
+      const n = runApplyPricingAvailability({ premium: false, blocked: 'You already have Premium through the App Store.' });
+      expect(n.pricingMsg.textContent).toBe('You already have Premium through the App Store.');
+      expect(n.pricingPlans.hidden).toBe(true);
+      expect(n.subscribeBtn.textContent).toBe('Manage Subscription');
+    });
+
+    it('short-circuits startCheckout and handles 409 already_subscribed', () => {
+      // Never POST a second checkout from a client that already knows it pays.
+      expect(DASHBOARD_HTML).toContain('if (isPremium() || pricingBlockedMsg) { closePricing(); manageBilling(); return; }');
+      // Server-side refusal: keep the reason, then re-sync from /auth/me.
+      expect(DASHBOARD_HTML).toContain('if (res.status === 409) {');
+      expect(DASHBOARD_HTML).toContain("pricingBlockedMsg = (res.j && res.j.message) || 'You already have a Premium subscription.'");
+      // A fresh open must not inherit a previous refusal.
+      expect(DASHBOARD_HTML).toContain("pricingBlockedMsg = '';");
+    });
+  });
+
   it('keeps Billing Portal management independent from checkout readiness', () => {
     expect(DASHBOARD_HTML).toContain('function portalConfigured()');
     expect(DASHBOARD_HTML).toContain('function hasBillingAccount()');
