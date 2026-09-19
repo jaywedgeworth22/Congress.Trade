@@ -96,7 +96,8 @@ export interface CandidateInvocation {
  * OpenRouter vision adapter (openRouterVision.ts) special-cases it as the
  * mistral-ocr file-parser plugin, so it MUST stay this exact slug. Every other openrouter slug was verified LIVE
  * against the OpenRouter models API (2026-07-16 for the pre-existing set; claude-haiku-4.5
- * verified 2026-07-17, anthropic/claude-opus-4.8 verified 2026-07-19).
+ * verified 2026-07-17, anthropic/claude-opus-4.8 verified 2026-07-19; claude-opus-5,
+ * x-ai/grok-4.6, google/gemini-3.8-flash verified 2026-09-18).
  * openrouter/auto and the higher-tier GPT-5.6 models (terra-pro, sol) were moved to
  * NON_OFFERED_CANDIDATES. Note claude-haiku-4.5 uses a DOT — `anthropic/claude-haiku-4-5`
  * (dash) does not exist on OpenRouter. Slugs confirmed absent from the live API
@@ -104,8 +105,9 @@ export interface CandidateInvocation {
  * mistral-large-2411, grok-2-vision-1212, qwen-2.5-vl-72b:free, qwen-max, yi-large, kimi-chat,
  * minimax-hep-lite, deepseek-chat/-coder) must never reappear — every benchmark
  * cell for a dead slug can only fail. `~google/gemini-flash-latest` is the
- * live OpenRouter Flash seat (currently Gemini 3.7).  `google/gemini-3.7-flash`
- * stays offered as the pinned generation.
+ * live OpenRouter Flash seat (currently Gemini 3.8).  `google/gemini-3.8-flash`
+ * stays offered as the pinned generation (bumped from 3.7 2026-09-18: identical
+ * $0.75/$3.75 per-M price and 1.05M context, so 3.8 strictly dominates the older pin).
  */
 export const DEFAULT_CANDIDATES: BakeoffCandidate[] = [
   // Mistral OCR via the OpenRouter mistral-ocr file-parser plugin (see
@@ -116,8 +118,8 @@ export const DEFAULT_CANDIDATES: BakeoffCandidate[] = [
   { provider: 'openrouter', model: 'openai/gpt-5.6-luna' },
   { provider: 'openrouter', model: 'anthropic/claude-sonnet-5' },
   { provider: 'openrouter', model: 'anthropic/claude-haiku-4.5' },
-  { provider: 'openrouter', model: 'anthropic/claude-opus-4.8' },
-  { provider: 'openrouter', model: 'x-ai/grok-4.5' },
+  { provider: 'openrouter', model: 'anthropic/claude-opus-5' },
+  { provider: 'openrouter', model: 'x-ai/grok-4.6' },
   { provider: 'openrouter', model: 'deepseek/deepseek-v4-pro' },
   { provider: 'openrouter', model: 'deepseek/deepseek-v4-flash' },
   { provider: 'openrouter', model: 'qwen/qwen3-vl-30b-a3b-instruct' },
@@ -125,7 +127,7 @@ export const DEFAULT_CANDIDATES: BakeoffCandidate[] = [
   { provider: 'openrouter', model: 'google/gemini-3.5-flash-lite' },
   { provider: 'openrouter', model: 'amazon/nova-lite-v1' },
   { provider: 'openrouter', model: 'z-ai/glm-4.6v' },
-  { provider: 'openrouter', model: 'google/gemini-3.7-flash' },
+  { provider: 'openrouter', model: 'google/gemini-3.8-flash' },
   { provider: 'openrouter', model: '~google/gemini-flash-latest' },
   { provider: 'openrouter', model: 'qwen/qwen-2.5-72b-instruct' },
 ];
@@ -805,7 +807,7 @@ export function extractXaiResponseText(payload: unknown): string {
 /**
  * xAI Grok via the Files API. Unlike the inline-base64 providers, Grok needs the
  * PDF uploaded first (`POST /v1/files`), then the returned `file_id` attached to
- * an agentic `/v1/responses` call (grok-4.3), whose server-side OCR+vision reads
+ * an agentic `/v1/responses` call (grok-4.6), whose server-side OCR+vision reads
  * the scan. Two round-trips, so it's the slowest candidate.
  */
 async function runXai(
