@@ -19,13 +19,13 @@ import { readSenateRelayProbe } from '../ingestion/senateRelayHealth.ts';
 import { resolveResidentialProxyUrl } from './proxyFetch.ts';
 import { expectedLatencyProviderIds } from '../ingestion/tradeLatency.ts';
 
-export type PipelineStatus = 'ok' | 'degraded' | 'stalled' | 'unknown';
+export type PipelineStatus = 'ok' | 'degraded' | 'critical' | 'stalled' | 'unknown';
 
 export interface PipelineCheck {
   id: string;
   status: PipelineStatus;
   detail: string;
-  value?: number | null;
+  value?: number | string | null | { worstBehind: number; legs: Record<string, { date: string | null; behind: number | null }> };
 }
 
 export interface PipelineHealth {
@@ -231,7 +231,8 @@ const STATUS_WEIGHT: Record<PipelineStatus, number> = {
   ok: 0,
   unknown: 1,
   degraded: 2,
-  stalled: 3,
+  critical: 3,
+  stalled: 4,
 };
 
 function worstStatus(a: PipelineStatus, b: PipelineStatus): PipelineStatus {

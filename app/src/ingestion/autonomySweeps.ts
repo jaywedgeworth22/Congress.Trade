@@ -521,7 +521,7 @@ export async function sweepLivenessAlarms(
       episode = await env.CONFIG_KV.get<LivenessAlarmEpisode>(kvKey, 'json');
     } catch {}
 
-    const isBad = check.status === 'stalled' || check.status === 'degraded';
+    const isBad = check.status === 'stalled' || check.status === 'degraded' || check.status === 'critical';
     if (isBad) {
       result.bad += 1;
       const statusChanged = !episode || episode.status !== check.status;
@@ -536,10 +536,14 @@ export async function sweepLivenessAlarms(
         // notified — a silently-dead alarm channel would recreate the exact
         // failure class this sweep exists to kill.
         try {
+          // Tier mapping: critical → priority 1 (same as stalled) so the
+          // phone wakes for a structural break. degraded → priority 0
+          // (silent notify, no sound) so a weekend price lag doesn't page.
+          const isLoud = check.status === 'stalled' || check.status === 'critical';
           const delivered = await push(env, {
-            title: `CT ${check.status === 'stalled' ? 'DOWN' : 'DEGRADED'}: ${check.id.replace(/_/g, ' ')}`,
+            title: `CT ${isLoud ? 'DOWN' : 'DEGRADED'}: ${check.id.replace(/_/g, ' ')}`,
             message: check.detail,
-            priority: check.status === 'stalled' ? 1 : 0,
+            priority: isLoud ? 1 : 0,
             url: 'https://congress.trade/api/health',
             urlTitle: 'Pipeline health',
           });
