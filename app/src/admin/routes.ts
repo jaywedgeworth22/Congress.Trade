@@ -9677,6 +9677,102 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     }
   });
 
+  // --- POST /recover-pipeline ---------------------------------------------
+  // One-click operator recovery for the 2026-09-20 class of failures: a
+  // daily lane (price refresh, snapshot, filer, retention) silently parked
+  // because of a prior stamp-before-run race + transient failure, or the
+  // price cache went stale (FMP 401/403, plan lapsed, missing key). This
+  // route does two bounded things:
+  //   1) clears the stamp-on-success KV keys for the requested lanes so
+  //      the NEXT hourly cron tick re-runs them (cross-worker overlap is
+  //      still prevented by the DB singleton lock in deno/cronLanes.ts);
+  //   2) optionally calls runPriceRefresh directly to recover the S&P /
+  //      price cache immediately, sharing the daily FMP budget.
+  //
+  // Body (all optional):
+  //   { lanes?: string[];         // which daily lanes to unstamp; default
+  //                                // ['market-data','snapshot','filer','retention']
+  //     priceRefresh?: boolean;    // also call runPriceRefresh inline; default true
+  //     max?: number;              // forwarded to runPriceRefresh when true
+  //     maxPerMinute?: number;
+  //     dryRun?: boolean; }
+  //
+  // ADMIN_TOKEN or ADMIN_MAINTENANCE_TOKEN required (no INGEST_TOKEN scope —
+  // this route writes daily stamps and calls paid price APIs).
+  r.post('/recover-pipeline', async (c) => {
+    let body: Record<string, unknown> = {};
+    try {
+      const raw = await c.req.text();
+      if (raw) body = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    const dryRun = body.dryRun === true;
+    const lanesInput = Array.isArray(body.lanes) ? body.lanes.filter((x): x is string => typeof x === 'string') : null;
+    const defaultLanes = ['market-data', 'snapshot', 'filer', 'retention'];
+    const lanes = lanesInput && lanesInput.length > 0 ? lanesInput : defaultLanes;
+    const validLanes = new Set(defaultLanes);
+    const bad = lanes.filter((l) => !validLanes.has(l));
+    if (bad.length > 0) {
+      return c.json({ error: `unknown lane(s): ${bad.join(', ')}; valid: ${[...validLanes].join(', ')}` }, 400);
+    }
+    const priceRefresh = body.priceRefresh !== false; // default ON
+    const max = typeof body.max === 'number' && body.max > 0 ? Math.floor(body.max) : undefined;
+    const maxPerMinute = typeof body.maxPerMinute === 'number' && body.maxPerMinute > 0 ? Math.floor(body.maxPerMinute) : undefined;
+
+    const today = new Date().toISOString().slice(0, 10);
+    const dayKey = (lane: string) => `jobs:daily:lastok:${lane}`;
+    const summary: Record<string, unknown> = {
+      requestedAt: new Date().toISOString(),
+      day: today,
+      dryRun,
+      lanesUnstamped: [] as string[],
+      priceRefresh: priceRefresh ? { ran: false } : { skipped: 'body.priceRefresh === false' },
+    };
+
+    // 1) Clear the stamp-on-success keys so the next hourly cron tick
+    //    re-runs these lanes. We only DELETE the day key if it exists,
+    //    which is a no-op when the lane already hasn't run today.
+    if (!dryRun) {
+      const kv = (c.env as Env).CONFIG_KV;
+      for (const lane of lanes) {
+        const k = dayKey(lane);
+        try {
+          const existing = await kv.get(k);
+          if (existing) {
+            await kv.delete(k);
+            (summary.lanesUnstamped as string[]).push(lane);
+          }
+        } catch (err) {
+          console.warn(`recover-pipeline: KV delete ${k} failed:`, (err as Error).message);
+        }
+      }
+    } else {
+      summary.lanesUnstamped = [...lanes];
+      summary.dryRunNote = 'lane stamps were NOT cleared (dryRun=true); values above are the keys that WOULD be cleared';
+    }
+
+    // 2) Inline price refresh — same call as /refresh-prices but flagged
+    //    explicitly as a recovery action so the run summary can include
+    //    the operator context.
+    if (priceRefresh && !dryRun) {
+      try {
+        const opts: { max?: number; dryRun?: boolean; maxPerMinute?: number } = {};
+        if (max !== undefined) opts.max = max;
+        if (maxPerMinute !== undefined) opts.maxPerMinute = maxPerMinute;
+        const r = await runPriceRefresh(c.env, opts);
+        (summary.priceRefresh as { ran: boolean; [k: string]: unknown }).ran = true;
+        (summary.priceRefresh as { ran: boolean; [k: string]: unknown }).errors = r.errors;
+        (summary.priceRefresh as { ran: boolean; [k: string]: unknown }).fmpCalls = r.fmpCalls;
+        (summary.priceRefresh as { ran: boolean; [k: string]: unknown }).aborted = r.aborted;
+      } catch (err) {
+        (summary.priceRefresh as { ran: boolean; [k: string]: unknown }).error = (err as Error).message;
+      }
+    }
+
+    return c.json({ ok: true, ...summary });
+  });
+
   // --- POST /backfill-market ----------------------------------------------
   // One bounded pass of enrichment + price refresh in a single call, for fast
   // paid-tier history backfilling. A single Worker invocation is capped by
