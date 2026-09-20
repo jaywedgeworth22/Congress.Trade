@@ -471,6 +471,12 @@ const LIVENESS_ALARM_CHECK_IDS = new Set([
   'autopilot_halt',
   'extraction_provider',
   'extraction_backlog',
+  // 2026-09-20: include price_freshness in the alarm set so a stale price
+  // cache (>= priceMaxAgeCriticalDays trading days behind) pages the owner.
+  // Previously the check only degraded silently — see board 14dac466 /
+  // prod observation 2026-09-20 with S&P frozen at 2026-08-03 for 46 days
+  // and nobody alerted.
+  'price_freshness',
 ]);
 const LIVENESS_ALARM_KV_PREFIX = 'liveness-alarm:';
 const LIVENESS_RENOTIFY_MS = 6 * 3_600_000;
