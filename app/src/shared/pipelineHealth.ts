@@ -19,13 +19,13 @@ import { readSenateRelayProbe } from '../ingestion/senateRelayHealth.ts';
 import { resolveResidentialProxyUrl } from './proxyFetch.ts';
 import { expectedLatencyProviderIds } from '../ingestion/tradeLatency.ts';
 
-export type PipelineStatus = 'ok' | 'degraded' | 'stalled' | 'unknown';
+export type PipelineStatus = 'ok' | 'degraded' | 'critical' | 'stalled' | 'unknown';
 
 export interface PipelineCheck {
   id: string;
   status: PipelineStatus;
   detail: string;
-  value?: number | null;
+  value?: number | string | null | { worstBehind: number; legs: Record<string, { date: string | null; behind: number | null }> };
 }
 
 export interface PipelineHealth {
@@ -156,6 +156,21 @@ export interface PipelineThresholds {
   senateRelayProbeMaxAgeMinutes: number;
   /** Max trading days the newest price/S&P bar may lag before price_freshness degrades (default 3). */
   priceMaxAgeTradingDays?: number;
+  /**
+   * Critical / phone-page tier for price_freshness. Newest bar more than this
+   * many trading days behind escalates from degraded → critical (Pushover
+   * priority 1 via the liveness-alarm sweep). Default 14. Tuned so a long
+   * weekend or 1-week outage degrades but doesn't page, while a structural
+   * break (lost FMP key, expired plan, disabled lane) does.
+   */
+  priceMaxAgeCriticalDays?: number;
+  /**
+   * Stalled tier for price_freshness. Newest bar more than this many trading
+   * days behind escalates critical → stalled. Default 30 — at this point the
+   * price refresh lane is structurally broken, not just stuck on a single
+   * provider 4xx.
+   */
+  priceMaxAgeStalledDays?: number;
 }
 
 export const DEFAULT_PIPELINE_THRESHOLDS: PipelineThresholds = {
@@ -180,6 +195,13 @@ export const DEFAULT_PIPELINE_THRESHOLDS: PipelineThresholds = {
   latencyProviderSilenceHours: 48,
   senateRelayProbeMaxAgeMinutes: 20,
   priceMaxAgeTradingDays: 3,
+  // Critical: a week+ stale price cache is worth waking the owner up for —
+  // the daily market-data lane has now failed on TWO consecutive attempts
+  // (one stamp-on-success, one stamp-before). At that point the fix is a
+  // provider key rotation, not a "wait and see".
+  priceMaxAgeCriticalDays: 14,
+  // Stalled: a month+ stale cache is the prod 2026-09-20 baseline.
+  priceMaxAgeStalledDays: 30,
 };
 
 /**
@@ -209,7 +231,8 @@ const STATUS_WEIGHT: Record<PipelineStatus, number> = {
   ok: 0,
   unknown: 1,
   degraded: 2,
-  stalled: 3,
+  critical: 3,
+  stalled: 4,
 };
 
 function worstStatus(a: PipelineStatus, b: PipelineStatus): PipelineStatus {
@@ -654,20 +677,37 @@ export function evaluatePipelineSignals(
     }
   }
 
-  // Price / S&P cache freshness (board row 6c05e09b).  Every "excess vs S&P" figure
+  // Price / S&P cache freshness (board row 6c05e09b). Every "excess vs S&P" figure
   // is current_price against the latest S&P close, so a stalled price cache turns
   // into confidently wrong performance numbers with nothing alerting: prod sat
-  // frozen at 2026-08-03 (S&P) / 2026-07-24 (NVDA) for 46 days.  Degraded, not
-  // stalled: the site still serves; and it is deliberately NOT in the phone-page
-  // set (LIVENESS_ALARM_CHECK_IDS) until the stale cache is repaired.
+  // frozen at 2026-08-03 (S&P) / 2026-07-24 (NVDA) for 46 days. 2026-09-20 fix:
+  // add a CRITICAL tier beyond a second threshold so the staleness actually
+  // pages (via the liveness-alarm sweep), and report the per-leg date so the
+  // detail is immediately actionable without a second SQL query.
+  //
+  // Tier table (trading days behind the latest known bar):
+  //   behind <= priceMaxAgeTradingDays (default 3) → ok
+  //   behind >  priceMaxAgeTradingDays            → degraded (site still serves,
+  //                                                 but excess-vs-S&P numbers are
+  //                                                 stale — weekend/recess grace)
+  //   behind >  priceMaxAgeCriticalDays (default 14) → critical (a week+ stale;
+  //                                                 Pushover via liveness-alarm
+  //                                                 sweep; recovery via
+  //                                                 POST /admin/recover-pipeline)
+  //   behind >  priceMaxAgeStalledDays (default 30) → stalled (a month+ stale
+  //                                                 means the price refresh
+  //                                                 lane is structurally broken)
   if (s.priceEodLatestDate !== undefined || s.spxEodLatestDate !== undefined) {
     const maxDays = t.priceMaxAgeTradingDays ?? 3;
+    const criticalDays = t.priceMaxAgeCriticalDays ?? 14;
+    const stalledDays = t.priceMaxAgeStalledDays ?? 30;
     const legs: Array<{ label: string; date: string | null | undefined }> = [
       { label: 'price cache', date: s.priceEodLatestDate },
       { label: 'S&P 500 series', date: s.spxEodLatestDate },
     ];
     const known = legs.filter((l) => l.date !== undefined);
     const stale: string[] = [];
+    const legAges: number[] = [];
     let worstBehind = 0;
     let anyUnknown = false;
     for (const l of known) {
@@ -680,15 +720,26 @@ export function evaluatePipelineSignals(
         anyUnknown = true;
         continue;
       }
+      legAges.push(behind);
       worstBehind = Math.max(worstBehind, behind);
       if (behind > maxDays) stale.push(`${l.label} newest bar ${l.date.slice(0, 10)} (${behind} trading days behind)`);
     }
     if (stale.length > 0) {
+      const tier: 'degraded' | 'critical' | 'stalled' =
+        worstBehind > stalledDays ? 'stalled'
+          : worstBehind > criticalDays ? 'critical'
+          : 'degraded';
+      const tierNote =
+        tier === 'stalled'
+          ? `>${stalledDays}d behind — price refresh lane is structurally broken; recover via POST /admin/recover-pipeline`
+          : tier === 'critical'
+          ? `>${criticalDays}d behind — Pushover alarm fired; recover via POST /admin/recover-pipeline`
+          : `>${maxDays}d threshold; excess-vs-S&P and current prices are stale`;
       checks.push({
         id: 'price_freshness',
-        status: 'degraded',
-        detail: `${stale.join('; ')}; threshold ${maxDays} — excess-vs-S&P and current prices are stale`,
-        value: worstBehind,
+        status: tier,
+        detail: `${stale.join('; ')}; ${tierNote}`,
+        value: { worstBehind, legs: Object.fromEntries(legs.map((l, i) => [l.label, { date: l.date, behind: legAges[i] ?? null }])) },
       });
     } else if (anyUnknown) {
       checks.push({ id: 'price_freshness', status: 'unknown', detail: 'Price cache freshness uncollected', value: null });
@@ -697,7 +748,7 @@ export function evaluatePipelineSignals(
         id: 'price_freshness',
         status: 'ok',
         detail: `Price and S&P series within ${maxDays} trading days (worst ${worstBehind})`,
-        value: worstBehind,
+        value: { worstBehind, legs: Object.fromEntries(legs.map((l, i) => [l.label, { date: l.date, behind: legAges[i] ?? null }])) },
       });
     }
   }

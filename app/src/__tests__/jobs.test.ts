@@ -399,14 +399,40 @@ describe('staggered daily lanes', () => {
     }
   });
 
-  it('a lane stamps the day even when the D1 budget trips, and reports budget', async () => {
+  it('a lane RETRIES when the D1 budget trips, instead of parking the work for 24h (stamp-on-success)', async () => {
+    // Bug fix 2026-09-20: the old "stamp before run" design silently parked
+    // failed daily work for the rest of the UTC day. Observed in prod when
+    // the S&P 500 price series froze at 2026-08-03 for 46 days — the one FMP
+    // refresh attempt 401/403'd but the day stamp stuck, so the lane
+    // wouldn't retry until the next UTC day. The new stamp-on-success
+    // semantic lets the next hourly cron tick re-attempt as soon as the
+    // underlying condition (D1 budget, FMP key, transient error) clears.
     mocks.isD1RowBudgetExceeded.mockResolvedValue(true);
     const env = laneEnv();
     expect(await maybeRunDailySnapshotJob(env, DAY)).toBe('budget');
     expect(mocks.runBulkSnapshot).not.toHaveBeenCalled();
-    // Stamped → the next cron firing same-day is a cheap no-op, not a re-check.
+    // Next tick: budget still exceeded → retries (cheap re-check, no DB
+    // work) and reports 'budget' again. Crucially, the day stamp is NOT
+    // set, so a fresh budget (or /admin/recover-pipeline) can still run
+    // the lane same-day.
+    expect(await maybeRunDailySnapshotJob(env, DAY)).toBe('budget');
+    expect(mocks.isD1RowBudgetExceeded).toHaveBeenCalledTimes(2);
+  });
+
+  it('a lane stamps the day ONLY after a successful run, not after a budget trip', async () => {
+    const kv = new Map<string, string>();
+    const env = laneEnv(kv);
+    // Budget tripped: stamp must NOT be set so next tick retries.
+    mocks.isD1RowBudgetExceeded.mockResolvedValue(true);
+    await maybeRunDailySnapshotJob(env, DAY);
+    expect(kv.get('jobs:daily:lastok:snapshot')).toBeUndefined();
+    // Budget clears: lane runs successfully and stamps the day.
+    mocks.isD1RowBudgetExceeded.mockResolvedValue(false);
+    expect(await maybeRunDailySnapshotJob(env, DAY)).toBe('ran');
+    expect(kv.get('jobs:daily:lastok:snapshot')).toBe(DAY.toISOString().slice(0, 10));
+    // Same day, no work: cheap no-op via the stamp.
     expect(await maybeRunDailySnapshotJob(env, DAY)).toBe('stamped');
-    expect(mocks.isD1RowBudgetExceeded).toHaveBeenCalledTimes(1);
+    expect(mocks.runBulkSnapshot).toHaveBeenCalledTimes(1);
   });
 
   it('combined wrapper runs all four lanes exactly once on a fresh day', async () => {
@@ -469,16 +495,38 @@ describe('runHourlyEnrichmentSlice', () => {
     );
   });
 
-  it('drops the 20% price-refresh floor once the market-data lane is stamped', async () => {
+  it('drops the 20% price-refresh floor once the market-data lane has succeeded today (stamp-on-success)', async () => {
     mocks.resolveSecrets.mockResolvedValue({ FMP_API_KEY: 'k', FMP_DAILY_CALL_CAP: '1000' });
     mocks.getDailyUsed.mockResolvedValue(100);
-    const kv = new Map([['jobs:daily:lastdate:market-data', '2026-08-01']]);
+    // The stamp-on-success semantic reads `jobs:daily:lastok:market-data`
+    // (the lane only stamps after it actually completes). Seeding the
+    // legacy `lastdate` key must NOT drop the floor.
+    const dayStr = DAY.toISOString().slice(0, 10);
+    const kv = new Map([
+      ['jobs:daily:lastdate:market-data', dayStr], // legacy key — should be ignored now
+      ['jobs:daily:lastok:market-data', dayStr],   // current key — drops the floor
+    ]);
     await runHourlyEnrichmentSlice(sliceEnv(kv), DAY);
     // No floor after price refresh ran → full slice cap; the 900-call
     // remaining budget still bounds spend inside runEnrichment itself.
     expect(mocks.runEnrichment).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ max: HOURLY_ENRICHMENT_SLICE_MAX }),
+    );
+  });
+
+  it('keeps the 20% floor on the legacy lastdate stamp alone (regression guard for the stamp rename)', async () => {
+    mocks.resolveSecrets.mockResolvedValue({ FMP_API_KEY: 'k', FMP_DAILY_CALL_CAP: '1000' });
+    mocks.getDailyUsed.mockResolvedValue(100);
+    // Legacy key seeded but the new lastok key is missing → the floor MUST
+    // stay in place, because the market-data lane hasn't actually
+    // completed yet (would have written the lastok stamp).
+    const kv = new Map([['jobs:daily:lastdate:market-data', DAY.toISOString().slice(0, 10)]]);
+    await runHourlyEnrichmentSlice(sliceEnv(kv), DAY);
+    // remaining=900; floor=200 → max=700.
+    expect(mocks.runEnrichment).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ max: 700 }),
     );
   });
 

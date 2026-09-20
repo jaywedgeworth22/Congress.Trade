@@ -32,28 +32,75 @@ import { backfillCurrentPricesFromEod } from './prices/service.ts';
 // imported here yet -- it is reserved for future scheduled-job wiring. Importing
 // it unused would trip noUnusedLocals (enabled in this PR).
 
-const DAILY_KEY = 'jobs:daily:lastdate';
-
 /**
- * Per-lane KV date stamps (`jobs:daily:lastdate:<lane>`). Each daily lane
- * stamps itself BEFORE running so it fires once per UTC day even when it is
- * scheduled on an hourly cron. The legacy whole-chain stamp (DAILY_KEY) is
- * kept as a fast-path suppressor for the legacy combined entry point
- * (maybeRunDailyJobs) and for tests; dedicated lane crons ignore it.
+ * Per-lane KV date stamps. Two flavors:
+ *
+ *  - `:lastok:<lane>` (LANE_KEY_PREFIX) — set ONLY after a lane returns
+ *    'ran'. Used by the four daily lanes (market-data / snapshot / filer /
+ *    retention) so the next same-day firing is a cheap no-op AND so that a
+ *    budget-trip or thrown error today still lets the next hourly cron tick
+ *    retry. The previous "stamp BEFORE running" design silently parked
+ *    failed daily work for 24h — observed in prod 2026-09-20 with the S&P
+ *    price series frozen at 2026-08-03 for 46 days because the one FMP
+ *    refresh attempt 401/403'd but the day-stamp stuck.
+ *
+ *  - `:lastdate:<lane>` (SUBCLAIM_KEY_PREFIX) — stamp BEFORE running, for
+ *    one-shot sub-features nested inside a lane (currently the R2 usage
+ *    digest inside the retention lane). Cross-worker overlap for those
+ *    sub-features is already prevented by the parent lane's DB singleton
+ *    lock (see deno/cronLanes.ts:runDailyLane), so the cheap-no-op
+ *    semantic is what we want.
+ *
+ * The legacy whole-chain stamp (DAILY_KEY) is kept as a fast-path
+ * suppressor for the legacy combined entry point (maybeRunDailyJobs) and
+ * for tests; dedicated lane crons ignore it.
  */
-const LANE_KEY_PREFIX = 'jobs:daily:lastdate:';
+const LANE_KEY_PREFIX = 'jobs:daily:lastok:';
+const SUBCLAIM_KEY_PREFIX = 'jobs:daily:lastdate:';
+const DAILY_KEY = 'jobs:daily:lastdate';
 
 export type DailyLaneStatus = 'ran' | 'stamped' | 'budget';
 
+/**
+ * Sub-feature stamp: claim-before-run. Used by the R2-usage digest nested
+ * inside the retention lane. Cheap-no-op semantics only; failures inside the
+ * sub-feature shouldn't park the parent lane.
+ */
 async function stampDaily(env: Env, key: string, day: string): Promise<boolean> {
   try {
     const last = await env.CONFIG_KV.get(key);
     if (last === day) return false;
-    // Stamp BEFORE running so the next cron tick doesn't double-fire.
     await env.CONFIG_KV.put(key, day, { expirationTtl: 172800 });
     return true;
   } catch {
     return false; // no KV → skip rather than risk hammering providers
+  }
+}
+
+/**
+ * Top-level daily lane: only mark "done" once the lane has actually
+ * finished successfully. Returns true if the lane has NOT yet succeeded
+ * today (so the caller should run it).
+ */
+async function laneHasSucceeded(env: Env, key: string, day: string): Promise<boolean> {
+  try {
+    const last = await env.CONFIG_KV.get(key);
+    return last === day;
+  } catch {
+    return false; // no KV → pretend nothing has succeeded → retry
+  }
+}
+
+/**
+ * Stamp the lane as successfully completed today. Called by each daily
+ * lane ONLY when it returns 'ran'. Best-effort; a KV write failure is
+ * non-fatal (next tick will just retry).
+ */
+async function markLaneOk(env: Env, key: string, day: string): Promise<void> {
+  try {
+    await env.CONFIG_KV.put(key, day, { expirationTtl: 172800 });
+  } catch (err) {
+    console.warn(`daily lane ${key} mark-ok failed (will retry next tick):`, (err as Error).message);
   }
 }
 
@@ -374,13 +421,19 @@ export async function maybeRunDailyMarketDataJobs(
   opts: { signal?: AbortSignal; enrichmentDeadlineMs?: number } = {},
 ): Promise<DailyLaneStatus> {
   const day = now.toISOString().slice(0, 10);
-  if (!(await stampDaily(env, LANE_KEY_PREFIX + 'market-data', day))) return 'stamped';
+  const laneKey = LANE_KEY_PREFIX + 'market-data';
+  // Stamp-on-success: only the LAST successful run suppresses same-day
+  // retries. A budget trip today lets the next hourly cron tick try again.
+  // See the LANE_KEY_PREFIX comment block at the top of this file.
+  if (await laneHasSucceeded(env, laneKey, day)) return 'stamped';
 
   // Opt-in D1 spend guard (D1_ROW_BUDGET_ENFORCE): if today's metered D1 rows
   // already exceeded the budget, skip this discretionary daily batch — its big
   // enrichment/price/backfill upserts are the main controllable D1 write spend.
-  // Default OFF (alert-only). The date stamp above stays set, so we don't
-  // re-check every minute; a fresh budget frees the jobs next UTC day.
+  // Default OFF (alert-only). Do NOT mark the lane as ok here: a budget trip
+  // today should let the next hourly cron tick retry (a fresh budget, an
+  // operator raise, or a manual /admin/recover-pipeline call can free the
+  // same day). See the laneHasSucceeded / markLaneOk docs at LANE_KEY_PREFIX.
   if (await dailyBudgetExceeded(env, 'enrichment')) {
     return 'budget';
   }
@@ -528,6 +581,12 @@ export async function maybeRunDailyMarketDataJobs(
   } catch (err) {
     console.warn('freshness check failed:', (err as Error).message);
   }
+  // Stamp-on-success: the day stamp only suppresses future ticks when the
+  // lane actually finished all of enrichment, price refresh, peer share, the
+  // FMP tier-failure alert, and the freshness check. If any of those threw
+  // hard enough to skip this point, the stamp stays unset and the next
+  // hourly cron tick will retry the whole lane.
+  await markLaneOk(env, laneKey, day);
   return 'ran';
 }
 
@@ -620,8 +679,12 @@ export async function runHourlyEnrichmentSlice(
  */
 export async function maybeRunDailySnapshotJob(env: Env, now = new Date()): Promise<DailyLaneStatus> {
   const day = now.toISOString().slice(0, 10);
-  if (!(await stampDaily(env, LANE_KEY_PREFIX + 'snapshot', day))) return 'stamped';
-  if (await dailyBudgetExceeded(env, 'bulk snapshot')) return 'budget';
+  const laneKey = LANE_KEY_PREFIX + 'snapshot';
+  if (await laneHasSucceeded(env, laneKey, day)) return 'stamped';
+  if (await dailyBudgetExceeded(env, 'bulk snapshot')) {
+    // Don't stamp — next tick retries.
+    return 'budget';
+  }
 
   try {
     const manifest = await runBulkSnapshot(env, day, now);
@@ -629,7 +692,10 @@ export async function maybeRunDailySnapshotJob(env: Env, now = new Date()): Prom
     console.log('bulk snapshot written:', day, rows, 'rows');
   } catch (err) {
     console.warn('bulk snapshot failed:', (err as Error).message);
+    // Don't stamp on throw — let the next tick retry.
+    return 'budget';
   }
+  await markLaneOk(env, laneKey, day);
   return 'ran';
 }
 
@@ -648,7 +714,8 @@ export async function maybeRunDailySnapshotJob(env: Env, now = new Date()): Prom
  */
 export async function maybeRunDailyFilerJobs(env: Env, now = new Date()): Promise<DailyLaneStatus> {
   const day = now.toISOString().slice(0, 10);
-  if (!(await stampDaily(env, LANE_KEY_PREFIX + 'filer', day))) return 'stamped';
+  const laneKey = LANE_KEY_PREFIX + 'filer';
+  if (await laneHasSucceeded(env, laneKey, day)) return 'stamped';
   if (await dailyBudgetExceeded(env, 'identity sync')) return 'budget';
 
   try {
@@ -663,6 +730,8 @@ export async function maybeRunDailyFilerJobs(env: Env, now = new Date()): Promis
     }));
   } catch (err) {
     console.warn('identity sync failed:', (err as Error).message);
+    // Don't stamp on throw — let the next tick retry.
+    return 'budget';
   }
 
   if (await dailyBudgetExceeded(env, 'photo enrichment')) return 'budget';
@@ -698,6 +767,10 @@ export async function maybeRunDailyFilerJobs(env: Env, now = new Date()): Promis
   } catch (err) {
     console.warn('ticker backfill failed:', (err as Error).message);
   }
+  // Stamp-on-success for the filer lane. See LANE_KEY_PREFIX block at the
+  // top of this file for why this is set ONLY after identity + photos +
+  // committees + ticker backfill all reached this point.
+  await markLaneOk(env, laneKey, day);
   return 'ran';
 }
 
@@ -741,7 +814,7 @@ export async function maybeRunDailyRetentionJobs(env: Env, now = new Date()): Pr
   const preferHour =
     Number.isFinite(preferHourRaw) && preferHourRaw >= 0 && preferHourRaw <= 23 ? preferHourRaw : 20;
   if (now.getUTCHours() >= preferHour) {
-    if (await stampDaily(env, LANE_KEY_PREFIX + 'r2-usage', day)) {
+    if (await stampDaily(env, SUBCLAIM_KEY_PREFIX + 'r2-usage', day)) {
       try {
         const r2Secrets = await resolveSecrets(env, [
           'CLOUDFLARE_ACCOUNT_ID',
@@ -760,7 +833,7 @@ export async function maybeRunDailyRetentionJobs(env: Env, now = new Date()): Pr
     }
   }
 
-  if (!(await stampDaily(env, LANE_KEY_PREFIX + 'retention', day))) return 'stamped';
+  if (!(await stampDaily(env, SUBCLAIM_KEY_PREFIX + 'retention', day))) return 'stamped';
 
   if (await dailyBudgetExceeded(env, 'retention sweep')) return 'budget';
 
@@ -783,6 +856,10 @@ export async function maybeRunDailyRetentionJobs(env: Env, now = new Date()): Pr
   } catch (err) {
     console.warn('5-year filing retention sweep failed:', (err as Error).message);
   }
+  // Note: retention keeps the stamp-before semantic (SUBCLAIM_KEY_PREFIX)
+  // because its work is cheap, idempotent, and only ever shrinks the DB;
+  // skipping it on a budget trip is safe and a missed sweep never risks
+  // data loss (older rows are deleted on the NEXT successful sweep).
   return 'ran';
 }
 

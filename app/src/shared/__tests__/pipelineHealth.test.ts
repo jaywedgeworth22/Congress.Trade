@@ -603,39 +603,80 @@ describe('price_freshness check', () => {
     expect(c?.status).toBe('ok');
   });
 
-  it('goes degraded, naming the leg and the dates, when the price cache is frozen (2026-08-03)', () => {
-    const c = check({ priceEodLatestDate: '2026-08-03', spxEodLatestDate: '2026-09-14' });
+  it('goes degraded, naming the leg and the dates, when the price cache is a few days behind (weekend grace)', () => {
+    // nowMs = Tue 2026-09-15 12:00 UTC. Price cache at Wed 2026-09-02 =
+    // 9 trading days behind — sits in the degraded band (>3, <=14).
+    // Trading weekdays in between: Sep 3,4,7,8,9,10,11,14 = 8 weekdays.
+    const c = check({ priceEodLatestDate: '2026-09-02', spxEodLatestDate: '2026-09-14' });
     expect(c?.status).toBe('degraded');
-    expect(c?.detail).toContain('price cache newest bar 2026-08-03');
+    expect(c?.detail).toContain('price cache newest bar 2026-09-02');
     expect(c?.detail).not.toContain('S&P 500 series');
-    expect((c?.value ?? 0) > 3).toBe(true);
+    // value shape (2026-09-20): { worstBehind, legs: { 'price cache': {date, behind}, ... } }
+    const v = c?.value as { worstBehind: number };
+    expect(v.worstBehind).toBeGreaterThan(3);
+    expect(v.worstBehind).toBeLessThanOrEqual(14);
   });
 
-  it('flags the S&P series independently', () => {
-    const c = check({ priceEodLatestDate: '2026-09-14', spxEodLatestDate: '2026-08-03' });
-    expect(c?.status).toBe('degraded');
-    expect(c?.detail).toContain('S&P 500 series newest bar 2026-08-03');
+  it('flags the S&P series independently (a week+ behind escalates to critical, Pushover alarm)', () => {
+    // nowMs = Tue 2026-09-15. S&P at 2026-08-22 (Sat) = 16 trading weekdays
+    // behind → >14 (priceMaxAgeCriticalDays) → critical.
+    const c = check({ priceEodLatestDate: '2026-09-14', spxEodLatestDate: '2026-08-22' });
+    expect(c?.status).toBe('critical');
+    expect(c?.detail).toContain('S&P 500 series newest bar 2026-08-22');
+    expect(c?.detail).toContain('recover via POST /admin/recover-pipeline');
+  });
+
+  it('escalates to STALLED when the newest bar is a month+ behind (structurally broken price refresh lane)', () => {
+    // nowMs = Tue 2026-09-15. S&P frozen at 2026-08-01 (Sat) = 31 trading
+    // weekdays behind → > 30 (priceMaxAgeStalledDays) → stalled. (Prod
+    // actually froze at 2026-08-03 = 30 weekdays = exactly critical; the
+    // 2026-09-21+ reading would be stalled once we cross the weekend.)
+    const c = check({ priceEodLatestDate: '2026-09-14', spxEodLatestDate: '2026-08-01' });
+    expect(c?.status).toBe('stalled');
+    expect(c?.detail).toContain('S&P 500 series newest bar 2026-08-01');
+    expect(c?.detail).toContain('structurally broken');
   });
 
   it('is unknown (never a false ok) when a leg could not be read, and degraded still wins over unknown', () => {
     expect(check({ priceEodLatestDate: null, spxEodLatestDate: '2026-09-14' })?.status).toBe('unknown');
-    expect(check({ priceEodLatestDate: null, spxEodLatestDate: '2026-08-03' })?.status).toBe('degraded');
+    // S&P at 2026-09-02 = 8 weekdays behind → degraded (not critical).
+    expect(check({ priceEodLatestDate: null, spxEodLatestDate: '2026-09-02' })?.status).toBe('degraded');
   });
 
-  it('degrades the overall pipeline status', () => {
+  it('degrades the overall pipeline status from a stalled price cache', () => {
     const res = evaluatePipelineSignals(
-      { ...base, priceEodLatestDate: '2026-08-03', spxEodLatestDate: '2026-08-03' },
+      { ...base, priceEodLatestDate: '2026-08-01', spxEodLatestDate: '2026-08-01' },
       nowMs,
     );
-    expect(res.status).toBe('degraded');
+    expect(res.status).toBe('stalled');
   });
 
   it('honours a custom threshold', () => {
+    // 9 days behind with threshold 10 → ok.
     const res = evaluatePipelineSignals(
-      { ...base, priceEodLatestDate: '2026-09-10', spxEodLatestDate: '2026-09-10' },
+      { ...base, priceEodLatestDate: '2026-09-02', spxEodLatestDate: '2026-09-02' },
       nowMs,
       { ...DEFAULT_PIPELINE_THRESHOLDS, priceMaxAgeTradingDays: 10 },
     );
     expect(res.checks.find((c) => c.id === 'price_freshness')?.status).toBe('ok');
+  });
+
+  it('honours a custom critical threshold', () => {
+    // 9 days behind with critical=5 → critical.
+    const res = evaluatePipelineSignals(
+      { ...base, priceEodLatestDate: '2026-09-02', spxEodLatestDate: '2026-09-02' },
+      nowMs,
+      { ...DEFAULT_PIPELINE_THRESHOLDS, priceMaxAgeCriticalDays: 5, priceMaxAgeStalledDays: 50 },
+    );
+    expect(res.checks.find((c) => c.id === 'price_freshness')?.status).toBe('critical');
+  });
+
+  it('value object includes per-leg date + behind so the detail is actionable without a second SQL query', () => {
+    // price=2026-09-08 (Tue) → 4 weekdays behind, spx=today → 0 behind.
+    const c = check({ priceEodLatestDate: '2026-09-08', spxEodLatestDate: '2026-09-15' });
+    const v = c?.value as { worstBehind: number; legs: Record<string, { date: string | null; behind: number | null }> };
+    expect(v.worstBehind).toBe(4);
+    expect(v.legs['price cache']).toEqual({ date: '2026-09-08', behind: 4 });
+    expect(v.legs['S&P 500 series']).toEqual({ date: '2026-09-15', behind: 0 });
   });
 });
