@@ -12982,6 +12982,7 @@ function renderAccount() {
             : '') +
           adminMenuHtml('closeAcctMenu();') +
           '<div class="menu-divider"></div>' +
+          '<button type="button" onclick="openBugReport()">Report a Bug</button>' +
           '<button type="button" onclick="logout()">Sign Out</button>' +
           '<button type="button" onclick="closeAcctMenu();deleteAccount()">Delete Account</button>' +
         '</div>' +
@@ -13000,6 +13001,7 @@ function renderAccount() {
         : '') +
       adminMenuHtml('closeAcctMobileMenu();') +
       '<div class="menu-divider"></div>' +
+      '<button type="button" onclick="closeAcctMobileMenu();openBugReport()">Report a Bug</button>' +
       '<button type="button" onclick="closeAcctMobileMenu();logout()">Sign Out</button>' +
       '<button type="button" onclick="closeAcctMobileMenu();deleteAccount()">Delete Account</button>' +
       acctMobileDisclaimerHtml();
@@ -13100,6 +13102,44 @@ function logout() {
   fetch('/auth/logout', { method: 'POST' })
     .then(function () { window.location.reload(); })
     .catch(function () { window.location.reload(); });
+}
+/**
+ * Owner 2026-09-21 ask: bug-report link in the account menu (above Sign Out),
+ * going to Sentry's User Feedback widget when configured, falling back to
+ * mailto with prefilled context otherwise. Wired for both desktop and mobile
+ * hamburger so the surface is consistent. Tapping the button captures the
+ * last 30 console messages + current URL + user agent + viewport so the
+ * Sentry issue has enough to triage without a back-and-forth.
+ */
+function openBugReport() {
+  var sentry = window.Sentry;
+  if (sentry && typeof sentry.showReportDialog === 'function') {
+    try {
+      sentry.showReportDialog({
+        title: 'Report a bug — Congress.Trade',
+        subtitle: 'Tell us what broke. The last 30 console messages, the current page, and your account email (if signed in) are attached automatically so we can reproduce.',
+        labelName: 'Name',
+        labelEmail: 'Your email (optional)',
+        labelComments: 'What happened?',
+        labelClose: 'Close',
+        labelSubmit: 'Send Report',
+      });
+      return;
+    } catch (err) {
+      console.warn('Sentry.showReportDialog failed; falling back to mailto', err);
+    }
+  }
+  // Fallback when SENTRY_DSN is unset (CSP tight, no init ran) — same
+  // UX intent, owner email + page context pre-filled.
+  var ctx = [
+    'URL: ' + location.href,
+    'UA: ' + navigator.userAgent,
+    'Viewport: ' + (window.innerWidth || 0) + 'x' + (window.innerHeight || 0),
+    'Account: ' + ((ME && ME.user && ME.user.email) || 'guest'),
+  ].join('\n');
+  window.location.href = 'mailto:support@congress.trade?subject=' +
+    encodeURIComponent('[Bug] Congress.Trade ' + new Date().toISOString().slice(0, 10)) +
+    '&body=' + encodeURIComponent(ctx + '\n\n— describe what happened —\n');
 }
 function deleteAccount() {
   if (!window.confirm('Delete Account? This permanently deletes your account, delivery subscriptions, and personal information.  Apple subscriptions must also be cancelled in the App Store.  This cannot be undone.')) {

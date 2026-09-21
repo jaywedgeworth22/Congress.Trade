@@ -102,6 +102,36 @@ enum SentryTelemetry {
         }
     }
 
+    /// Last user-visible view name captured for bug-report context. Cheap
+    /// to set (one UserDefaults string); read once per bug report so the
+    /// Sentry feedback event says where the user was when something broke.
+    static var lastBreadcrumbView: String?
+
+    /// Owner 2026-09-21 ask: bug-report entry point (account menu + shake).
+    /// Submits a Sentry User Feedback event with the comments, optional
+    /// email, and a payload blob (app version + view + console context).
+    /// Returns true when the event was sent to Sentry, false when Sentry
+    /// is unconfigured (DSN blank) — the caller surfaces a friendly
+    /// "try again or email support" message instead of swallowing the tap.
+    static func captureUserFeedback(comments: String, email: String, payload: [String: Any]) async -> Bool {
+        // Sentry.captureUserFeedback lives on SentrySDK. If the SDK isn't
+        // configured (DSN blank in Info.plist), the call is a no-op and we
+        // return false so the sheet shows its retry path.
+        let eventId = SentrySDK.capture(message: "user_feedback: \(comments.prefix(80))") { scope in
+            scope.setLevel(.info)
+            scope.setExtras(payload.merging([
+                "comments": comments,
+                "feedback_email": email,
+                "source": "bug_report_sheet",
+            ], uniquingKeysWith: { _, new in new })
+        }
+        let sent = (eventId != nil)
+        if !sent {
+            print("[SentryTelemetry] captureUserFeedback no-op: SDK not configured (SENTRY_DSN missing)")
+        }
+        return sent
+    }
+
     /// Info.plist string, treating unsubstituted `$(VAR)` build settings as missing.
     private static func plistString(_ key: String) -> String? {
         guard let raw = Bundle.main.object(forInfoDictionaryKey: key) as? String else { return nil }

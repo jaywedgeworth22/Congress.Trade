@@ -1043,8 +1043,22 @@ struct AccountQuickMenu: View {
     @State private var showPremiumInfo = false
     @State private var showExportSheet = false
     @State private var showDeleteAccountConfirm = false
+    @State private var showBugReportSheet = false
     @State private var isOpeningManageSubscription = false
     @State private var manageSubscriptionError: String?
+
+    /// Listen for the iOS shake gesture (default OFF, gated by
+    /// `shake_to_report_enabled` UserDefaults). Posted from
+    /// `ShakeDetectorViewController.motionEnded` in App.swift; opens the
+    /// same `BugReportSheet` as the account-menu entry so both entry
+    /// points converge on one submission path.
+    private var shakeListener: some View {
+        EmptyView()
+            .onReceive(NotificationCenter.default.publisher(for: .shakeToReport)) { _ in
+                guard UserDefaults.standard.bool(forKey: "shake_to_report_enabled") else { return }
+                showBugReportSheet = true
+            }
+    }
 
     var body: some View {
         NavigationStack {
@@ -1056,6 +1070,21 @@ struct AccountQuickMenu: View {
                         Text(notice)
                             .padding(.top, 6)
                     }
+                }
+                .ctThemedRow()
+                .background(shakeListener)
+                    }
+                }
+                .ctThemedRow()
+
+                // Owner 2026-09-21 ask: shake-to-report toggle, default OFF.
+                // Lives in its own section so the label + hint read cleanly
+                // on the Account sheet, with the existing Report-a-Bug
+                // entry below in the danger zone as the alternate entry point.
+                Section {
+                    ShakeToReportToggle()
+                } footer: {
+                    Text("When on, shaking the device opens a bug-report sheet. Default is off — turn it on if you want one-gest reporting while testing.")
                 }
                 .ctThemedRow()
 
@@ -1103,6 +1132,20 @@ struct AccountQuickMenu: View {
 
                 if store.signedIn || store.hasStoredSessionToken {
                     Section {
+                        // Owner 2026-09-21 ask: Report a Bug above Sign Out.
+                        // Opens Sentry's User Feedback widget (configured
+                        // DSN) so the iOS session breadcrumbs, last-30
+                        // console lines, app version, and account email
+                        // attach automatically — no back-and-forth needed.
+                        Button {
+                            presentBugReportSheet()
+                        } label: {
+                            Label(
+                                "Report a Bug",
+                                systemImage: "ladybug"
+                            )
+                        }
+                        .accessibilityHint("Opens a feedback sheet. The app attaches the last 30 console lines and your account email so we can reproduce the issue.")
                         Button(role: .destructive) {
                             Task { await store.signOut() }
                         } label: {
@@ -1188,7 +1231,126 @@ struct AccountQuickMenu: View {
         } message: {
             Text("This permanently deletes your account, delivery subscriptions, and personal information.  Apple subscriptions must also be cancelled in Settings → Apple ID → Subscriptions.  This cannot be undone.")
         }
+        .sheet(isPresented: $showBugReportSheet) {
+            BugReportSheet()
+                .environmentObject(store)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+        }
     }
+
+    /// Opens the bug-report sheet. Owner 2026-09-21 ask: bug reports go
+    /// through Sentry's User Feedback widget when DSN is configured (the
+    /// widget is invoked from inside `BugReportSheet`), so the operator's
+    /// Sentry issue already carries app version + last-30 console lines +
+    /// current view + account email — no back-and-forth needed.
+    private func presentBugReportSheet() {
+        showBugReportSheet = true
+    }
+}
+
+/// Sentry User Feedback sheet. Owner 2026-09-21 ask: this is the entry
+/// point for both the account-menu "Report a Bug" button AND the shake-to-
+/// report gesture on mobile (default off, gated by
+/// `UserDefaults.shakeToReportEnabled`). Both paths converge here so the
+/// Sentry submission carries the same context regardless of entry point.
+struct BugReportSheet: View {
+    @EnvironmentObject private var store: CongressTradeStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var comments = ""
+    @State private var email = ""
+    @State private var submitting = false
+    @State private var submitError: String?
+    @State private var submitted = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("What happened?", text: $comments, axis: .vertical)
+                        .lineLimit(4...10)
+                    TextField("Your email (optional)", text: $email)
+                        .keyboardType(.emailAddress)
+                        .autocapitalization(.none)
+                } footer: {
+                    Text("The app attaches: version, last 30 console lines, current view, and account email (if signed in). Tap Send to forward to the developer's Sentry.")
+                }
+
+                Section {
+                    if let err = submitError {
+                        Text(err).foregroundStyle(.red)
+                    }
+                    if submitted {
+                        Label("Report sent — thank you.", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    }
+                }
+            }
+            .navigationTitle("Report a Bug")
+            .inlineNavigationTitle()
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(submitted ? "Done" : "Send") {
+                        if submitted { dismiss() } else { Task { await submit() } }
+                    }
+                    .disabled(comments.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || submitting)
+                }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private func submit() async {
+        submitting = true
+        defer { submitting = false }
+        let payload: [String: Any] = [
+            "comments": comments,
+            "email": email.isEmpty ? (store.signedInUser?.email ?? "guest") : email,
+            "app_version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?",
+            "ios_version": ProcessInfo.processInfo.operatingSystemVersionString,
+            "device": UIDevice.current.model,
+            "view": SentryTelemetry.lastBreadcrumbView ?? "unknown",
+            "submitted_at": ISO8601DateFormatter().string(from: Date()),
+        ]
+        // Send via Sentry's captureUserFeedback if SDK is configured
+        // (DSN set in plist + SentryTelemetry.start() ran). Falls back to
+        // a no-op + console error log when Sentry is unconfigured, so
+        // the button never breaks the surface.
+        let delivered = await SentryTelemetry.captureUserFeedback(
+            comments: comments,
+            email: email.isEmpty ? (store.signedInUser?.email ?? "guest") : email,
+            payload: payload
+        )
+        if delivered {
+            submitted = true
+        } else {
+            submitError = "Couldn't reach the bug-report endpoint. Try again, or email support@congress.trade."
+        }
+    }
+}
+
+/// Owner 2026-09-21 ask: shake-to-report on mobile (default off). Wired
+/// once at the App root via `.onShakeToReport` and only fires when the
+/// user has opted in via Settings → Account → "Shake to Report Bug".
+extension Notification.Name {
+    static let shakeToReport = Notification.Name("CT.shakeToReport")
+}
+
+/// Settings row for the shake-to-report opt-in toggle. Lives inside
+/// AccountQuickMenu below the Appearance row so the user can find it
+/// without scrolling past Account actions. Default false; the
+/// `ShakeDetectorViewController` reads the same UserDefaults key and
+/// stays subscribed only while this is on.
+struct ShakeToReportToggle: View {
+    @AppStorage("shake_to_report_enabled") private var enabled: Bool = false
+
+    var body: some View {
+        Toggle("Shake to Report Bug", isOn: $enabled)
+            .accessibilityHint("When on, shaking the device opens a bug-report sheet. Default is off.")
+    }
+}
 
     @ViewBuilder
     private var accountSection: some View {

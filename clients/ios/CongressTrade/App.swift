@@ -173,10 +173,27 @@ struct CongressTradeApp: App {
                 .onChange(of: appColorScheme) { _, pref in
                     AppAppearance.apply(pref)
                 }
+                // Owner 2026-09-21 ask: shake-to-report, default OFF. The
+                // hook is wired at the App root so every view inherits the
+                // gesture without per-screen plumbing; the AppStorage key
+                // `shake_to_report_enabled` is what the user toggles in
+                // Settings → Account. Notification fires `presentBugReportSheet`
+                // via the route stored in UserDefaults — see
+                // `ShakeToReportCoordinator`.
+                .modifier(ShakeToReportCoordinator(presenting: shakeToReportSignal))
                 .appUpdatePrompt()
         }
         .modelContainer(tradeCacheContainer)
     }
+
+    /// User opt-in toggle for shake-to-report. Default `false` per owner
+    /// ask — the shake gesture is hidden unless the user turns it on.
+    @AppStorage("shake_to_report_enabled") private var shakeToReportEnabled: Bool = false
+    /// Bumps when shake-to-report fires; the coordinator listens and posts
+    /// `.shakeToReport`. Stored as `Int` (Date().timeIntervalSince1970) so a
+    /// tap on the Account menu "Report a Bug" entry doesn't double-fire the
+    /// shake path; the menu uses `presentBugReportSheet()` directly.
+    @State private var shakeToReportSignal: Int = 0
 
     private var colorScheme: ColorScheme? {
         switch appColorScheme {
@@ -578,6 +595,70 @@ struct MainTabView: View {
 struct FilingSheetTarget: Identifiable, Hashable {
     let docId: String
     var id: String { docId }
+}
+
+// MARK: - Shake-to-report (owner 2026-09-21 ask, default OFF)
+
+/// View modifier that listens for the iOS shake gesture (motionEnded event
+/// delivered via UIWindow) and, when the user has opted in via the
+/// `shake_to_report_enabled` UserDefaults flag, posts the
+/// `.shakeToReport` notification. The Settings toggle lives in the
+/// Account section; default is OFF.
+///
+/// Wrapped in a UIViewControllerRepresentable so the UIKit motion-end
+/// callback reaches the SwiftUI tree even when no other UIKit responder
+/// is in the responder chain (a SwiftUI-only view tree normally does NOT
+/// become first responder, so `motionBegan/motionEnded` are dropped).
+struct ShakeToReportCoordinator: ViewModifier {
+    /// AppStorage-derived signal: increments whenever the user shakes. The
+    /// coordinator reads this and posts the notification when it changes.
+    /// We bind through this rather than reading UserDefaults directly so
+    /// SwiftUI re-renders when the Settings toggle flips.
+    let presenting: Int
+
+    func body(content: Content) -> some View {
+        content
+            .background(ShakeDetectorHost(signal: presenting))
+    }
+}
+
+private struct ShakeDetectorHost: UIViewControllerRepresentable {
+    let signal: Int
+
+    func makeUIViewController(context: Context) -> ShakeDetectorViewController {
+        ShakeDetectorViewController()
+    }
+
+    func updateUIViewController(_ vc: ShakeDetectorViewController, context: Context) {
+        // Re-trigger detector wiring on every signal bump so a toggle flip
+        // in Settings takes effect without needing to relaunch the app.
+        vc.isShakeEnabled = UserDefaults.standard.bool(forKey: "shake_to_report_enabled")
+    }
+}
+
+final class ShakeDetectorViewController: UIViewController {
+    /// Mirrors the UserDefaults flag so the responder stays subscribed only
+    /// while the user has opted in. Re-evaluated by updateUIViewController.
+    var isShakeEnabled: Bool = UserDefaults.standard.bool(forKey: "shake_to_report_enabled")
+
+    override var canBecomeFirstResponder: Bool { true }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        becomeFirstResponder()
+    }
+
+    override func motionEnded(_ motion: UIEvent.EventSubtype, with event: UIEvent?) {
+        super.motionEnded(motion, with: event)
+        guard motion == .motionShake else { return }
+        guard isShakeEnabled else { return }
+        // Single notification post per shake; the Account sheet listens
+        // and presents `BugReportSheet`. Avoids any per-view re-binding.
+        NotificationCenter.default.post(name: .shakeToReport, object: nil)
+        // Light haptic so the user knows the gesture was caught (they
+        // don't see a visual until the sheet appears ~250ms later).
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    }
 }
 
 // AppUpdatePrompt lives in AppUpdatePrompt.swift, copied from
