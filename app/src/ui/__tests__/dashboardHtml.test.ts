@@ -3947,7 +3947,11 @@ describe('design convergence — filter chrome + card restyle (issue #1529)', ()
     );
     // No border color at all (was var(--border), a blue-tinted gray that read
     // as a stray blue circle) — background stays transparent until hover/open.
-    expect(DASHBOARD_HTML).toContain('background:transparent; color:var(--text); font-size:18px; line-height:1;');
+    // Owner 2026-09-21 punch list: color is now --icon-grey (medium grey,
+    // ~30% lighter than --text), and font-size dropped from 18px → 15px
+    // (15% smaller). The 3 bars inside are drawn by .acct-hamburger-bars.
+    expect(DASHBOARD_HTML).toContain('background:transparent; color:var(--icon-grey); font-size:15px; line-height:1;');
+    expect(DASHBOARD_HTML).toContain('.acct-hamburger-bars { display:inline-flex; flex-direction:column;');
     expect(DASHBOARD_HTML).toContain(
       '.acct-hamburger:hover, .acct-hamburger[aria-expanded="true"] { background:var(--panel-2); color:var(--accent); }',
     );
@@ -6598,10 +6602,14 @@ describe('mobile tab bar centering (#2075 regression) + six-tab shrink + avatar 
     expect(render(null)).toBe('');
   });
 
-  it('renders the ☰ glyph on the mobile hamburger button for signed-out visitors', () => {
+  it('renders the 3-bar hamburger glyph on the mobile hamburger button for signed-out visitors', () => {
     const render = loadAccountSandbox();
     const btn = hamburgerButtonHtml(render(null));
-    expect(btn).toContain('>&#9776;</button>');
+    // Owner 2026-09-21 punch list: replaced the unicode ☰ (whose non-centered
+    // glyph metrics pushed the lines off-center inside the circle) with 3
+    // custom-drawn span bars rendered by .acct-hamburger-bars.
+    expect(btn).toContain('class="acct-hamburger-bars"');
+    expect(btn).not.toContain('&#9776;');
     expect(btn).not.toContain('<img');
     expect(btn).toContain('aria-label="Account menu"');
     expect(btn).toContain('aria-expanded="false"');
@@ -6613,6 +6621,7 @@ describe('mobile tab bar centering (#2075 regression) + six-tab shrink + avatar 
     const btn = hamburgerButtonHtml(
       render({ name: 'Jay Wedgeworth', email: 'jay@example.com', picture: 'https://example.com/photo.jpg' }),
     );
+    expect(btn).not.toContain('acct-hamburger-bars');
     expect(btn).not.toContain('&#9776;');
     expect(btn).toContain('<img src="https://example.com/photo.jpg" alt="" onerror="this.remove()"');
     // Initials render underneath the photo (same DOM as the desktop avatar),
@@ -6752,20 +6761,20 @@ describe('web chrome column + Trends flow rows (owner 2026-09-08)', () => {
 
 
   it('enlarges the wordmark on desktop and keeps the compact 40px lockup on phones', () => {
-    expect(DASHBOARD_HTML).toContain('.brand-logo { width:min(400px, 30vw); height:auto; max-width:100%; object-fit:contain;');
-    // >=1100px: never narrower than the 368px default filter row.
-    expect(DASHBOARD_HTML).toContain('@media (min-width: 1100px) { .brand-logo { width:clamp(368px, 30vw, 400px); } }');
+    // Owner 2026-09-21 punch list: 15% larger wordmark (400 → 460 on desktop,
+    // 368 → 423 at >=1100px, 280 → 322 on phones).
+    expect(DASHBOARD_HTML).toContain('.brand-logo { width:min(460px, 30vw); height:auto; max-width:100%; object-fit:contain;');
+    // >=1100px: never narrower than the 423px default filter row.
+    expect(DASHBOARD_HTML).toContain('@media (min-width: 1100px) { .brand-logo { width:clamp(423px, 30vw, 460px); } }');
     // Intrinsic size attributes so the 5:1 box is known before the PNG loads
     // (no header-height jump for the sticky filter offset).
     expect(DASHBOARD_HTML).toContain('alt="Congress.Trade" width="1670" height="334" decoding="async" />');
     // Both phone blocks carry the reset: the <=768px grid header and the
     // <=768px / coarse-pointer block (anchored on their neighbouring rules).
-    // Phones (owner 2026-09-08: larger there too): the wordmark fills the
-    // brand cell up to 280px; the <=768px grid block, the <=768px / coarse
-    // block and phone-chrome all carry it.
-    expect(DASHBOARD_HTML).toContain('    .brand-logo { width:280px; max-width:100%; height:auto; }\n    /* Replace the theme-toggle');
-    expect(DASHBOARD_HTML).toContain("control keeps its own column, so it never gets squeezed off. */\n    .brand-logo { width:280px; max-width:100%; height:auto; }");
-    expect(DASHBOARD_HTML).toContain('html.phone-chrome .brand-logo { width:280px; max-width:100%; height:auto; }');
+    // Phones: the wordmark fills the brand cell up to 322px; the <=768px
+    // grid block, the <=768px / coarse block and phone-chrome all carry it.
+    expect(DASHBOARD_HTML).toContain('    .brand-logo { width:322px; max-width:100%; height:auto; }');
+    expect(DASHBOARD_HTML).toContain('html.phone-chrome .brand-logo { width:322px; max-width:100%; height:auto; }');
     expect(DASHBOARD_HTML).not.toContain('.brand-logo { width:auto; height:40px;');
     expect(DASHBOARD_HTML).toContain(':root { --ct-header-h: 62px; --ct-main-pad: 12px; }');
   });

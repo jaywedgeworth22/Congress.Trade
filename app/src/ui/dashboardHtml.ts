@@ -180,6 +180,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     --border:    #2e3e65;
     --text:      #ffffff;
     --text-dim:  #b8c7dd;
+    --icon-grey: #9ca3af; /* medium grey for header hamburger + info glyphs (dark theme) */
     --accent:    #4f8cff;
     --buy:       #22c55e;
     --sell:      #ef4444;
@@ -230,6 +231,7 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     --panel-2:   #e8eff8;
     --border:    #c1cde2;
     --text:      #09101c;
+    --icon-grey: #6b7280; /* medium grey for header hamburger + info glyphs */
     --text-dim:  #34435b;
     --accent:    #2563eb;
     --buy:       #15803d;
@@ -386,7 +388,12 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     grid-template-rows: var(--control-h, 34px) minmax(var(--control-h, 34px), auto);
     row-gap: 12px; column-gap: 24px;
     align-items: center;
-    padding: 10px max(var(--ct-main-pad, 35px), calc(50% - var(--ct-col-max, 1730px) / 2));
+    padding: 5px max(var(--ct-main-pad, 35px), calc(50% - var(--ct-col-max, 1730px) / 2)) 14px;
+    /* Owner 2026-09-21 punch list: top padding halved (10 → 5px) so the
+       wordmark sits half the distance from the eagle's wingtip to the
+       dynamic island / browser chrome.  Bottom padding barely expanded
+       (10 → 14px) to keep the space below the bag-of-money roughly
+       equidistant with the new top space after the 15% wordmark growth. */
     border-bottom: none; background: var(--panel);
     -webkit-backdrop-filter: none; backdrop-filter: none;
     position: sticky; top: 0; z-index: 10;
@@ -444,12 +451,14 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      so it is sized by WIDTH and the 5:1 PNG sets the height (80px at 400px).
      The 30vw cap keeps it from crowding nav.tabs on 900-1300px laptops; the
      phone / coarse-pointer block below restores the compact 40px lockup. */
-  .brand-logo { width:min(400px, 30vw); height:auto; max-width:100%; object-fit:contain; flex:0 0 auto; display:block; background:transparent; border-radius:0; box-shadow:none; }
-  /* From 1100px the wordmark also floors at the default filter row's 368px
-     (30vw alone only crosses 368px at 1227px).  1100px is where a signed-in
-     account cluster (~270px) still fits beside a 368px logo + 319px nav
-     without wrapping nav.tabs onto a second line. */
-  @media (min-width: 1100px) { .brand-logo { width:clamp(368px, 30vw, 400px); } }
+  .brand-logo { width:min(460px, 30vw); height:auto; max-width:100%; object-fit:contain; flex:0 0 auto; display:block; background:transparent; border-radius:0; box-shadow:none; }
+  /* From 1100px the wordmark also floors at the default filter row's 423px
+     (30vw alone only crosses 423px at 1410px).  1100px is where a signed-in
+     account cluster (~270px) still fits beside a 423px logo + 319px nav
+     without wrapping nav.tabs onto a second line. Owner 2026-09-21 punch
+     list: 460px / 423px = 15% larger than the prior 400 / 368px wordmark;
+     height follows the 5:1 PNG so the eagle and wordmark grow together. */
+  @media (min-width: 1100px) { .brand-logo { width:clamp(423px, 30vw, 460px); } }
   .brand-text { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .brand .dot { color: var(--accent); }
   .pill { font-size: 11px; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-dim); }
@@ -1683,10 +1692,18 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
      tap target even though the avatar drawn inside it is only 28x28. */
   .acct-hamburger {
     width:44px; height:44px; border:none; border-radius: var(--radius-pill);
-    background:transparent; color:var(--text); font-size:18px; line-height:1;
+    background:transparent; color:var(--icon-grey); font-size:15px; line-height:1;
     display:flex; align-items:center; justify-content:center; cursor:pointer; padding:0;
   }
   .acct-hamburger:hover, .acct-hamburger[aria-expanded="true"] { background:var(--panel-2); color:var(--accent); }
+  /* Owner 2026-09-21 punch list: 3 custom-drawn bars (replaces the unicode
+     ☰ whose non-centered glyph metrics pushed the lines off-center inside
+     the circle). 15% smaller than the previous 18px font; medium-grey
+     (--icon-grey) instead of the dark --text. Bars are 12px wide (matches
+     the visual weight of the old glyph without crowding the 44px tap
+     target), 2px tall, 4px gap. */
+  .acct-hamburger-bars { display:inline-flex; flex-direction:column; gap:4px; width:14px; height:12px; align-items:center; justify-content:center; }
+  .acct-hamburger-bars > span { display:block; height:2px; width:100%; background:currentColor; border-radius:1px; }
   .acct-hamburger .avatar.lg { cursor:pointer; pointer-events:none; }
   .acct-mobile-menu {
     position:absolute; right:0; top:46px; z-index:60; min-width:220px;
@@ -1957,9 +1974,13 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   /* Single combined info popover replacing the old per-group ⓘs — a little
      larger than a plain .branch-info since it now carries every pictograph. */
   .filters-info-wrap { position:relative; display:inline-flex; align-items:center; }
-  .filters-info-wrap .branch-info { width:28px; height:28px; font-size:17px; }
+  .filters-info-wrap .branch-info { width:28px; height:28px; font-size:14px; color:var(--icon-grey); }
   .filters-info-wrap .branch-pop { min-width:250px; }
-  .branch-info { width:24px; height:24px; border-radius:999px; border:none; background:transparent; color:var(--text-dim); font-size:15px; line-height:1; cursor:pointer; padding:0; display:flex; align-items:center; justify-content:center; }
+  /* Owner 2026-09-21 punch list: info ⓘ matches the new hamburger treatment —
+     medium grey (--icon-grey, ~30% lighter than --text) and 15% smaller (14px
+     here vs 17px previously) so the two header glyphs sit at the same visual
+     weight. Stays centered inside the same-size 28px circle. */
+  .branch-info { width:24px; height:24px; border-radius:999px; border:none; background:transparent; color:var(--icon-grey); font-size:13px; line-height:1; cursor:pointer; padding:0; display:flex; align-items:center; justify-content:center; }
   .branch-info:hover, .branch-info:focus-visible, .branch-info[aria-expanded="true"] { color:var(--accent); outline:none; }
   .branch-pop { position:absolute; top:calc(100% + 8px); left:0; z-index:60; min-width:270px; max-width:min(340px, 92vw); background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:10px 12px; display:grid; gap:6px; font-size:12px; color:var(--text); box-shadow:0 10px 30px rgba(0,0,0,.35); }
   .branch-pop-row { display:grid; grid-template-columns:16px 1fr; gap:8px; align-items:baseline; }
@@ -2074,8 +2095,9 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     html:not([data-view="trades"]):not([data-view="trends"]) header.top { grid-template-rows: auto; row-gap: 0; }
     .trades-toolbars #qSearchField { max-width: none; }
     /* Row 1 has to hold logo + four tabs + account at 769px: a slightly
-       narrower wordmark (200px at 769px) keeps the tabs on one line. */
-    .brand-logo { width: min(368px, 26vw); }
+       narrower wordmark (~230px at 769px) keeps the tabs on one line.
+       Owner 2026-09-21 punch list: 423px = 15% larger than the prior 368px. */
+    .brand-logo { width: min(423px, 26vw); }
   }
   #exportCsvDialog { max-width:min(420px, 92vw); padding:16px; border:1px solid var(--border); border-radius:12px; background:var(--panel); color:var(--text); }
   #exportCsvDialog::backdrop { background:rgba(0,0,0,.45); }
@@ -2295,9 +2317,10 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     #view-trades, #view-trends { padding-top: 14px; }
     .brand { font-size: 15px; margin-left: 1ch; }
     /* Owner 2026-09-08: larger on phones too.  The wordmark fills the 1fr
-       brand cell up to 280px (56px tall at the 5:1 ratio); the account
-       control keeps its own column, so it never gets squeezed off. */
-    .brand-logo { width:280px; max-width:100%; height:auto; }
+       brand cell up to 322px (64px tall at the 5:1 ratio); the account
+       control keeps its own column, so it never gets squeezed off.
+       Owner 2026-09-21 punch list: 322px = 15% larger than the prior 280px. */
+    .brand-logo { width:322px; max-width:100%; height:auto; }
     .pill { padding: 3px 7px; }
     /* Full-bleed dock like Socratic.Trade console — not a floating glass pill.
        bottom:0 with safe-area padding INSIDE the painted bar so it sits
@@ -3165,7 +3188,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
        --ct-header-h (52px) lie, so sticky filters slid through the logo. */
     header.top { padding: 6px 10px 0; background: var(--panel); -webkit-backdrop-filter: none; backdrop-filter: none; }
     html[data-theme="light"] header.top { background: #fff; }
-    .brand-logo { width:280px; max-width:100%; height:auto; }
+    .brand-logo { width:322px; max-width:100%; height:auto; }
+    /* Owner 2026-09-21 punch list: 15% larger than the prior 280px (now 322px). */
     /* Replace the theme-toggle / Sign In / Upgrade cluster with a single
        hamburger button so the brand lockup is never squeezed off-screen
        (issue #1456 — brand hidden behind a 3-button theme toggle at 375px).
@@ -3176,7 +3200,8 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   html.phone-chrome .acct-desktop { display: none !important; }
   html.phone-chrome .acct-mobile { display: inline-flex !important; }
   html.phone-chrome .brand { margin-left: 1ch; }
-  html.phone-chrome .brand-logo { width:280px; max-width:100%; height:auto; }
+  html.phone-chrome .brand-logo { width:322px; max-width:100%; height:auto; }
+    /* Owner 2026-09-21 punch list: 15% larger than the prior 280px (now 322px). */
   @media (max-width: 768px), (hover: none) and (pointer: coarse) {
     .acct-desktop { display: none; }
     .acct-mobile { display: inline-flex; }
@@ -12933,7 +12958,7 @@ function renderAccount() {
   // Mobile hamburger button content: the ☰ glyph for signed-out visitors,
   // swapped below for the account avatar (photo, or initials fallback when
   // there is no ME.user.picture) once we know the visitor is signed in.
-  var hamburgerHtml = '&#9776;';
+  var hamburgerHtml = '<span class="acct-hamburger-bars" aria-hidden="true"><span></span><span></span><span></span></span>';
   if (!ME.user) {
     // Sign In + Upgrade as one joined control so they read as a pair, not two orphans.
     // Theme stays out of the signed-out top bar (owner: it dumped Light/Dark/System

@@ -175,9 +175,15 @@ enum AppTheme {
     static let primaryGradient = LinearGradient(colors: [.blue, .indigo], startPoint: .topLeading, endPoint: .bottomTrailing)
 
     /// Dark readable ink for filter/header chrome: dropdown chevrons, filter
-    /// glyphs, "3 Months" (and other filter words), the exchange arrows, the
-    /// header ⓘ, and the hamburger.
+    /// glyphs, "3 Months" (and other filter words), the exchange arrows.
     static let glyphGrey = Color(uiColor: .label)
+
+    /// Medium grey for the header hamburger + ⓘ icons only.  Owner 2026-09-21
+    /// punch list: ~30% lighter than `glyphGrey` (so they no longer read as
+    /// near-black text glyphs), iOS `systemGray` — same shade Apple uses for
+    /// secondary toolbar controls.  Kept separate from `glyphGrey` because the
+    /// filter chevrons still want the dark grey for legibility on the page.
+    static let headerIconGrey = Color(uiColor: .systemGray)
 
     /// Near-black ink for words that are not filter chrome — "Done", "Export
     /// CSV", "Subscribe with Apple", sort-field names, rows-per-page.  Filter
@@ -978,10 +984,11 @@ struct HeaderIconButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                // `.title3` (not a fixed point size) so the "slightly larger"
-                // glyph still scales with Dynamic Type.
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(AppTheme.glyphGrey)
+                // Owner 2026-09-21 punch list: 15% smaller than the previous
+                // `.title3` (≈20pt). `.body` (≈17pt) is the closest stock
+                // size and still scales with Dynamic Type.
+                .font(.body.weight(.semibold))
+                .foregroundStyle(AppTheme.headerIconGrey)
                 // minWidth/minHeight (not a fixed frame) so the tap target can
                 // grow past 34pt for large Dynamic Type sizes instead of
                 // clipping the glyph.
@@ -989,7 +996,7 @@ struct HeaderIconButton: View {
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .tint(AppTheme.glyphGrey)
+        .tint(AppTheme.headerIconGrey)
         .accessibilityLabel(accessibilityLabel)
     }
 }
@@ -1009,14 +1016,18 @@ struct HamburgerMenuButton: View {
         Button {
             showMenu = true
         } label: {
+            // Owner 2026-09-21 punch list: matches the header ⓘ — medium
+            // grey (headerIconGrey, iOS systemGray), 15% smaller than the
+            // previous `.title3` (≈20pt).  `.body` is the closest stock size
+            // and still scales with Dynamic Type.
             Image(systemName: "line.3.horizontal")
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(AppTheme.glyphGrey)
+                .font(.body.weight(.semibold))
+                .foregroundStyle(AppTheme.headerIconGrey)
                 .frame(minWidth: 34, minHeight: 34)
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
-        .tint(AppTheme.glyphGrey)
+        .tint(AppTheme.headerIconGrey)
         .accessibilityLabel("Menu")
         .sheet(isPresented: $showMenu) {
             AccountQuickMenu(isPresented: $showMenu)
@@ -1244,6 +1255,94 @@ struct AccountQuickMenu: View {
     private func presentBugReportSheet() {
         showBugReportSheet = true
     }
+
+    @ViewBuilder
+    private var accountSection: some View {
+        if store.signedIn, let user = store.signedInUser {
+            HStack(spacing: 10) {
+                Image(systemName: "person.crop.circle.fill")
+                    .font(.system(size: 30))
+                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(user.name?.isEmpty == false ? user.name! : user.email)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                    Text(store.entitlementLabel)
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.blue)
+                }
+            }
+            .accessibilityElement(children: .combine)
+        } else if store.hasStoredSessionToken {
+            Text("Session could not be verified.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Button {
+                Task { await store.refresh() }
+            } label: {
+                Label("Retry", systemImage: "arrow.clockwise")
+            }
+        } else {
+            SignInPanel(onSignedIn: { isPresented = false })
+                .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 16))
+        }
+    }
+
+    /// Premium entry point. Manage Subscription routes through
+    /// `resolveManageSubscriptionURL` (App Store for Apple; Stripe portal,
+    /// then website `/?billing=manage`, for web/Stripe). The not-yet-premium
+    /// path opens `PremiumSheet` (what you get, the plans, a way out).
+    @ViewBuilder
+    private var billingRow: some View {
+        if store.isPremium {
+            Button {
+                Task { await openManageSubscription() }
+            } label: {
+                HStack {
+                    Label("Manage Subscription", systemImage: "creditcard")
+                    if isOpeningManageSubscription {
+                        Spacer()
+                        ProgressView()
+                    }
+                }
+            }
+            .disabled(isOpeningManageSubscription)
+            .accessibilityHint(
+                store.entitlementSource == "apple"
+                    ? "Opens the App Store subscriptions page"
+                    : "Opens the Congress.Trade billing portal"
+            )
+            if let manageSubscriptionError {
+                Text(manageSubscriptionError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        } else {
+            Button {
+                showPremiumInfo = true
+            } label: {
+                Label("Premium", systemImage: "sparkles")
+            }
+        }
+    }
+
+    /// Routes by `entitlementSource` — see `Store/ManageSubscription.swift`.
+    /// A URL (portal, App Store, or website manage fallback) closes the
+    /// sheet and opens it.  Offline / remaining failures stay put with
+    /// `manageSubscriptionError` instead of a dead App Store link.
+    private func openManageSubscription() async {
+        manageSubscriptionError = nil
+        isOpeningManageSubscription = true
+        defer { isOpeningManageSubscription = false }
+        switch await store.resolveManageSubscriptionURL() {
+        case .url(let url):
+            isPresented = false
+            openURL(url)
+        case .failed(let message):
+            manageSubscriptionError = message
+        }
+    }
 }
 
 /// Sentry User Feedback sheet. Owner 2026-09-21 ask: this is the entry
@@ -1346,95 +1445,6 @@ struct ShakeToReportToggle: View {
     var body: some View {
         Toggle("Shake to Report Bug", isOn: $enabled)
             .accessibilityHint("When on, shaking the device opens a bug-report sheet. Default is off.")
-    }
-}
-
-    @ViewBuilder
-    private var accountSection: some View {
-        if store.signedIn, let user = store.signedInUser {
-            HStack(spacing: 10) {
-                Image(systemName: "person.crop.circle.fill")
-                    .font(.system(size: 30))
-                    .foregroundStyle(.secondary)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(user.name?.isEmpty == false ? user.name! : user.email)
-                        .font(.subheadline.weight(.semibold))
-                        .lineLimit(1)
-                    Text(store.entitlementLabel)
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(.blue)
-                }
-            }
-            .accessibilityElement(children: .combine)
-        } else if store.hasStoredSessionToken {
-            Text("Session could not be verified.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            Button {
-                Task { await store.refresh() }
-            } label: {
-                Label("Retry", systemImage: "arrow.clockwise")
-            }
-        } else {
-            SignInPanel(onSignedIn: { isPresented = false })
-                .listRowInsets(EdgeInsets(top: 10, leading: 16, bottom: 10, trailing: 16))
-        }
-    }
-
-    /// Premium entry point. Manage Subscription routes through
-    /// `resolveManageSubscriptionURL` (App Store for Apple; Stripe portal,
-    /// then website `/?billing=manage`, for web/Stripe). The not-yet-premium
-    /// path opens `PremiumSheet` (what you get, the plans, a way out).
-    @ViewBuilder
-    private var billingRow: some View {
-        if store.isPremium {
-            Button {
-                Task { await openManageSubscription() }
-            } label: {
-                HStack {
-                    Label("Manage Subscription", systemImage: "creditcard")
-                    if isOpeningManageSubscription {
-                        Spacer()
-                        ProgressView()
-                    }
-                }
-            }
-            .disabled(isOpeningManageSubscription)
-            .accessibilityHint(
-                store.entitlementSource == "apple"
-                    ? "Opens the App Store subscriptions page"
-                    : "Opens the Congress.Trade billing portal"
-            )
-            if let manageSubscriptionError {
-                Text(manageSubscriptionError)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        } else {
-            Button {
-                showPremiumInfo = true
-            } label: {
-                Label("Premium", systemImage: "sparkles")
-            }
-        }
-    }
-
-    /// Routes by `entitlementSource` — see `Store/ManageSubscription.swift`.
-    /// A URL (portal, App Store, or website manage fallback) closes the
-    /// sheet and opens it.  Offline / remaining failures stay put with
-    /// `manageSubscriptionError` instead of a dead App Store link.
-    private func openManageSubscription() async {
-        manageSubscriptionError = nil
-        isOpeningManageSubscription = true
-        defer { isOpeningManageSubscription = false }
-        switch await store.resolveManageSubscriptionURL() {
-        case .url(let url):
-            isPresented = false
-            openURL(url)
-        case .failed(let message):
-            manageSubscriptionError = message
-        }
     }
 }
 
