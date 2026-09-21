@@ -25,7 +25,30 @@ export interface PipelineCheck {
   id: string;
   status: PipelineStatus;
   detail: string;
-  value?: number | string | null | { worstBehind: number; legs: Record<string, { date: string | null; behind: number | null }> };
+  /**
+   * 2026-09-21: structured payload for checks that need more than a scalar.
+   * `price_freshness` uses the worstBehind/legs shape; `filing_skips` and
+   * `fmp_latency` use structured objects too. Plain scalars (number /
+   * string / null) are still permitted for the simple checks.
+   */
+  value?:
+    | number
+    | string
+    | null
+    | { worstBehind: number; legs: Record<string, { date: string | null; behind: number | null }> }
+    | {
+        total: number;
+        byAction: Partial<Record<'extract_empty_failure' | 'auto_resolved_empty' | 'doc_quarantined', number>>;
+        threshold: number;
+      }
+    | {
+        observationCount24h: number | null;
+        lastObservationAt: string | null;
+        lastObservationAgeSec: number | null;
+        http429s24h: number | null;
+        byProvider: Record<string, { count: number; lastLatencyMs: number | null; lastAt: string | null }> | null;
+      }
+    | Record<string, unknown>;
 }
 
 export interface PipelineHealth {
@@ -33,6 +56,14 @@ export interface PipelineHealth {
   checks: PipelineCheck[];
   /** Disjoint unresolved review-queue buckets.  Absent when uncollected. */
   reviewQueue?: ReviewQueueHealthCounts | null;
+  /** 2026-09-21: extended signals surfaced to admin/dashboard. */
+  signals?: {
+    filingSkips24h: number | null;
+    filingSkipsByAction24h: PipelineSignals['filingSkipsByAction24h'];
+    fmpLatency: PipelineSignals['fmpLatency'];
+    priceEodLatestDate: string | null;
+    spxEodLatestDate: string | null;
+  };
 }
 
 export interface PipelineSignals {
@@ -52,6 +83,33 @@ export interface PipelineSignals {
   reviewTerminal: number | null;
   extractionAttempts24h: number | null;
   extractionOk24h: number | null;
+  /**
+   * 2026-09-21: count of filings in the last 24h whose extract produced zero
+   * usable transactions (`extract_empty_failure`, `auto_resolved_empty`,
+   * `doc_quarantined`). These outcomes are almost-always an app error
+   * (corrupt parse, OCR failure, model dead-letter) — not a real "this
+   * filing was blank". A non-zero count is the loud red flag the admin
+   * surface and Pushover liveness alarm look for. Tunable via env
+   * CT_FILING_SKIP_THRESHOLD_24H (default 0 — page on the first one).
+   */
+  filingSkips24h: number | null;
+  /** 2026-09-21: per-provider breakdown of recent skips (admin + dashboard). */
+  filingSkipsByAction24h: Record<'extract_empty_failure' | 'auto_resolved_empty' | 'doc_quarantined', number> | null;
+  /**
+   * 2026-09-21: FMP-family latency summary for both admin and user surfaces.
+   * The user-facing dashboard renders `lastObservationAgeSec` + `observationCount24h`
+   * so a free-tier key outage shows up immediately instead of only on the
+   * health endpoint. 429 hit-rate is exposed as `http429s24h` so a key
+   * rotation problem is visible before FMP starts returning 401/403.
+   */
+  fmpLatency: {
+    observationCount24h: number | null;
+    lastObservationAt: string | null;
+    lastObservationAgeSec: number | null;
+    http429s24h: number | null;
+    /** Per-provider last-observation age (seconds) when trade_provider_observations is reachable. */
+    byProvider: Record<string, { lastObservationAt: string | null; ageSec: number | null; count24h: number | null }> | null;
+  } | null;
   lastExtractionSuccessAt: string | null;
   /**
    * Submission receipts from the Mac/server local-vision workers in 24h
@@ -382,7 +440,88 @@ export function evaluatePipelineSignals(
     }
   }
 
-  // 4. Review queue backlog — ANY unresolved human-review item is unhealthy.
+  // 4. Filing skips (extract_empty_failure / auto_resolved_empty / doc_quarantined).
+  // Owner 2026-09-21 ask: "big red flag ... anytime a filing is skipped or
+  // considered empty or blank or unreadable since that is almost always
+  // false and app error." These three outcomes are the "almost always an
+  // app error" set: real blank filings are vanishingly rare (the docs are
+  // PDFs from official sources). Default threshold is 0 (page on the first
+  // occurrence); tunable via CT_FILING_SKIP_THRESHOLD_24H for owners who
+  // want a small noise floor.
+  // Env access is guarded so vitest (Node) tests don't ReferenceError on Deno.
+  const envGet = (k: string): string | undefined => {
+    try { return (globalThis as { Deno?: { env: { get(k: string): string | undefined } } }).Deno?.env.get(k); }
+    catch { return undefined; }
+  };
+  if (s.filingSkips24h != null) {
+    const threshold = (() => {
+      const n = Number.parseInt(envGet('CT_FILING_SKIP_THRESHOLD_24H') || '', 10);
+      return Number.isFinite(n) && n >= 0 ? Math.min(n, 100) : 0;
+    })();
+    if (s.filingSkips24h > threshold) {
+      const byAction: Partial<Record<'extract_empty_failure' | 'auto_resolved_empty' | 'doc_quarantined', number>> =
+        s.filingSkipsByAction24h ?? {};
+      const breakdown = Object.entries(byAction)
+        .filter(([, v]) => typeof v === 'number' && v > 0)
+        .map(([k, v]) => `${k}=${v}`)
+        .join(', ') || 'unknown';
+      checks.push({
+        id: 'filing_skips',
+        status: 'critical',
+        detail: `${s.filingSkips24h} filing(s) extract-produced-empty/blank/unreadable in last 24h (threshold ${threshold}; ${breakdown}). Almost always an app error — investigate the underlying OCR/vision/model failure.`,
+        value: { total: s.filingSkips24h, byAction, threshold },
+      });
+    } else {
+      checks.push({
+        id: 'filing_skips',
+        status: 'ok',
+        detail: `${s.filingSkips24h} filing skips in 24h (threshold ${threshold})`,
+        value: { total: s.filingSkips24h, byAction: s.filingSkipsByAction24h, threshold },
+      });
+    }
+  } else {
+    checks.push({ id: 'filing_skips', status: 'unknown', detail: 'Filing skip telemetry uncollected', value: null });
+  }
+
+  // 5. FMP latency (admin + user-visible).
+  // Owner 2026-09-21 ask: FMP latency data should be shown for admin AND
+  // users. This surfaces trade_provider_observations summary + 24h HTTP
+  // 429 count so a free-tier key rotation problem is visible BEFORE FMP
+  // starts returning 401/403 (which would silently stall the price refresh
+  // lane — the 2026-09-20 outage class).
+  if (s.fmpLatency != null) {
+    const ageSec = s.fmpLatency.lastObservationAgeSec;
+    const count = s.fmpLatency.observationCount24h;
+    const f429 = s.fmpLatency.http429s24h;
+    const probeExpected = (() => {
+      const on = envGet('FMP_LATENCY_PROBE_ENABLED');
+      return on !== 'false' && on !== '0';
+    })();
+    const isCritical = probeExpected && (ageSec == null || ageSec > 3 * 3600 || (count ?? 0) === 0);
+    const isDegraded = !isCritical && (ageSec == null || ageSec > 3600 || (f429 ?? 0) > 5);
+    const tier: PipelineStatus = isCritical ? 'critical' : isDegraded ? 'degraded' : 'ok';
+    const detail = isCritical
+      ? `FMP latency probe silent for ${ageSec != null ? Math.round(ageSec / 60) + ' min' : 'no observation in 48h'} (${count ?? 0} obs/24h). Check FMP_LATENCY_API_KEY rotation.`
+      : isDegraded
+        ? `FMP latency probe lagging (last age ${ageSec != null ? Math.round(ageSec / 60) + ' min' : 'unknown'}, ${f429 ?? 0} HTTP 429s in 24h).`
+        : `FMP latency probe live (last observation ${ageSec != null ? Math.round(ageSec / 60) + ' min ago' : 'unknown'}, ${count ?? 0} obs in 24h, ${f429 ?? 0} 429s).`;
+    checks.push({
+      id: 'fmp_latency',
+      status: tier,
+      detail,
+      value: {
+        observationCount24h: count,
+        lastObservationAt: s.fmpLatency.lastObservationAt,
+        lastObservationAgeSec: ageSec,
+        http429s24h: f429,
+        byProvider: s.fmpLatency.byProvider,
+      },
+    });
+  } else {
+    checks.push({ id: 'fmp_latency', status: 'unknown', detail: 'FMP latency telemetry uncollected', value: null });
+  }
+
+  // 6. Review queue backlog — ANY unresolved human-review item is unhealthy.
   if (s.reviewBacklog === null) {
     checks.push({ id: 'extraction_backlog', status: 'unknown', detail: 'Review backlog uncollected', value: null });
   } else if (s.reviewBacklog > 0) {
@@ -757,7 +896,20 @@ export function evaluatePipelineSignals(
     overall = worstStatus(overall, c.status);
   }
 
-  return { status: overall, checks };
+  // 2026-09-21: surface the new signals alongside the existing checks so
+  // admin / dashboard can render them without re-querying. The structured
+  // shape matches PipelineSignals so the field set stays consistent.
+  return {
+    status: overall,
+    checks,
+    signals: {
+      filingSkips24h: s.filingSkips24h,
+      filingSkipsByAction24h: s.filingSkipsByAction24h,
+      fmpLatency: s.fmpLatency,
+      priceEodLatestDate: s.priceEodLatestDate,
+      spxEodLatestDate: s.spxEodLatestDate,
+    },
+  };
 }
 
 /**
@@ -787,6 +939,11 @@ export async function checkPipelineHealth(env: Env, now = new Date()): Promise<P
   let strandedFilings: number | null = null;
   let priceEodLatestDate: string | null = null;
   let spxEodLatestDate: string | null = null;
+  // 2026-09-21: filing-skips signal (extract_empty_failure / auto_resolved_empty / doc_quarantined).
+  let filingSkips24h: number | null = null;
+  let filingSkipsByAction24h: PipelineSignals['filingSkipsByAction24h'] = null;
+  // 2026-09-21: FMP-family latency surface for admin + user dashboards.
+  let fmpLatency: PipelineSignals['fmpLatency'] = null;
 
   try {
     // securities_ref.latest_price_date is indexed (migration 0043); scanning price_eod (1.4M rows) for MAX(date) is not.
@@ -797,6 +954,88 @@ export async function checkPipelineHealth(env: Env, now = new Date()): Promise<P
   try {
     const res = await get<{ d: string | null }>(env.DB, 'SELECT MAX(date) AS d FROM spx_eod');
     spxEodLatestDate = res?.d ?? null;
+  } catch {}
+
+  // 2026-09-21: filing skips in last 24h. Almost always app error (corrupt
+  // parse, OCR failure, vision model dead-letter). Real blank filings are
+  // vanishingly rare — the docs are PDFs from official sources.
+  try {
+    const res = await get<{ extract_empty_failure: number | null; auto_resolved_empty: number | null; doc_quarantined: number | null }>(
+      env.DB,
+      `SELECT
+         SUM(CASE WHEN action = 'extract_empty_failure' THEN 1 ELSE 0 END) AS extract_empty_failure,
+         SUM(CASE WHEN action = 'auto_resolved_empty'   THEN 1 ELSE 0 END) AS auto_resolved_empty,
+         SUM(CASE WHEN action = 'doc_quarantined'       THEN 1 ELSE 0 END) AS doc_quarantined
+       FROM ingestion_decisions
+       WHERE created_at >= ?`,
+      [iso24hAgo],
+    );
+    const ee = Number(res?.extract_empty_failure ?? 0);
+    const ar = Number(res?.auto_resolved_empty ?? 0);
+    const dq = Number(res?.doc_quarantined ?? 0);
+    filingSkips24h = ee + ar + dq;
+    filingSkipsByAction24h = {
+      extract_empty_failure: ee,
+      auto_resolved_empty: ar,
+      doc_quarantined: dq,
+    };
+  } catch {}
+
+  // 2026-09-21: FMP-family latency. Two parts: trade_provider_observations
+  // gives us the per-provider last-observation age (the latency scoreboard
+  // data); fmp-latency:http429:keyN KV keys count 24h 429s. Both are cheap.
+  try {
+    const provRows = await all<{
+      provider: string;
+      last_observed_at: string | null;
+      count24h: number | null;
+    }>(
+      env.DB,
+      `SELECT provider,
+              MAX(last_observed_at) AS last_observed_at,
+              SUM(CASE WHEN last_observed_at >= ? THEN 1 ELSE 0 END) AS count24h
+         FROM trade_provider_observations
+        WHERE last_observed_at IS NOT NULL AND last_observed_at >= ?
+        GROUP BY provider`,
+      [iso24hAgo, new Date(nowMs - 48 * 3600 * 1000).toISOString()],
+    );
+    let lastObservationAt: string | null = null;
+    let observationCount24h = 0;
+    const byProvider: NonNullable<PipelineSignals['fmpLatency']>['byProvider'] = {};
+    for (const r of provRows) {
+      const ageMs = r.last_observed_at ? nowMs - Date.parse(r.last_observed_at) : null;
+      byProvider[r.provider] = {
+        lastObservationAt: r.last_observed_at,
+        ageSec: ageMs != null && Number.isFinite(ageMs) ? Math.max(0, Math.round(ageMs / 1000)) : null,
+        count24h: r.count24h != null ? Number(r.count24h) : null,
+      };
+      if (r.last_observed_at && (!lastObservationAt || Date.parse(r.last_observed_at) > Date.parse(lastObservationAt))) {
+        lastObservationAt = r.last_observed_at;
+      }
+      observationCount24h += r.count24h != null ? Number(r.count24h) : 0;
+    }
+    const lastAgeMs = lastObservationAt ? nowMs - Date.parse(lastObservationAt) : null;
+    fmpLatency = {
+      observationCount24h,
+      lastObservationAt,
+      lastObservationAgeSec: lastAgeMs != null && Number.isFinite(lastAgeMs) ? Math.max(0, Math.round(lastAgeMs / 1000)) : null,
+      http429s24h: null, // populated below from KV
+      byProvider,
+    };
+  } catch {}
+
+  // 2026-09-21: count 24h 429s across both FMP latency slots. Cheaper to read
+  // than to maintain a separate counter on every probe — keys auto-expire
+  // after 36h anyway (see tradeLatency.ts:644-686 for the key shape).
+  try {
+    const kvList = await env.CONFIG_KV.list<{ count?: number }>({ prefix: 'fmp-latency:http429:key' });
+    let total = 0;
+    for (const k of kvList.keys) {
+      const v = await env.CONFIG_KV.get(k.name, 'json');
+      const n = Number((v as { count?: number } | null)?.count ?? 0);
+      if (Number.isFinite(n) && n > 0) total += n;
+    }
+    if (fmpLatency) fmpLatency.http429s24h = total;
   } catch {}
 
   try {
@@ -1056,6 +1295,9 @@ export async function checkPipelineHealth(env: Env, now = new Date()): Promise<P
     residentialProxyConfigured,
     priceEodLatestDate,
     spxEodLatestDate,
+    filingSkips24h,
+    filingSkipsByAction24h,
+    fmpLatency,
   };
 
   const evaluated = evaluatePipelineSignals(signals, nowMs);
