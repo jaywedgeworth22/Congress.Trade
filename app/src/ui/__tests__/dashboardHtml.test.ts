@@ -6740,9 +6740,8 @@ describe('web chrome column + Trends flow rows (owner 2026-09-08)', () => {
     expect(DASHBOARD_HTML).toContain(':root { --ct-header-h: 100px; --ct-main-pad: 35px; --trends-gap: 24px; --ct-col-max: 1730px; }');
     expect(DASHBOARD_HTML).toContain('html[data-view="trends"] { --ct-col-max: 1280px; }');
     expect(DASHBOARD_HTML).toContain('<html lang="en" data-view="trends">');
-    // Symmetric vertical pad (nav + account centered in the white band); side
-    // pads reach the column once its cap engages, 35px before that.
-    expect(DASHBOARD_HTML).toContain('padding: 10px max(var(--ct-main-pad, 35px), calc(50% - var(--ct-col-max, 1730px) / 2));');
+    // Owner 2026-09-21 punch list: top padding 5px, bottom padding 14px.
+    expect(DASHBOARD_HTML).toContain('padding: 5px max(var(--ct-main-pad, 35px), calc(50% - var(--ct-col-max, 1730px) / 2)) 14px;');
     expect(DASHBOARD_HTML).not.toContain('padding: 14px 35px 4px;');
     // Owner 2026-09-09: the filter row is header.top grid row 2 (right of
     // the wordmark, under the tabs) — it inherits the header's column pads,
