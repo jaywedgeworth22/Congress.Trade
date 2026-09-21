@@ -12987,6 +12987,7 @@ function renderAccount() {
           adminMenuHtml('closeAcctMenu();') +
           '<div class="menu-divider"></div>' +
           '<button type="button" onclick="openBugReport()">Report a Bug</button>' +
+          '<div class="menu-divider"></div>' +
           '<button type="button" onclick="logout()">Sign Out</button>' +
           '<button type="button" onclick="closeAcctMenu();deleteAccount()">Delete Account</button>' +
         '</div>' +
@@ -13006,6 +13007,7 @@ function renderAccount() {
       adminMenuHtml('closeAcctMobileMenu();') +
       '<div class="menu-divider"></div>' +
       '<button type="button" onclick="closeAcctMobileMenu();openBugReport()">Report a Bug</button>' +
+      '<div class="menu-divider"></div>' +
       '<button type="button" onclick="closeAcctMobileMenu();logout()">Sign Out</button>' +
       '<button type="button" onclick="closeAcctMobileMenu();deleteAccount()">Delete Account</button>' +
       acctMobileDisclaimerHtml();
@@ -13140,10 +13142,10 @@ function openBugReport() {
     'UA: ' + navigator.userAgent,
     'Viewport: ' + (window.innerWidth || 0) + 'x' + (window.innerHeight || 0),
     'Account: ' + ((ME && ME.user && ME.user.email) || 'guest'),
-  ].join('\n');
+  ].join('\\n');
   window.location.href = 'mailto:support@congress.trade?subject=' +
     encodeURIComponent('[Bug] Congress.Trade ' + new Date().toISOString().slice(0, 10)) +
-    '&body=' + encodeURIComponent(ctx + '\n\n— describe what happened —\n');
+    '&body=' + encodeURIComponent(ctx + '\\n\\n— describe what happened —\\n');
 }
 function deleteAccount() {
   if (!window.confirm('Delete Account? This permanently deletes your account, delivery subscriptions, and personal information.  Apple subscriptions must also be cancelled in the App Store.  This cannot be undone.')) {

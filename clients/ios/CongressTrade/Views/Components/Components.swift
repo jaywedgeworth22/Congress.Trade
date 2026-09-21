@@ -1073,9 +1073,6 @@ struct AccountQuickMenu: View {
                 }
                 .ctThemedRow()
                 .background(shakeListener)
-                    }
-                }
-                .ctThemedRow()
 
                 // Owner 2026-09-21 ask: shake-to-report toggle, default OFF.
                 // Lives in its own section so the label + hint read cleanly

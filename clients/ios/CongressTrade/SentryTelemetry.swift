@@ -123,7 +123,7 @@ enum SentryTelemetry {
                 "comments": comments,
                 "feedback_email": email,
                 "source": "bug_report_sheet",
-            ], uniquingKeysWith: { _, new in new })
+            ], uniquingKeysWith: { _, new in new }))
         }
         let sent = (eventId != nil)
         if !sent {

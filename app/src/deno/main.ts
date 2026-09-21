@@ -283,7 +283,7 @@ if (!costProfile.disableInternalCron) {
           tags: { cron: 'deno-tick', class: 'stuck-force-released' },
           extra: { heldMs, consecutive: consecutiveOverlapTicks },
         });
-        datadogCaptureException(err, { cron: 'deno-tick', class: 'stuck-force-released', heldMs });
+        datadogCaptureException(err, { cron: 'deno-tick', class: 'stuck-force-released', heldMs: String(heldMs), consecutive: String(consecutiveOverlapTicks) });
         tickInFlight = false;
         tickInFlightSinceMs = 0;
         // Fall through: this tick will now run normally. The previous tick

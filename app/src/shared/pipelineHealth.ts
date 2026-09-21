@@ -25,7 +25,30 @@ export interface PipelineCheck {
   id: string;
   status: PipelineStatus;
   detail: string;
-  value?: number | string | null | { worstBehind: number; legs: Record<string, { date: string | null; behind: number | null }> };
+  /**
+   * 2026-09-21: structured payload for checks that need more than a scalar.
+   * `price_freshness` uses the worstBehind/legs shape; `filing_skips` and
+   * `fmp_latency` use structured objects too. Plain scalars (number /
+   * string / null) are still permitted for the simple checks.
+   */
+  value?:
+    | number
+    | string
+    | null
+    | { worstBehind: number; legs: Record<string, { date: string | null; behind: number | null }> }
+    | {
+        total: number;
+        byAction: Partial<Record<'extract_empty_failure' | 'auto_resolved_empty' | 'doc_quarantined', number>>;
+        threshold: number;
+      }
+    | {
+        observationCount24h: number | null;
+        lastObservationAt: string | null;
+        lastObservationAgeSec: number | null;
+        http429s24h: number | null;
+        byProvider: Record<string, { count: number; lastLatencyMs: number | null; lastAt: string | null }> | null;
+      }
+    | Record<string, unknown>;
 }
 
 export interface PipelineHealth {
@@ -436,8 +459,12 @@ export function evaluatePipelineSignals(
       return Number.isFinite(n) && n >= 0 ? Math.min(n, 100) : 0;
     })();
     if (s.filingSkips24h > threshold) {
-      const byAction = s.filingSkipsByAction24h ?? {};
-      const breakdown = Object.entries(byAction).filter(([, v]) => v > 0).map(([k, v]) => `${k}=${v}`).join(', ') || 'unknown';
+      const byAction: Partial<Record<'extract_empty_failure' | 'auto_resolved_empty' | 'doc_quarantined', number>> =
+        s.filingSkipsByAction24h ?? {};
+      const breakdown = Object.entries(byAction)
+        .filter(([, v]) => typeof v === 'number' && v > 0)
+        .map(([k, v]) => `${k}=${v}`)
+        .join(', ') || 'unknown';
       checks.push({
         id: 'filing_skips',
         status: 'critical',
@@ -1001,13 +1028,11 @@ export async function checkPipelineHealth(env: Env, now = new Date()): Promise<P
   // than to maintain a separate counter on every probe — keys auto-expire
   // after 36h anyway (see tradeLatency.ts:644-686 for the key shape).
   try {
-    const kv429 = await all<{ k: string; v: string | null }>(
-      env,
-      `?prefix=fmp-latency:http429:key`,
-    ).catch(() => []);
+    const kvList = await env.CONFIG_KV.list<{ count?: number }>({ prefix: 'fmp-latency:http429:key' });
     let total = 0;
-    for (const r of (kv429 as Array<{ v: string | null }>)) {
-      const n = Number.parseInt(r.v ?? '0', 10);
+    for (const k of kvList.keys) {
+      const v = await env.CONFIG_KV.get(k.name, 'json');
+      const n = Number((v as { count?: number } | null)?.count ?? 0);
       if (Number.isFinite(n) && n > 0) total += n;
     }
     if (fmpLatency) fmpLatency.http429s24h = total;
@@ -1270,6 +1295,9 @@ export async function checkPipelineHealth(env: Env, now = new Date()): Promise<P
     residentialProxyConfigured,
     priceEodLatestDate,
     spxEodLatestDate,
+    filingSkips24h,
+    filingSkipsByAction24h,
+    fmpLatency,
   };
 
   const evaluated = evaluatePipelineSignals(signals, nowMs);

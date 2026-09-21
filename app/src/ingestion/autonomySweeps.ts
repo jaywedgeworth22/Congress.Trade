@@ -533,7 +533,12 @@ async function maybeAutoRecoverPrice(
   now: Date,
   check: { id: string; status: string; detail: string },
 ): Promise<{ attempted: boolean; ok: boolean; error?: string } | null> {
-  if (env.CT_DISABLE_PRICE_AUTO_RECOVER === '1') return null;
+  // Env access guarded so vitest (Node) tests don't ReferenceError on Deno.
+  const envGet = (k: string): string | undefined => {
+    try { return (globalThis as { Deno?: { env: { get(k: string): string | undefined } } }).Deno?.env.get(k); }
+    catch { return undefined; }
+  };
+  if (envGet('CT_DISABLE_PRICE_AUTO_RECOVER') === '1') return null;
   if (check.id !== 'price_freshness') return null;
   if (check.status !== 'critical' && check.status !== 'stalled') return null;
   const kvKey = `${LIVENESS_ALARM_KV_PREFIX}auto-recover:${check.id}`;
@@ -620,7 +625,7 @@ export async function sweepPollingHeartbeat(
   let rows: Array<{ source: string; last_attempt: string | null }> = [];
   try {
     rows = await all<{ source: string; last_attempt: string | null }>(
-      env,
+      env.DB,
       `SELECT CASE WHEN lower(source) IN ('oge', 'exec') THEN 'executive' ELSE source END AS source,
               MAX(attempted_at) AS last_attempt
          FROM source_attempts
@@ -874,6 +879,7 @@ export async function runAutonomySweeps(
     deterministicDrain: null,
     localVisionRequeue: null,
     hostedFallback: null,
+    pollingHeartbeat: null,
     errors,
   };
   const throwIfAborted = () => {
