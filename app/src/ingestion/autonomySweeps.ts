@@ -20,9 +20,10 @@
 
 import { extractText, getDocumentProxy } from 'unpdf';
 import type { Env } from '../shared/types.ts';
-import { all, run } from '../shared/db.ts';
+import { all, run, optionalAll } from '../shared/db.ts';
 import { checkPipelineHealth } from '../shared/pipelineHealth.ts';
 import { sendPushover } from '../shared/pushover.ts';
+import { sentryLoggerWarn } from '../shared/sentryRuntime.ts';
 import { fetchHouseIndex } from './houseSource.ts';
 import {
   maybeRunDeterministicReviewDrain,
@@ -406,6 +407,11 @@ export interface AutonomySweepResult {
   filedDateBackfill: FiledDateBackfillResult | null;
   ogeUndated: OgeUndatedBackfillResult | null;
   livenessAlarms: LivenessAlarmResult | null;
+  /** 2026-09-21: per-source polling heartbeat — pages when a chamber has gone
+   *  N hours without ANY source_attempts row (the failure class the liveness
+   *  check cannot see, because a tick that never fires is not a tick that
+   *  failed). */
+  pollingHeartbeat: PollingHeartbeatResult | null;
   errors: string[];
 }
 
@@ -414,6 +420,13 @@ export interface LivenessAlarmResult {
   bad: number;
   notified: string[];
   recovered: string[];
+}
+
+export interface PollingHeartbeatResult {
+  evaluated: number;
+  alerted: string[];
+  /** Seconds since the last attempt per source — for the health payload. */
+  ageBySource: Record<'house' | 'senate' | 'executive', number | null>;
 }
 
 export interface LocalVisionHostedFallbackResult {
@@ -481,9 +494,226 @@ const LIVENESS_ALARM_CHECK_IDS = new Set([
 const LIVENESS_ALARM_KV_PREFIX = 'liveness-alarm:';
 const LIVENESS_RENOTIFY_MS = 6 * 3_600_000;
 
+/**
+ * 2026-09-21: a critical/stalled price_freshness no longer just pages and
+ * waits for an operator. The hourly liveness-alarm sweep ALSO invokes
+ * runPriceRefresh inline (bounded, idempotent) so the cache self-heals the
+ * moment it crosses the threshold — the same way the S&P freeze in
+ * Sep 2026 (frozen for 46 days) gets unstuck without manual intervention.
+ *
+ * The behavior is opt-in via env (default: ON). To turn it off while keeping
+ * the page intact, set `CT_DISABLE_PRICE_AUTO_RECOVER=1`.
+ *
+ * The auto-recover is bounded to a single attempt per alarm sweep, shares the
+ * daily FMP budget via runPriceRefresh's own pacer, and is rate-limited to
+ * one attempt per 6h per check (matches the renotify cadence) so a transient
+ * FMP outage cannot trigger a run-every-hour loop.
+ */
+const AUTO_RECOVER_RENOTIFY_MS = LIVENESS_RENOTIFY_MS;
+
+interface AutoRecoverEpisode {
+  attemptedAt: string;
+  /** True when the last attempt succeeded (caller may want to suppress the
+   *  page on the same hour if so). Optional so old KV entries stay parseable. */
+  ok?: boolean;
+}
+
+async function maybeAutoRecoverPrice(
+  env: Env,
+  now: Date,
+  check: { id: string; status: string; detail: string },
+): Promise<{ attempted: boolean; ok: boolean; error?: string } | null> {
+  if (env.CT_DISABLE_PRICE_AUTO_RECOVER === '1') return null;
+  if (check.id !== 'price_freshness') return null;
+  if (check.status !== 'critical' && check.status !== 'stalled') return null;
+  const kvKey = `${LIVENESS_ALARM_KV_PREFIX}auto-recover:${check.id}`;
+  let prev: AutoRecoverEpisode | null = null;
+  try {
+    prev = await env.CONFIG_KV.get<AutoRecoverEpisode>(kvKey, 'json');
+  } catch {}
+  if (prev && Number.isFinite(Date.parse(prev.attemptedAt))
+    && now.getTime() - Date.parse(prev.attemptedAt) < AUTO_RECOVER_RENOTIFY_MS) {
+    return null; // already tried in the last 6h
+  }
+  try {
+    // Lazy import keeps the liveness-alarm path cheap when auto-recover is
+    // disabled or not needed; the price service module pulls in the FMP/
+    // Tiingo/Massive clients and the daily FMP pacer.
+    const { runPriceRefresh } = await import('../prices/service.ts');
+    const r = await runPriceRefresh(env, { maxPerMinute: 3 });
+    const ok = r.errors.length === 0;
+    await env.CONFIG_KV.put(kvKey, JSON.stringify({ attemptedAt: now.toISOString(), ok } satisfies AutoRecoverEpisode));
+    return { attempted: true, ok, error: ok ? undefined : r.errors.slice(0, 3).join('; ') };
+  } catch (err) {
+    await env.CONFIG_KV.put(kvKey, JSON.stringify({ attemptedAt: now.toISOString(), ok: false } satisfies AutoRecoverEpisode));
+    return { attempted: true, ok: false, error: (err as Error).message };
+  }
+}
+
 interface LivenessAlarmEpisode {
   status: string;
   notifiedAt: string;
+}
+
+/**
+ * 2026-09-21 — Per-source polling heartbeat watchdog. Companion to
+ * sweepLivenessAlarms. The liveness check fires when the LAST poll attempt
+ * was a success but old, but it CANNOT fire when the tick never gets to
+ * call the watcher in the first place (the 2026-09-20 06:00–13:00 UTC
+ * outage class — all three chambers went dark because the cron tick was
+ * stuck, not because their last attempt failed). This watchdog reads
+ * source_attempts directly: if a chamber has gone >N minutes without ANY
+ * attempt, emit a Pushover alarm (priority 1) AND a Sentry breadcrumb so
+ * the operator sees the failure class immediately.
+ *
+ * Thresholds:
+ *   weekday (UTC Mon-Fri 12:00–24:00 ET): 240 min (4h) — past the hourly
+ *     floor + the FMP retry envelope, so a missed probe is real, not
+ *     transient.
+ *   weekend (UTC Sat-Sun, plus federal holidays): 480 min (8h) — matches
+ *     the documented "Executive follows the same adaptive probeSchedule
+ *     as House/Senate (weekday coverage floor 15 min; weekend hourly)"
+ *     policy so a weekend pause does not page spuriously.
+ *
+ * Episode semantics: same one-notification-per-episode as the liveness
+ * sweep (6h renotify). Re-notifies only when the heartbeat is still
+ * broken; clears the KV key on recovery.
+ *
+ * Tunable via env:
+ *   CT_POLLING_HEARTBEAT_WEEKDAY_MIN (default 240)
+ *   CT_POLLING_HEARTBEAT_WEEKEND_MIN (default 480)
+ */
+const HEARTBEAT_RENOTIFY_MS = LIVENESS_RENOTIFY_MS;
+const HEARTBEAT_KV_PREFIX = 'polling-heartbeat:';
+const WEEKDAY_UTC_HOURS: ReadonlySet<number> = new Set([
+  // 12:00 UTC = 07:00 ET (Mon-Fri market morning) through 24:00 UTC = 19:00 ET.
+  // Federal holidays are not modeled here; if a holiday happens to land on
+  // a weekday, the operator gets a soft alarm that pages the same way
+  // (priority 0 silent-notify path) when the chamber comes back, and they
+  // can mark it manually if needed.
+  12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
+]);
+
+export async function sweepPollingHeartbeat(
+  env: Env,
+  now = new Date(),
+  deps: { push?: typeof sendPushover } = {},
+): Promise<PollingHeartbeatResult> {
+  const push = deps.push ?? sendPushover;
+  const result: PollingHeartbeatResult = { evaluated: 0, alerted: [], ageBySource: { house: null, senate: null, executive: null } };
+  const sources: ReadonlyArray<'house' | 'senate' | 'executive'> = ['house', 'senate', 'executive'];
+
+  // Single query: per-source MAX(attempted_at). source_attempts is
+  // append-only and small (bounded by retention sweep); an index on
+  // (source, attempted_at DESC) would make this trivial, but a single
+  // GROUP BY scan on the 24h subset is already cheap.
+  const rows = await optionalAll<{ source: string; last_attempt: string | null }>(
+    env,
+    `SELECT CASE WHEN lower(source) IN ('oge', 'exec') THEN 'executive' ELSE source END AS source,
+            MAX(attempted_at) AS last_attempt
+       FROM source_attempts
+      WHERE attempted_at >= datetime('now', '-48 hours')
+      GROUP BY 1`,
+  );
+  const lastBySource = new Map<string, string | null>(rows.map((r) => [r.source, r.last_attempt]));
+
+  const utcHour = now.getUTCHours();
+  const isWeekday = now.getUTCDay() >= 1 && now.getUTCDay() <= 5 && WEEKDAY_UTC_HOURS.has(utcHour);
+  const maxAgeMinDefault = isWeekday ? 240 : 480;
+  const maxAgeMin = (() => {
+    const envKey = isWeekday ? 'CT_POLLING_HEARTBEAT_WEEKDAY_MIN' : 'CT_POLLING_HEARTBEAT_WEEKEND_MIN';
+    const n = Number.parseInt(Deno.env.get(envKey) || '', 10);
+    return Number.isFinite(n) && n >= 5 ? Math.min(n, 1440) : maxAgeMinDefault;
+  })();
+
+  for (const src of sources) {
+    result.evaluated += 1;
+    const lastAttempt = lastBySource.get(src);
+    if (!lastAttempt) {
+      // No attempt recorded at all in the last 48h — definitely stale.
+      result.ageBySource[src] = 48 * 3600;
+    } else {
+      const ageMs = now.getTime() - Date.parse(lastAttempt);
+      result.ageBySource[src] = Number.isFinite(ageMs) ? Math.max(0, Math.round(ageMs / 1000)) : null;
+    }
+    const ageSec = result.ageBySource[src];
+    if (ageSec == null) continue;
+    if (ageSec < maxAgeMin * 60) continue; // still within heartbeat window
+
+    // Heartbeat is broken. Episode semantics: notify on edge, renotify at
+    // most every 6h. Same pattern as sweepLivenessAlarms so the operator
+    // sees a consistent cadence.
+    const kvKey = `${HEARTBEAT_KV_PREFIX}${src}`;
+    let episode: { attemptedAt: string } | null = null;
+    try {
+      episode = await env.CONFIG_KV.get<{ attemptedAt: string }>(kvKey, 'json');
+    } catch {}
+    const lastNotifiedMs = episode ? Date.parse(episode.attemptedAt) : NaN;
+    const renotifyDue = !Number.isFinite(lastNotifiedMs) || now.getTime() - lastNotifiedMs >= HEARTBEAT_RENOTIFY_MS;
+    if (!renotifyDue) continue;
+
+    const hours = (ageSec / 3600).toFixed(1);
+    const isWeekendStr = isWeekday ? 'weekday' : 'weekend';
+    const title = `CT WATCHDOG: ${src} polling silent for ${hours}h`;
+    const message = [
+      `${src} chamber has had ZERO source_attempts rows in the last ${hours} hours`,
+      `(threshold ${maxAgeMin} min, ${isWeekendStr} window).`,
+      `Most likely root cause: Deno cron tick is stuck (force-release via CT_TICK_STUCK_MINUTES=10`,
+      `already shipped, board 14dac466 follow-up).`,
+      ``,
+      `Verify: GET https://congress.trade/api/admin/sources/health`,
+    ].join(' ');
+
+    try {
+      const delivered = await push(env, {
+        title,
+        message,
+        priority: 1, // wake the phone — silent polling is the same class as a crash
+        url: 'https://congress.trade/api/admin/sources/health',
+        urlTitle: 'Source health',
+      });
+      if (delivered.sent) {
+        result.alerted.push(src);
+        await env.CONFIG_KV.put(kvKey, JSON.stringify({ attemptedAt: now.toISOString() }));
+      } else {
+        console.error('sweepPollingHeartbeat: alarm NOT delivered for', src, '-', delivered.reason ?? 'unknown reason');
+      }
+      sentryLoggerWarn('polling.heartbeat_silent', {
+        runtime: 'deno',
+        source: src,
+        ageSec,
+        thresholdMin: maxAgeMin,
+        weekday: isWeekday,
+      });
+    } catch (err) {
+      console.error('sweepPollingHeartbeat: pushover failed for', src, (err as Error).message);
+    }
+  }
+
+  // Recovery: any source whose heartbeat came back inside the window clears
+  // its episode so a future break sends a fresh edge-notify. Done in one
+  // short pass over the KV prefix. (KV doesn't have native prefix listing,
+  // but the source list is bounded to 3 keys so we just GET each.)
+  for (const src of sources) {
+    const ageSec = result.ageBySource[src];
+    if (ageSec == null || ageSec >= maxAgeMin * 60) continue;
+    const kvKey = `${HEARTBEAT_KV_PREFIX}${src}`;
+    let episode: { attemptedAt: string } | null = null;
+    try {
+      episode = await env.CONFIG_KV.get<{ attemptedAt: string }>(kvKey, 'json');
+    } catch {}
+    if (!episode) continue;
+    try {
+      await push(env, {
+        title: `CT recovered: ${src} polling resumed`,
+        message: `${src} has a fresh source_attempts row (age ${ageSec}s, threshold ${maxAgeMin} min).`,
+        priority: 0,
+      });
+    } catch { /* best-effort */ }
+    try { await env.CONFIG_KV.delete(kvKey); } catch {}
+  }
+
+  return result;
 }
 
 /**
@@ -524,6 +754,20 @@ export async function sweepLivenessAlarms(
     const isBad = check.status === 'stalled' || check.status === 'degraded' || check.status === 'critical';
     if (isBad) {
       result.bad += 1;
+
+      // Self-heal path: critical/stalled price_freshness gets an inline
+      // runPriceRefresh attempt before we page. See maybeAutoRecoverPrice.
+      if (check.status === 'critical' || check.status === 'stalled') {
+        try {
+          const recovered = await maybeAutoRecoverPrice(env, now, check);
+          if (recovered?.attempted) {
+            console.log('sweepLivenessAlarms: auto-recover', check.id, recovered.ok ? 'ok' : 'failed', recovered.error ?? '');
+          }
+        } catch (err) {
+          console.error('sweepLivenessAlarms: auto-recover threw', check.id, (err as Error).message);
+        }
+      }
+
       const statusChanged = !episode || episode.status !== check.status;
       const lastNotifiedMs = episode ? Date.parse(episode.notifiedAt) : NaN;
       const renotifyDue = !Number.isFinite(lastNotifiedMs)
@@ -689,6 +933,23 @@ export async function runAutonomySweeps(
     result.livenessAlarms = await sweepLivenessAlarms(env, now);
   } catch (err) {
     errors.push(`livenessAlarms: ${(err as Error).message}`);
+  }
+
+  // 2026-09-21: per-source polling heartbeat watchdog. The liveness-alarm
+  // sweep fires Pushover when a check is `stalled`/`critical`/`degraded`,
+  // but the existing `polling_house/senate/executive` checks only look at
+  // whether the LAST poll ATTEMPT was successful — they cannot tell the
+  // difference between "a poll just succeeded with 0 new rows" and "no poll
+  // has been ATTEMPTED in the last 7 hours". This watchdog watches
+  // source_attempts directly: if a chamber has gone 4+ hours (weekday) or
+  // 8+ hours (weekend) without ANY attempt, emit a Sentry alarm AND a
+  // Pushover so the operator sees the failure class BEFORE the next day.
+  // Tunable via CT_POLLING_HEARTBEAT_MAX_AGE_MIN (default: weekday 240 / weekend 480).
+  try {
+    throwIfAborted();
+    result.pollingHeartbeat = await sweepPollingHeartbeat(env, now);
+  } catch (err) {
+    errors.push(`pollingHeartbeat: ${(err as Error).message}`);
   }
 
   return result;
