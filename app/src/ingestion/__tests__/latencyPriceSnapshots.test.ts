@@ -511,3 +511,127 @@ describe('summarizeProviderPublishBump', () => {
     ]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Time-boxing (CONGRESS-TRADE-1B)
+//
+// The backfill branch makes ONE serial peer call per (ticker, trading day)
+// group, so a full CAPTURE_BATCH is dozens of round trips.  Running them all
+// regardless of the clock is what pushed the Deno cron tick past its 45,000 ms
+// deadline and left abandoned requests overlapping the next tick.  These tests
+// pin the two halves of the fix: the lane stops at a group boundary when the
+// tick aborts, and stopping loses no work because an untouched row is simply
+// still due.
+// ---------------------------------------------------------------------------
+
+describe('captureDueLatencyPriceSnapshots — tick deadline time-boxing', () => {
+  it('stops calling the peer at the next group boundary once the tick aborts', async () => {
+    const now = new Date('2026-08-16T18:00:00.000Z');
+    for (const ticker of ['AAPL', 'MSFT', 'NVDA', 'TSLA']) {
+      insertDueRow({ ticker, dueAt: '2026-08-16T15:00:00.000Z' });
+    }
+    const calls: RecordedCall[] = [];
+    const controller = new AbortController();
+    const fetchImpl = buildFetch({
+      calls,
+      intraday: () => {
+        // Stand in for the soft abort landing mid-batch.
+        controller.abort(new Error('Deno cron tick nearing 45000ms deadline'));
+        return new Response(JSON.stringify({ bars: [{ t: '2026-08-16T15:01:00.000Z', c: 10 }] }), { status: 200 });
+      },
+    });
+
+    const result = await captureDueLatencyPriceSnapshots(env, now, fetchImpl, {
+      signal: controller.signal,
+    });
+
+    expect(result.aborted).toBe(true);
+    expect(calls.filter((c) => c.kind === 'intraday')).toHaveLength(1);
+  });
+
+  it('persists the work it already paid for, and leaves the rest due for the next tick', async () => {
+    const now = new Date('2026-08-16T18:00:00.000Z');
+    insertDueRow({ tradeHash: 'first', ticker: 'AAPL', dueAt: '2026-08-16T15:00:00.000Z' });
+    insertDueRow({ tradeHash: 'second', ticker: 'MSFT', dueAt: '2026-08-16T15:05:00.000Z' });
+    const controller = new AbortController();
+    const fetchImpl = buildFetch({
+      intraday: () => {
+        controller.abort(new Error('Deno cron tick nearing 45000ms deadline'));
+        return new Response(JSON.stringify({ bars: [{ t: '2026-08-16T15:00:30.000Z', c: 42.5 }] }), { status: 200 });
+      },
+    });
+
+    const result = await captureDueLatencyPriceSnapshots(env, now, fetchImpl, {
+      signal: controller.signal,
+    });
+
+    // Captured before the stop: written down, not thrown away.
+    expect(result.backfillCaptured).toBe(1);
+    const captured = readRow('first', 'fmp', 'provider_publish')!;
+    expect(captured.price).toBe(42.5);
+
+    // Never reached: still pending, so the next tick's due query re-selects it.
+    const untouched = readRow('second', 'fmp', 'provider_publish')!;
+    expect(untouched.captured_at).toBeNull();
+    expect(untouched.error).toBeNull();
+    expect(untouched.backfill_attempts).toBe(0);
+  });
+
+  it('makes no peer call at all when the deadline has already passed', async () => {
+    const now = new Date('2026-08-16T18:00:00.000Z');
+    insertDueRow({ tradeHash: 'live-row', ticker: 'AAPL', dueAt: '2026-08-16T17:59:30.000Z' }); // live window
+    insertDueRow({ tradeHash: 'backfill-row', ticker: 'MSFT', dueAt: '2026-08-16T15:00:00.000Z' });
+    const calls: RecordedCall[] = [];
+    const controller = new AbortController();
+    controller.abort(new Error('Deno cron tick exceeded 45000ms deadline'));
+
+    const result = await captureDueLatencyPriceSnapshots(env, now, buildFetch({ calls }), {
+      signal: controller.signal,
+    });
+
+    expect(calls).toHaveLength(0);
+    expect(result.aborted).toBe(true);
+    expect(result.deferred).toBe(2);
+    expect(readRow('live-row', 'fmp', 'provider_publish')!.captured_at).toBeNull();
+    expect(readRow('backfill-row', 'fmp', 'provider_publish')!.captured_at).toBeNull();
+  });
+
+  it('reports aborted=false on a batch that finishes inside the deadline', async () => {
+    const now = new Date('2026-08-16T18:00:00.000Z');
+    insertDueRow({ ticker: 'AAPL', dueAt: '2026-08-16T15:00:00.000Z' });
+    const controller = new AbortController();
+
+    const result = await captureDueLatencyPriceSnapshots(
+      env,
+      now,
+      buildFetch({ intraday: () => new Response(JSON.stringify({ bars: [{ t: '2026-08-16T15:00:30.000Z', c: 1 }] }), { status: 200 }) }),
+      { signal: controller.signal },
+    );
+
+    expect(result.aborted).toBe(false);
+    expect(result.backfillCaptured).toBe(1);
+  });
+});
+
+describe('scheduleMissingLatencyPriceSnapshots — tick deadline time-boxing', () => {
+  it('stops between candidates when the tick aborts, scheduling nothing further', async () => {
+    const controller = new AbortController();
+    controller.abort(new Error('Deno cron tick nearing 45000ms deadline'));
+    db.prepare(
+      `INSERT INTO trade_latency_candidates
+         (trade_hash, doc_id, provider, chamber, congress_first_seen_at, provider_first_seen_at, provider_published_at,
+          status, attempts, created_at, updated_at, ticker)
+       VALUES ('cand-1', 'doc-1', 'fmp', 'house', '2026-08-16T15:00:00.000Z', '2026-08-16T15:10:00.000Z', NULL,
+               'matched', 1, '2026-08-16T15:00:00.000Z', '2026-08-16T15:10:00.000Z', 'AAPL')`,
+    ).run();
+
+    const result = await scheduleMissingLatencyPriceSnapshots(env, new Date('2026-08-16T16:00:00.000Z'), {
+      signal: controller.signal,
+    });
+
+    expect(result.aborted).toBe(true);
+    expect(result.scheduled).toBe(0);
+    const rows = db.prepare('SELECT COUNT(*) AS n FROM latency_price_snapshots').get() as { n: number };
+    expect(rows.n).toBe(0);
+  });
+});

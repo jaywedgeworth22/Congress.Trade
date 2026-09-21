@@ -119,6 +119,13 @@ transport, and inventory operator-side `.mjs` requests under `scripts/`.
   `USAGE_MONITOR_INGEST_TOKEN` (normally through the approved secret runner)
   before it makes the SEC request.
 
+- `src/shared/deadlineFetch.ts` is a transport boundary, not a call site.  It
+  gives a request a timeout and ties it to an abort signal, and forwards to
+  whatever transport it was handed (or the platform's, when it is the outermost
+  wrapper).  `trackedFetch` takes it as its own `fetchImpl`, so the tracked
+  transport still sits between the wrapper and every provider call — the
+  inventory scopes out only the two primitives it forwards through.
+
 `src/shared/__tests__/thirdPartyTelemetry.test.ts` enforces the inventory,
 receiver-compatible event shape, secret redaction, host classification, and
 non-recursive delivery boundary.

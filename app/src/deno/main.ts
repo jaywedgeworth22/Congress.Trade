@@ -18,6 +18,7 @@ import { resolveProductionDatadogEnv } from '../shared/datadogRuntime.ts';
 import { captureException, initProductionSentry } from '#sentry';
 import { isExpectedPdfParseNoise } from '../shared/pdfParseErrors.ts';
 import { sentryLoggerWarn } from '../shared/sentryRuntime.ts';
+import { resolveUpstreamTimeoutMs } from '../shared/deadlineFetch.ts';
 
 // 1. Initialize the KV namespace used for configuration and Infisical caching.
 // Deno KV Connect does not support queues, so queue bindings are attached only
@@ -265,7 +266,14 @@ if (!costProfile.disableInternalCron) {
         new Date(),
         // Daily work moved to dedicated staggered lane crons (cronLanes.ts)
         // with multi-minute deadlines; the 45s tick must not run or starve it.
-        { signal: tickAbort.signal, includeDailyJobs: false },
+        {
+          signal: tickAbort.signal,
+          includeDailyJobs: false,
+          // Bound each upstream call well inside the tick deadline, so one
+          // slow peer cannot consume the whole tick and leave abandoned
+          // requests running into the next one (CONGRESS-TRADE-1B).
+          upstreamTimeoutMs: resolveUpstreamTimeoutMs(tickDeadlineMs),
+        },
       ));
       let softTimeoutId: ReturnType<typeof setTimeout> | undefined;
       let hardTimeoutId: ReturnType<typeof setTimeout> | undefined;

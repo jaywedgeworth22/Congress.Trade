@@ -1782,6 +1782,23 @@ function rawFetchViolations(relative: string, source: string): string[] {
         relative === 'shared/datadogTransport.ts'
         && ts.isIdentifier(callee)
         && callee.text === 'fetchImpl';
+      // A deadline/abort wrapper, not a call site.  `createDeadlineFetch` never
+      // chooses a destination: it forwards to the transport it was handed, or
+      // to the platform's when it is the outermost wrapper.  Every real
+      // provider call still goes through `trackedFetch`, which takes the
+      // wrapper as its own `fetchImpl` — so the tracked transport sits between
+      // this module and the network, exactly as the inventory requires.
+      const isDeadlineWrapperPrimitive =
+        relative === 'shared/deadlineFetch.ts'
+        && (
+          (ts.isIdentifier(callee) && callee.text === 'call')
+          || (
+            ts.isPropertyAccessExpression(callee)
+            && ts.isIdentifier(callee.expression)
+            && callee.expression.text === 'globalThis'
+            && callee.name.text === 'fetch'
+          )
+        );
       const isInternalHonoDispatch =
         relative === 'index.ts'
         && ts.isPropertyAccessExpression(callee)
@@ -1792,6 +1809,7 @@ function rawFetchViolations(relative: string, source: string): string[] {
         !isTelemetryPrimitive
         && !isOperatorTelemetryPrimitive
         && !isDatadogIntakePrimitive
+        && !isDeadlineWrapperPrimitive
         && !isInternalHonoDispatch
       ) {
         const pos = ast.getLineAndCharacterOfPosition(node.getStart(ast));
@@ -1865,6 +1883,20 @@ describe('outbound-call inventory enforcement', () => {
       'shared/datadogTransport.ts',
       'async function transport(fetchImpl: typeof fetch) { return fetchImpl("https://example.test"); }',
     )).toEqual([]);
+    // The deadline wrapper is scoped out as a transport boundary, but only for
+    // the two primitives it forwards through — a stray call it made to some
+    // other destination would still be a violation.
+    expect(rawFetchViolations(
+      'shared/deadlineFetch.ts',
+      [
+        'async function wrapped(call: typeof fetch) { return call("https://example.test"); }',
+        'async function fallback() { return globalThis.fetch("https://example.test"); }',
+      ].join('\n'),
+    )).toEqual([]);
+    expect(rawFetchViolations(
+      'shared/deadlineFetch.ts',
+      'const alias = fetch;\nalias("https://example.test/alias");',
+    )).toEqual(['shared/deadlineFetch.ts:2:alias']);
   });
 
   it('keeps the Usage Monitor ingest transport centralized and non-recursive', () => {

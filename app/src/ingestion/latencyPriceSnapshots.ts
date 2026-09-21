@@ -101,6 +101,27 @@ const MAX_BACKFILL_ATTEMPTS = 5;
  */
 export type SnapshotConfidence = 'exact' | 'bracketed' | 'unbounded';
 
+/**
+ * Cooperative cancellation for the tick that owns this lane (CONGRESS-TRADE-1B).
+ *
+ * The Deno cron tick soft-aborts five seconds before its hard deadline so
+ * lanes can stop cleanly.  This lane is the one that most needs to listen: a
+ * capture batch is up to CAPTURE_BATCH rows, and the backfill branch makes one
+ * SERIAL peer call per (ticker, trading day) group, so a full batch is dozens
+ * of round trips.  Before this option existed the lane ran them all regardless,
+ * sailed past the deadline, and left the abandoned work overlapping the next
+ * tick — the feedback loop behind the recurring
+ * `Deno cron tick exceeded 45000ms deadline` error.
+ *
+ * Stopping early is free of correctness cost by construction: a row that was
+ * not reached keeps `captured_at IS NULL`, so the very next tick's due query
+ * selects it again.  There is no partial state to reconcile and nothing to
+ * carry forward by hand — the remaining work IS the next tick's work list.
+ */
+export interface LatencySnapshotOptions {
+  signal?: AbortSignal;
+}
+
 export function addMs(iso: string, ms: number): string {
   return new Date(Date.parse(iso) + ms).toISOString();
 }
@@ -180,7 +201,8 @@ export function snapshotPlan(row: MatchRow): SnapshotPlanEntry[] {
 export async function scheduleMissingLatencyPriceSnapshots(
   env: Env,
   now = new Date(),
-): Promise<{ scheduled: number }> {
+  options: LatencySnapshotOptions = {},
+): Promise<{ scheduled: number; aborted: boolean }> {
   const rows = await all<MatchRow>(
     env.DB,
     `SELECT c.trade_hash, c.ticker, c.provider, c.congress_first_seen_at,
@@ -202,6 +224,10 @@ export async function scheduleMissingLatencyPriceSnapshots(
   let scheduled = 0;
   const createdAt = now.toISOString();
   for (const row of rows) {
+    // Each candidate expands to up to eleven INSERTs, so the boundary between
+    // candidates is the right granularity to stop at.  Rows left unscheduled
+    // are re-selected by the same NOT EXISTS query on the next tick.
+    if (options.signal?.aborted) return { scheduled, aborted: true };
     const ticker = (row.ticker || '').trim().toUpperCase();
     for (const plan of snapshotPlan(row)) {
       await run(
@@ -214,7 +240,7 @@ export async function scheduleMissingLatencyPriceSnapshots(
       scheduled++;
     }
   }
-  return { scheduled };
+  return { scheduled, aborted: false };
 }
 
 /**
@@ -304,6 +330,9 @@ export interface CaptureResult {
   /** Still pending: peer unreachable this tick, or no live quote yet — retried next tick. */
   deferred: number;
   errors: number;
+  /** True when the tick's deadline stopped the batch part-way.  Whatever was
+   *  captured before the stop is persisted; the rest stays due for next tick. */
+  aborted: boolean;
 }
 
 /**
@@ -315,6 +344,7 @@ export async function captureDueLatencyPriceSnapshots(
   env: Env,
   now = new Date(),
   fetchImpl: typeof fetch = fetch,
+  options: LatencySnapshotOptions = {},
 ): Promise<CaptureResult> {
   const nowIso = now.toISOString();
 
@@ -335,7 +365,9 @@ export async function captureDueLatencyPriceSnapshots(
 
   // Find all pending snapshot rows that are due (or overdue) for capture.
   const nowMs = now.getTime();
-  const empty: CaptureResult = { liveCaptured: 0, backfillCaptured: 0, terminalNoData: 0, deferred: 0, errors: 0 };
+  const empty: CaptureResult = {
+    liveCaptured: 0, backfillCaptured: 0, terminalNoData: 0, deferred: 0, errors: 0, aborted: false,
+  };
 
   const due = await all<DueRow>(
     env.DB,
@@ -372,9 +404,12 @@ export async function captureDueLatencyPriceSnapshots(
   let backfillCaptured = 0;
   let terminalNoData = 0;
   let errors = 0;
+  let aborted = false;
 
   // ---- Live branch: one batched quote call for every ticker due right now ----
-  if (liveRows.length) {
+  // One request for the whole set, so there is no useful stopping point inside
+  // it; the deadline check belongs before it rather than during.
+  if (liveRows.length && !options.signal?.aborted) {
     const tickers = liveRows.map((r) => r.ticker);
     let quotes: Record<string, { price: number; source: string }> = {};
     try {
@@ -391,7 +426,7 @@ export async function captureDueLatencyPriceSnapshots(
   }
 
   // ---- Backfill branch: group by (ticker, ET calendar date of due_at) ----
-  if (backfillRows.length) {
+  if (backfillRows.length && !options.signal?.aborted) {
     const groups = new Map<string, DueRow[]>();
     for (const row of backfillRows) {
       const key = `${row.ticker.trim().toUpperCase()}|${etCalendarDate(row.due_at)}`;
@@ -401,6 +436,13 @@ export async function captureDueLatencyPriceSnapshots(
     }
 
     for (const rows of groups.values()) {
+      // The expensive, unbounded part: one serial peer round trip per group.
+      // Stopping here is what keeps the tick inside its deadline, and it costs
+      // nothing — untouched groups are still due on the next tick.
+      if (options.signal?.aborted) {
+        aborted = true;
+        break;
+      }
       const ticker = rows[0]!.ticker;
       const dueTimes = rows.map((r) => Date.parse(r.due_at)).filter((n) => Number.isFinite(n));
       if (!dueTimes.length) continue;
@@ -495,6 +537,9 @@ export async function captureDueLatencyPriceSnapshots(
     }
   }
 
+  // Flush even on an aborted batch.  The work already paid for upstream is
+  // written down rather than thrown away, which is what makes a stopped tick
+  // genuinely incremental instead of merely interrupted.
   if (updates.length) {
     try {
       await batch(env.DB, updates);
@@ -503,8 +548,16 @@ export async function captureDueLatencyPriceSnapshots(
     }
   }
 
+  if (options.signal?.aborted) aborted = true;
   const deferred = due.length - liveCaptured - backfillCaptured - terminalNoData;
-  return { liveCaptured, backfillCaptured, terminalNoData, deferred: Math.max(deferred, 0), errors };
+  return {
+    liveCaptured,
+    backfillCaptured,
+    terminalNoData,
+    deferred: Math.max(deferred, 0),
+    errors,
+    aborted,
+  };
 }
 
 export interface PriceEdgeBucket {
@@ -558,8 +611,13 @@ export async function runLatencyPriceSnapshotTick(
   env: Env,
   now = new Date(),
   fetchImpl: typeof fetch = fetch,
+  options: LatencySnapshotOptions = {},
 ): Promise<{ scheduled: number } & CaptureResult> {
-  const scheduled = await scheduleMissingLatencyPriceSnapshots(env, now);
-  const captured = await captureDueLatencyPriceSnapshots(env, now, fetchImpl);
-  return { scheduled: scheduled.scheduled, ...captured };
+  const scheduled = await scheduleMissingLatencyPriceSnapshots(env, now, options);
+  const captured = await captureDueLatencyPriceSnapshots(env, now, fetchImpl, options);
+  return {
+    scheduled: scheduled.scheduled,
+    ...captured,
+    aborted: scheduled.aborted || captured.aborted,
+  };
 }

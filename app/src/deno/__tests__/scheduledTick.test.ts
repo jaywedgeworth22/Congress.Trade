@@ -20,6 +20,17 @@ vi.mock('../../extraction/agreement.ts', async (importOriginal) => {
 vi.mock('../../extraction/autopilot.ts', () => ({
   maybeStartBacklogAutopilot: vi.fn(async () => ({ blocked: 'not_due' as const })),
 }));
+vi.mock('../../ingestion/latencyPriceSnapshots.ts', () => ({
+  runLatencyPriceSnapshotTick: vi.fn(async () => ({
+    scheduled: 0,
+    liveCaptured: 0,
+    backfillCaptured: 0,
+    terminalNoData: 0,
+    deferred: 0,
+    errors: 0,
+    aborted: false,
+  })),
+}));
 vi.mock('../../secrets/infisical.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../secrets/infisical.ts')>();
   return {
@@ -38,6 +49,7 @@ vi.mock('../../secrets/infisical.ts', async (importOriginal) => {
   };
 });
 
+import { runLatencyPriceSnapshotTick } from '../../ingestion/latencyPriceSnapshots.ts';
 import { maybeRunAgreementAutopublish } from '../../extraction/agreement.ts';
 import { maybeStartBacklogAutopilot } from '../../extraction/autopilot.ts';
 import { refreshSecrets } from '../../secrets/infisical.ts';
@@ -430,5 +442,83 @@ describe('runScheduledTick singleton + abort', () => {
     expect(result.errors).toContain('tick: aborted');
     expect(refreshSecrets).not.toHaveBeenCalled();
     expect(maybeRunAgreementAutopublish).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Upstream time-boxing (CONGRESS-TRADE-1B)
+//
+// The tick already aborted BETWEEN lanes, but the lanes that reach off-box were
+// handed the bare global `fetch` — which in Deno has no timeout and ignores the
+// tick's AbortController.  One slow peer, or a long serial run of peer calls,
+// therefore ran straight past the soft abort and the 45,000 ms hard deadline,
+// and the abandoned requests were still in flight when the next tick started.
+// ---------------------------------------------------------------------------
+
+describe('runScheduledTick upstream deadlines', () => {
+  beforeEach(() => {
+    vi.mocked(runLatencyPriceSnapshotTick).mockClear();
+  });
+
+  it('hands the latency lane a deadline-bound fetch and the tick signal, never the raw global fetch', async () => {
+    const { db } = await makeDb();
+    const controller = new AbortController();
+    await runScheduledTick(
+      testEnv(db),
+      emptyHandlers(),
+      FREE,
+      new Date('2026-07-25T12:00:00.000Z'),
+      { signal: controller.signal, upstreamTimeoutMs: 2_000 },
+    );
+
+    expect(runLatencyPriceSnapshotTick).toHaveBeenCalledOnce();
+    const [, , laneFetch, laneOptions] = vi.mocked(runLatencyPriceSnapshotTick).mock.calls[0]!;
+    expect(laneFetch).toBeTypeOf('function');
+    expect(laneFetch).not.toBe(globalThis.fetch);
+    expect(laneOptions?.signal).toBe(controller.signal);
+  });
+
+  it('the fetch the lane receives stops calling out once the tick deadline fires', async () => {
+    const { db } = await makeDb();
+    const controller = new AbortController();
+    await runScheduledTick(
+      testEnv(db),
+      emptyHandlers(),
+      FREE,
+      new Date('2026-07-25T12:00:00.000Z'),
+      { signal: controller.signal, upstreamTimeoutMs: 2_000 },
+    );
+
+    const [, , laneFetch] = vi.mocked(runLatencyPriceSnapshotTick).mock.calls[0]!;
+    controller.abort(new Error('Deno cron tick nearing 45000ms deadline'));
+    await expect(laneFetch!('https://peer.example/api/market/intraday/AAPL')).rejects.toThrow(
+      'Deno cron tick nearing 45000ms deadline',
+    );
+  });
+
+  it('bounds a hung upstream call by its own budget even while the tick is healthy', async () => {
+    const { db } = await makeDb();
+    await runScheduledTick(
+      testEnv(db),
+      emptyHandlers(),
+      FREE,
+      new Date('2026-07-25T12:00:00.000Z'),
+      { upstreamTimeoutMs: 25 },
+    );
+
+    const [, , laneFetch] = vi.mocked(runLatencyPriceSnapshotTick).mock.calls[0]!;
+    const hung = vi.spyOn(globalThis, 'fetch').mockImplementation(
+      ((_input: RequestInfo | URL, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(init.signal!.reason), { once: true });
+        })) as unknown as typeof fetch,
+    );
+    try {
+      await expect(laneFetch!('https://peer.example/api/market/intraday/AAPL')).rejects.toMatchObject({
+        name: 'TimeoutError',
+      });
+    } finally {
+      hung.mockRestore();
+    }
   });
 });

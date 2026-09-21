@@ -18,6 +18,7 @@ import { AGREEMENT_CLAIM_LEASE_MS, maybeRunAgreementAutopublish } from '../extra
 import { maybeStartBacklogAutopilot } from '../extraction/autopilot.ts';
 import { TERMINAL_REVIEW_REASON_EXCLUDE_SQL } from '../extraction/reviewQueueHealth.ts';
 import { refreshSecrets } from '../secrets/infisical.ts';
+import { createDeadlineFetch, DEFAULT_TICK_FETCH_TIMEOUT_MS } from '../shared/deadlineFetch.ts';
 import { flushUsageTelemetryFallback } from '../shared/thirdPartyTelemetry.ts';
 import {
   drainDurableQueues,
@@ -159,6 +160,9 @@ export function hasDrainableWork(probe: PendingWorkProbe): boolean {
 export interface ScheduledTickOptions {
   /** Cancels the tick between lanes and stops the durable-queue drain. */
   signal?: AbortSignal;
+  /** Per-upstream-call budget for lanes that reach off-box.  Callers derive it
+   *  from their own deadline with `resolveUpstreamTimeoutMs`. */
+  upstreamTimeoutMs?: number;
   /** Singleton-lock TTL; bounds how long a crashed tick blocks successors. */
   lockTtlMs?: number;
   /**
@@ -256,6 +260,15 @@ export interface MaintenancePipelineOptions {
   includeDailyJobs?: boolean;
   now?: Date;
   signal?: AbortSignal;
+  /**
+   * Per-upstream-call budget for the lanes that reach off-box inside the tick.
+   *
+   * Must stay well below the caller's own deadline.  The Deno tick's default
+   * is 45,000 ms (`CT_TICK_DEADLINE_MS`), so a ten-second call budget lets a
+   * lane absorb a few slow peer responses and still return before the soft
+   * abort, instead of one hung socket consuming the whole tick.
+   */
+  upstreamTimeoutMs?: number;
   /** Gate for the two outbox lanes (Deno idle short-circuit). Default: run. */
   beforeOutboxFlush?: () => Promise<boolean>;
   /** Runs right after the outbox lanes when they are not gated off (Deno drain). */
@@ -309,6 +322,15 @@ export async function runMaintenancePipeline(
   const throwIfAborted = () => {
     if (options.signal?.aborted) throw tickAbortError();
   };
+  // Every upstream call a lane makes gets its own timeout AND dies with the
+  // tick's soft abort.  Deno's global `fetch` has neither, so handing it to a
+  // lane that walks a work list serially is how a tick used to run past its
+  // hard deadline and leave abandoned requests overlapping the next one
+  // (CONGRESS-TRADE-1B).
+  const laneFetch = createDeadlineFetch(undefined, {
+    timeoutMs: options.upstreamTimeoutMs ?? DEFAULT_TICK_FETCH_TIMEOUT_MS,
+    signal: options.signal,
+  });
   const runLane = async <T>(
     lane: MaintenanceLane,
     run: () => Promise<T>,
@@ -402,13 +424,16 @@ export async function runMaintenancePipeline(
       await runLane('disclosure_latency', () =>
         runLeasedLatencyProbe(
           env,
-          (providers) => runDisclosureLatencyProbe(env, now, fetch, { providers }),
+          (providers) => runDisclosureLatencyProbe(env, now, laneFetch, { providers }),
           now,
         ),
       );
       await runLane('latency_price_snapshots', async () => {
         const { runLatencyPriceSnapshotTick } = await import('../ingestion/latencyPriceSnapshots.ts');
-        return runLatencyPriceSnapshotTick(env, now, fetch);
+        // The signal matters as much as the timeout here: this lane makes one
+        // serial peer call per (ticker, trading day) group, so without a
+        // stopping point it walks the whole batch no matter how late it is.
+        return runLatencyPriceSnapshotTick(env, now, laneFetch, { signal: options.signal });
       });
     }
     if (options.includeDailyJobs !== false) {
@@ -485,6 +510,7 @@ export async function runScheduledTick(
       includeDailyJobs: options.includeDailyJobs,
       now,
       signal,
+      upstreamTimeoutMs: options.upstreamTimeoutMs,
       // Idle short-circuit: skip multi-statement outbox flushes and the empty
       // claim loop when nothing is drainable. Runs after the autonomy lanes
       // so their enqueues are visible to the probe.
