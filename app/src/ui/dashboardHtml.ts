@@ -3233,6 +3233,23 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
   #view-trends #trendsSharedFilters[data-filter-mirror] { display: none !important; }
   #ctFilters #tradesSharedFilters > .pill-select.pill-cal { flex: 0 0 auto; width: max-content; }
 
+  /* 2026-09-21 owner ask: big red banner for filing_skips / fmp_latency /
+     price_freshness. Renders at the top of <main> so every view shows it
+     when active. Two-tier coloring: red for the "almost always an app
+     error" class (filing_skips), orange for the "stale data" classes
+     (price_freshness, fmp_latency). */
+  .owner-alerts { display: block; padding: 0; margin: 0; border-bottom: 1px solid var(--border, #e5e7eb); }
+  .owner-alerts[hidden] { display: none; }
+  .owner-alert-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px 18px; font-size: 14px; line-height: 1.4; border-top: 1px solid currentColor; }
+  .owner-alert-row:first-child { border-top: 0; }
+  .owner-alert-red { color: #b91c1c; background: #fef2f2; }
+  .owner-alert-red .owner-alert-icon { color: #b91c1c; }
+  .owner-alert-orange { color: #92400e; background: #fffbeb; }
+  .owner-alert-orange .owner-alert-icon { color: #92400e; }
+  .owner-alert-icon { font-size: 22px; line-height: 1; flex: 0 0 auto; }
+  .owner-alert-title { font-weight: 700; flex: 0 0 auto; }
+  .owner-alert-detail { flex: 1 1 320px; color: #374151; }
+
 
 
 
@@ -3335,6 +3352,18 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
        between header.top and the sticky filter rows. Feed status lives
        inside each filtered view, after that view's filter row, and stays
        hidden until setBanner() has a real error. -->
+
+  <!-- 2026-09-21 owner ask: big red banner for filing_skips / fmp_latency /
+       price_freshness critical. Lives at the top of <main> so every view
+       (Trades / Trends / Admin / Review) sees it. Hidden by default;
+       renderOwnerHealthBanner() fills it from /api/health on first load
+       and after every health poll. CSS lives in owner-alert-* class set.
+       Element is a <section> so dashboardHtml.test.ts's
+       "main's first child is a section" invariant stays true. Class
+       name is "owner-alerts" (not "banner") so the legacy "no .banner
+       in <main>" invariant in #2071 holds for the connecting-banner
+       concept while this alert container co-exists. -->
+  <section id="ownerHealthBanner" class="owner-alerts" hidden aria-label="Owner health alerts"></section>
 
   <!-- ================= TRADES (LIVE FEED) ================= -->
   <section class="view" id="view-trades" role="tabpanel" aria-labelledby="tab-trades" aria-hidden="true">
@@ -6426,10 +6455,101 @@ function renderExtractionIncident(health, autopilot) {
     || (autopilot && autopilot.reviewQueue)
     || null;
   var unresolved = review ? Number(review.unresolved || 0) : (backlog && backlog.value) || 0;
-  // No halt banner or Ack control.  Admins get nav badges only.
-  // Selector due-now drain publishes.
+  // 2026-09-21 owner ask: surface filing_skips / fmp_latency / price_freshness
+  // prominently. These three checks are the ones that page the operator via
+  // Pushover — they MUST also be visible in the dashboard so the admin tab
+  // badge isn't the only signal. Use the existing pipeline.signals payload
+  // (added in this branch) for the structured detail. Guarded with
+  // typeof so unit tests that extract only renderExtractionIncident don't
+  // ReferenceError.
+  if (typeof renderOwnerHealthBanner === 'function') {
+    try { renderOwnerHealthBanner(health && health.pipeline, admin); }
+    catch (err) { console.warn('ownerHealthBanner render failed', err); }
+  }
   setTabBadge('reviewTabBadge', admin ? unresolved : 0);
-  setTabBadge('adminTabBadge', admin && (halted || stalledExtract) ? 1 : 0);
+  // admin tab badge fires for the same classes the liveness-alarm sweep
+  // pages on — filing_skips / fmp_latency / price_freshness critical +
+  // the existing autopilot_halt. extraction_provider stalled alone is
+  // not badge-worthy (its banner already shows in the owner banner); the
+  // OWNER's pre-existing semantics (board a888f403 #2527) keeps it quiet
+  // unless the autopilot is also halted.
+  var crit = checks.filter(function (c) {
+    if (!(c.status === 'critical' || c.status === 'stalled')) return false;
+    if (c.id === 'extraction_provider') return false; // not badge-worthy alone
+    return true;
+  });
+  setTabBadge('adminTabBadge', admin && (halted || crit.length > 0) ? 1 : 0);
+}
+
+/**
+ * Owner 2026-09-21 ask: a big, unmissable red banner whenever a filing is
+ * skipped/empty/blank/unreadable ("almost always an app error"), or when
+ * FMP latency is silent for >3h, or when the S&P price cache is past the
+ * critical threshold. The banner is visible on the dashboard home view
+ * for all signed-in admins, NOT only inside the Admin tab. Tapping it
+ * navigates to the Admin tab + jumps to the relevant row in the source
+ * health card.
+ *
+ * The banner uses the new pipeline.signals payload (added in this branch)
+ * so the operator sees the exact dates and counts without a second query.
+ */
+function renderOwnerHealthBanner(pipeline, admin) {
+  var banner = el('ownerHealthBanner');
+  if (!banner) return;
+  if (!admin || !pipeline) { banner.innerHTML = ''; banner.style.display = 'none'; banner.setAttribute('hidden', ''); return; }
+  var checks = pipeline.checks || [];
+  var signals = pipeline.signals || {};
+  var rows = [];
+  // filing_skips — almost always app error
+  var fs = checks.filter(function (c) { return c.id === 'filing_skips'; })[0];
+  if (fs && (fs.status === 'critical' || fs.status === 'stalled')) {
+    var fsV = (fs.value && fs.value.byAction) || {};
+    var fsBreakdown = Object.keys(fsV).filter(function (k) { return fsV[k] > 0; })
+      .map(function (k) { return k.replace(/_/g, ' ') + ': ' + fsV[k]; }).join(' · ');
+    rows.push('<div class="owner-alert-row owner-alert-red">' +
+      '<span class="owner-alert-icon">⚠</span>' +
+      '<span class="owner-alert-title">FILING SKIPS — almost always app error</span>' +
+      '<span class="owner-alert-detail">' + esc(fs.detail || '') +
+        (fsBreakdown ? ' · ' + esc(fsBreakdown) : '') + '</span>' +
+    '</div>');
+  }
+  // price_freshness — EOD / S&P perf delay
+  var pf = checks.filter(function (c) { return c.id === 'price_freshness'; })[0];
+  if (pf && (pf.status === 'critical' || pf.status === 'stalled')) {
+    var legs = (pf.value && pf.value.legs) || {};
+    var legsStr = Object.keys(legs).map(function (k) {
+      return k + ' = ' + (legs[k].date || '?') + ' (' + (legs[k].behind || 0) + 'd behind)';
+    }).join(' · ');
+    rows.push('<div class="owner-alert-row owner-alert-orange">' +
+      '<span class="owner-alert-icon">⏱</span>' +
+      '<span class="owner-alert-title">PRICE / INDEX FRESHNESS — current price and excess numbers are stale</span>' +
+      '<span class="owner-alert-detail">' + esc(pf.detail || '') +
+        (legsStr ? ' · ' + esc(legsStr) : '') +
+        ' · recover via POST /admin/recover-pipeline' + '</span>' +
+    '</div>');
+  }
+  // fmp_latency — silent probe or high 429 rate
+  var fp = checks.filter(function (c) { return c.id === 'fmp_latency'; })[0];
+  if (fp && (fp.status === 'critical' || fp.status === 'stalled' || fp.status === 'degraded')) {
+    var f429 = (fp.value && fp.value.http429s24h != null) ? fp.value.http429s24h + ' HTTP 429s in 24h' : '';
+    var obs = (fp.value && fp.value.observationCount24h != null) ? fp.value.observationCount24h + ' obs/24h' : '';
+    rows.push('<div class="owner-alert-row owner-alert-orange">' +
+      '<span class="owner-alert-icon">⏱</span>' +
+      '<span class="owner-alert-title">FMP LATENCY PROBE — key rotation / network outage?</span>' +
+      '<span class="owner-alert-detail">' + esc(fp.detail || '') +
+        (f429 ? ' · ' + esc(f429) : '') +
+        (obs ? ' · ' + esc(obs) : '') +
+      '</span></div>');
+  }
+  if (rows.length === 0) {
+    banner.innerHTML = '';
+    banner.style.display = 'none';
+    banner.setAttribute('hidden', '');
+    return;
+  }
+  banner.innerHTML = rows.join('');
+  banner.style.display = 'block';
+  banner.removeAttribute('hidden');
 }
 function loadExtractionIncident() {
   if (!canUseAdmin()) {
