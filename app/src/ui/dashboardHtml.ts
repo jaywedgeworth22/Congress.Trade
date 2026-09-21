@@ -3284,14 +3284,18 @@ export const DASHBOARD_HTML = /* html */ `<!DOCTYPE html>
     <div class="toolbar shared-filters" id="tradesSharedFilters">
       <span class="pill-select pill-cal">
         <select id="tradesGlobalWindow" class="tr-window-select shared-window pill-select-el" title="Time window" aria-label="Time window" onchange="onSharedWindowChange(this)">
-          <option value="30d">Month</option>
           <option value="90d" selected>3 Months</option>
           <option value="180d">6 Months</option>
-          <option value="365d">Year</option>
+          <option value="365d">1 Year</option>
           <option value="1825d">5 Years</option>
           <option value="this_cy">This Year</option>
           <option value="last_cy">Last Year</option>
-          <option value="all">All Time</option>
+          <!-- Owner 2026-09-21 ask: remove "1 Month" (less than 10% as many
+               rows as 3 Months; the 45-day STOCK Act reporting window makes
+               it actively misleading) and remove "All Time" (5-year
+               retention cap is now the longest available window; "All Time"
+               timed out on iOS even when it eventually returned the same
+               count as 5 Years). -->
         </select>
       </span>
       <div class="filter-groups">
