@@ -20,7 +20,7 @@
 
 import { extractText, getDocumentProxy } from 'unpdf';
 import type { Env } from '../shared/types.ts';
-import { all, run, optionalAll } from '../shared/db.ts';
+import { all, run } from '../shared/db.ts';
 import { checkPipelineHealth } from '../shared/pipelineHealth.ts';
 import { sendPushover } from '../shared/pushover.ts';
 import { sentryLoggerWarn } from '../shared/sentryRuntime.ts';
@@ -490,6 +490,16 @@ const LIVENESS_ALARM_CHECK_IDS = new Set([
   // prod observation 2026-09-20 with S&P frozen at 2026-08-03 for 46 days
   // and nobody alerted.
   'price_freshness',
+  // 2026-09-21: filing_skips (extract_empty_failure/auto_resolved_empty/doc_quarantined).
+  // Owner ask: "big red flag ... anytime a filing is skipped or considered
+  // empty or blank or unreadable since that is almost always false and app
+  // error." These three outcomes mean the OCR/vision/model pipeline failed;
+  // they should always page on the first occurrence.
+  'filing_skips',
+  // 2026-09-21: FMP latency probe silence = a free-tier key rotation or
+  // network outage that has been silent for >3h. Owner ask: FMP latency
+  // should be visible everywhere; it is also a hard alarm when silent.
+  'fmp_latency',
 ]);
 const LIVENESS_ALARM_KV_PREFIX = 'liveness-alarm:';
 const LIVENESS_RENOTIFY_MS = 6 * 3_600_000;
@@ -607,22 +617,30 @@ export async function sweepPollingHeartbeat(
   // append-only and small (bounded by retention sweep); an index on
   // (source, attempted_at DESC) would make this trivial, but a single
   // GROUP BY scan on the 24h subset is already cheap.
-  const rows = await optionalAll<{ source: string; last_attempt: string | null }>(
-    env,
-    `SELECT CASE WHEN lower(source) IN ('oge', 'exec') THEN 'executive' ELSE source END AS source,
-            MAX(attempted_at) AS last_attempt
-       FROM source_attempts
-      WHERE attempted_at >= datetime('now', '-48 hours')
-      GROUP BY 1`,
-  );
+  let rows: Array<{ source: string; last_attempt: string | null }> = [];
+  try {
+    rows = await all<{ source: string; last_attempt: string | null }>(
+      env,
+      `SELECT CASE WHEN lower(source) IN ('oge', 'exec') THEN 'executive' ELSE source END AS source,
+              MAX(attempted_at) AS last_attempt
+         FROM source_attempts
+        WHERE attempted_at >= datetime('now', '-48 hours')
+        GROUP BY 1`,
+    );
+  } catch {}
   const lastBySource = new Map<string, string | null>(rows.map((r) => [r.source, r.last_attempt]));
 
   const utcHour = now.getUTCHours();
   const isWeekday = now.getUTCDay() >= 1 && now.getUTCDay() <= 5 && WEEKDAY_UTC_HOURS.has(utcHour);
   const maxAgeMinDefault = isWeekday ? 240 : 480;
+  // Env access guarded so vitest (Node) tests don't ReferenceError on Deno.
+  const envGet = (k: string): string | undefined => {
+    try { return (globalThis as { Deno?: { env: { get(k: string): string | undefined } } }).Deno?.env.get(k); }
+    catch { return undefined; }
+  };
   const maxAgeMin = (() => {
     const envKey = isWeekday ? 'CT_POLLING_HEARTBEAT_WEEKDAY_MIN' : 'CT_POLLING_HEARTBEAT_WEEKEND_MIN';
-    const n = Number.parseInt(Deno.env.get(envKey) || '', 10);
+    const n = Number.parseInt(envGet(envKey) || '', 10);
     return Number.isFinite(n) && n >= 5 ? Math.min(n, 1440) : maxAgeMinDefault;
   })();
 
