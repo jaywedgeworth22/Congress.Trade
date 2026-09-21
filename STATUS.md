@@ -21,6 +21,9 @@ sync dispatch.  Do not copy 600 onto 30-min macos ship crons.  Do not
 `Fixes FLEET-INFRA-23` on merge; wait for the next scheduled upsert.
 Rollout: `docs/rollouts/2026-09-18-effort-issues-sync-monitor-margin.md`.
 Did not touch `docs/EFFORT-LOG.md` (sync-1 holds effort-log-reconcile).
+## 2026-09-16 BF-PUBLISHER — FMP Senate PTR official enqueue
+
+Live queue empty.  Angus King FMP stub closed as duplicate after official `S-e67c6e56-…` persisted.  Pipeline now enqueues `S-{uuid}` from provider PTR view ids instead of parking `provider-missing-*`.  Branch `publisher/fmp-senate-official-enqueue`.  Rollout: `docs/rollouts/2026-09-16-fmp-senate-official-enqueue.md`.
 
 ## 2026-09-13 FX — drop hardcoded ADMIN_TOKEN scratch script
 

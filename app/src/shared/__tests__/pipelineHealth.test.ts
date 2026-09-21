@@ -39,6 +39,16 @@ describe('evaluatePipelineSignals', () => {
       configured: true,
       probe: { ok: true, status: 200, checkedAt: new Date(nowMs - 60_000).toISOString(), host: 'scout.jays.services' },
     },
+    // 2026-09-21: defaults for the new signals; matches a healthy pipeline.
+    filingSkips24h: 0,
+    filingSkipsByAction24h: { extract_empty_failure: 0, auto_resolved_empty: 0, doc_quarantined: 0 },
+    fmpLatency: {
+      observationCount24h: 120,
+      lastObservationAt: new Date(nowMs - 600 * 1000).toISOString(),
+      lastObservationAgeSec: 600,
+      http429s24h: 0,
+      byProvider: { fmp: { lastObservationAt: new Date(nowMs - 600 * 1000).toISOString(), ageSec: 600, count24h: 120 } },
+    },
   };
 
   it('returns ok status for clean pipeline signals', () => {
@@ -581,6 +591,17 @@ describe('price_freshness check', () => {
     autopilotHaltReason: null, latestTxCreatedAt: new Date(nowMs - 3600 * 1000).toISOString(),
     dishonestResolutionCount: 0, orphanedNeedsReviewCount: 0, strandedFilings: 0,
     pollSources: null, latencyProviders: null, senateRelay: null,
+    // 2026-09-21: defaults for the new signals. Tests that don't override
+    // these should still produce a stable check count.
+    filingSkips24h: 0,
+    filingSkipsByAction24h: { extract_empty_failure: 0, auto_resolved_empty: 0, doc_quarantined: 0 },
+    fmpLatency: {
+      observationCount24h: 100,
+      lastObservationAt: new Date(nowMs - 600 * 1000).toISOString(),
+      lastObservationAgeSec: 600,
+      http429s24h: 0,
+      byProvider: {},
+    },
   } as PipelineSignals;
   const check = (s: Partial<PipelineSignals>) =>
     evaluatePipelineSignals({ ...base, ...s }, nowMs).checks.find((c) => c.id === 'price_freshness');
