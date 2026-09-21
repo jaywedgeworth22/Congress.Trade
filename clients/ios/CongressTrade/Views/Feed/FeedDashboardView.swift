@@ -574,7 +574,14 @@ struct FeedControlBar: View {
                 // Timeframe Filter — stays fully visible (icon+value) at all
                 // times and sits first/top-left (owner punch list item 5).
                 Menu {
-                    ForEach(TimeRange.allCases) { range in
+                    // Owner 2026-09-21 ask: drop "1 Month" (less than 10% of
+                    // 3-Month count, misleading given the 45-day STOCK Act
+                    // reporting window) and "All Time" (5-year retention is
+                    // now the longest available window; "All Time" timed
+                    // out on iOS even when it returned the same count as
+                    // 5 Years). Enum cases stay in place for backward
+                    // compat with persisted UserDefaults.
+                    ForEach(TimeRange.surfaceCases) { range in
                         Button {
                             Task { await store.setTimeRange(range) }
                         } label: {

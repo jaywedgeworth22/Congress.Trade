@@ -1335,16 +1335,34 @@ enum TimeRange: String, CaseIterable, Identifiable, Codable {
 
     var id: String { rawValue }
 
+    /// Owner 2026-09-21 ask: surface set excludes `.thirtyDays` (1 Month
+    /// has <10% of the 3-Month count and is misleading given the 45-day
+    /// STOCK Act reporting window) and `.all` ("All Time" timed out on
+    /// iOS even when it returned the same count as 5 Years; 5-year
+    /// retention is now the longest available window). The enum cases
+    /// stay in place so persisted UserDefaults values from older builds
+    /// still decode cleanly; this computed set is what the picker UI
+    /// iterates over.
+    static var surfaceCases: [TimeRange] {
+        [.ninetyDays, .sixMonths, .oneYear, .fiveYears, .thisCalendarYear, .lastCalendarYear]
+    }
+
     var label: String {
         switch self {
-        case .thirtyDays: return "Month"
+        case .thirtyDays: return "1 Month" // Owner 2026-09-21 ask: 1-month view has
+        // less than 10% of the 3-month count and is actively misleading
+        // given the 45-day STOCK Act reporting window. Kept as a legacy
+        // enum case for backward compat with persisted UserDefaults, but
+        // no longer surfaced in the picker UI (see TradesFilterSheet).
         case .ninetyDays: return "3 Months"
         case .sixMonths: return "6 Months"
-        case .oneYear: return "Year"
+        case .oneYear: return "1 Year" // Owner 2026-09-21 ask: rename from "Year"
         case .fiveYears: return "5 Years"
         case .thisCalendarYear: return "This Year"
         case .lastCalendarYear: return "Last Year"
-        case .all: return "All Time"
+        case .all: return "All Time" // Owner 2026-09-21 ask: "All Time" timed out
+        // on iOS even when it returned the same count as 5 Years; the 5-year
+        // retention cap is now the longest available window.
         }
     }
 

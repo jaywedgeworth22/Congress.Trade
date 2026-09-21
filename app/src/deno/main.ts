@@ -236,7 +236,20 @@ const costProfile = resolveDenoCostProfile(Deno.env);
 // so without this a >5-minute tick would stack watcher/outbox work in the same
 // isolate. Cross-isolate overlap (cron vs POST /api/admin/runtime-tick) is
 // covered by the DB-backed singleton inside runScheduledTick.
+//
+// 2026-09-21 hardening (board 14dac466 follow-up): a stuck in-flight tick used
+// to silently starve every subsequent minute tick for as long as the
+// underlying hang lasted — observed in prod 2026-09-20 06:00–13:00 UTC where
+// the watcher stopped firing for all three chambers. The hard deadline aborts
+// the tick but does NOT force-release tickInFlight when the abort is ignored
+// (the documented CONGRESS-TRADE-1B class of latency lanes that ignore the
+// abort signal). The watchdog below force-releases tickInFlight after
+// CT_TICK_STUCK_MINUTES minutes (default 10) and emits a Sentry
+// `cron.tick_stuck` event so the OWNER is alerted even when the underlying
+// hang doesn't reach the hard-timeout reject path.
 let tickInFlight = false;
+let tickInFlightSinceMs = 0;
+let consecutiveOverlapTicks = 0;
 
 if (!costProfile.disableInternalCron) {
   console.log(
@@ -245,10 +258,46 @@ if (!costProfile.disableInternalCron) {
   );
   Deno.cron('Worker scheduled tasks', costProfile.cronSchedule, async () => {
     if (tickInFlight) {
-      sentryLoggerWarn('cron.tick_overlap', { runtime: 'deno' });
-      return;
+      const heldMs = Date.now() - tickInFlightSinceMs;
+      const stuckMinutes = (() => {
+        const n = Number.parseInt(Deno.env.get('CT_TICK_STUCK_MINUTES') || '', 10);
+        return Number.isFinite(n) && n >= 1 ? Math.min(n, 60) : 10;
+      })();
+      consecutiveOverlapTicks += 1;
+      sentryLoggerWarn('cron.tick_overlap', {
+        runtime: 'deno',
+        heldMs,
+        consecutive: consecutiveOverlapTicks,
+      });
+      // Stuck detection: the in-flight tick has held the lock for longer than
+      // CT_TICK_STUCK_MINUTES. The hard-timeout reject already aborted it; if
+      // the lane ignored the abort (the CONGRESS-TRADE-1B class) the lock
+      // never releases. Force-release now and emit a Sentry alarm so the
+      // operator sees the class of failure, not just "polling stopped".
+      if (heldMs > stuckMinutes * 60_000) {
+        const err = new Error(
+          `Deno cron tick stuck for ${Math.round(heldMs / 1000)}s — force-releasing tickInFlight so subsequent ticks can run`,
+        );
+        console.error('cron.tick_stuck', { heldMs, consecutive: consecutiveOverlapTicks });
+        captureException(err, {
+          tags: { cron: 'deno-tick', class: 'stuck-force-released' },
+          extra: { heldMs, consecutive: consecutiveOverlapTicks },
+        });
+        datadogCaptureException(err, { cron: 'deno-tick', class: 'stuck-force-released', heldMs: String(heldMs), consecutive: String(consecutiveOverlapTicks) });
+        tickInFlight = false;
+        tickInFlightSinceMs = 0;
+        // Fall through: this tick will now run normally. The previous tick
+        // may still be executing in the background (its finally block will
+        // see tickInFlight=false, but that's idempotent). The next minute's
+        // tick will reset the consecutiveOverlapTicks counter via the
+        // non-overlap path below.
+      } else {
+        return;
+      }
     }
     tickInFlight = true;
+    tickInFlightSinceMs = Date.now();
+    consecutiveOverlapTicks = 0;
     // The tick deadline aborts the tick pipeline instead of abandoning it:
     // lanes stop at the next boundary and the queue drain stops claiming.
     // Default 45s (Deno Deploy free-tier heritage); the Oracle container
@@ -311,6 +360,7 @@ if (!costProfile.disableInternalCron) {
       datadogCaptureException(err, { cron: 'deno-tick' });
     } finally {
       tickInFlight = false;
+      tickInFlightSinceMs = 0;
     }
   });
 
