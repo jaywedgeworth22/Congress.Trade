@@ -1,5 +1,12 @@
 # Agent Handoff Rules
 
+> [!IMPORTANT]
+> **2026-09-22 — [MM] iOS App Group + Associated Domain additions (additive; bundle ID unchanged).**  The iOS bundle ID `trade.congress.ios` (and tests `trade.congress.ios.tests`) were already correct under the fleet `<trade>.<name>.<platform>` convention; this PR adds the new App Group and Associated Domain that the rest of the fleet migration shipped.  New capabilities:
+> - **App Group:** `group.trade.congress` (added 2026-09-22; requires Apple Developer Portal registration on the existing App ID before shared-container `UserDefaults` writes work).
+> - **Associated Domain:** `congress.trade` (`applinks` was already live from PR #2370 on 2026-09-13; this PR adds the matching `webcredentials`).
+>
+> Owner action items (this PR does not have the credentials): register the App Group on the App ID `trade.congress.ios` in the Apple Developer Portal; host `apple-app-site-association` on `congress.trade`.  Full rollout: `docs/rollouts/2026-09-22-app-group-and-domain.md`.  Fleet-wide context: `/Users/jay/.minimax/sessions/mvs_0bdfe8c73c1046a986df888aa99dcb2e/workspace/fleet-bundle-id-plan.md`.
+
 ## Codex Cloud protocol bootstrap
 
 Run `bash .codex/setup.sh` during cloud provisioning and `bash .codex/maintenance.sh` on
@@ -493,6 +500,23 @@ bash scripts/ios-ship-testflight.sh
 
 Fleet: `/Users/jay/apps/ios-fleet/README.md`. Bundle `trade.congress.ios`, team `CC8UTF7ATG`.
 Secrets only via `~/.secrets/appstore-connect.env` (never print).
+
+## Bundle identifiers (canonical table — 2026-09-22)
+
+| Surface | Value | Notes |
+|---|---|---|
+| iOS app `CongressTrade` target | `trade.congress.ios` | unchanged; follows the fleet `<trade>.<name>.<platform>` convention |
+| iOS unit tests `CongressTradeTests` target | `trade.congress.ios.tests` | unchanged |
+| App Group (added 2026-09-22) | `group.trade.congress` | must be registered on the App ID in the Apple Developer Portal before shared-container writes work |
+| Associated Domain — `applinks` (live since PR #2370 on 2026-09-13) | `applinks:congress.trade` | Universal Links for the owned domain |
+| Associated Domain — `webcredentials` (added 2026-09-22) | `webcredentials:congress.trade` | site-association webcredentials for the owned domain |
+| URL scheme | `congresstrade://` | internal scheme (not a bundle ID) |
+| APNs topic / `apns-topic` header | `trade.congress.ios` | equals the iOS bundle ID |
+| Keychain service strings | `trade.congress.session`, `trade.congress.appleDeviceEntitlement`, etc. | internal namespaces, NOT bundle IDs — do not rename |
+| Internal sync cursor prefix | `trade.congress.sync.cursor.` | internal namespace, NOT a bundle ID |
+| Receipt product IDs | `trade.congress.premium.monthly`, `trade.congress.premium.annual` | StoreKit product IDs, NOT bundle IDs |
+
+Rollout: `docs/rollouts/2026-09-22-app-group-and-domain.md`.  Fleet-wide plan: `/Users/jay/.minimax/sessions/mvs_0bdfe8c73c1046a986df888aa99dcb2e/workspace/fleet-bundle-id-plan.md`.
 
 ## Fleet UI copy
 
