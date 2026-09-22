@@ -14,6 +14,7 @@
                                                     "npm:@typescript-eslint/eslint-plugin@^8.70.0": "8.70.0_@typescript-eslint+parser@8.70.0__eslint@10.10.0__typescript@5.9.3_eslint@10.10.0_typescript@5.9.3",
                                                         "npm:@typescript-eslint/parser@^8.70.0": "8.70.0_eslint@10.10.0_typescript@5.9.3",
                                                             "npm:@vitest/coverage-v8@^5.0.1": "5.0.1_vitest@5.0.1_@types+node@26.6.1_vite@8.3.0__@types+node@26.6.1",
-                                                                "n
+                                                                "npm:cheerio@^1.2.0": "1.2.0",
+                                                                    "npm:dd-
       }
 }
