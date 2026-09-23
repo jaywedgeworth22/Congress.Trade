@@ -402,6 +402,32 @@ describe('recoverExpiredCappedReviews', () => {
     expect(again).toMatchObject({ terminalized: 0 });
   });
 
+  it('treats a soft loadDocBytes skip (R2 miss + source timeout) as retryable, keeping lease and reason', async () => {
+    const db = await sqliteDatabase();
+    seedReview(db, 'E-2026-timeout-278e', 'extract_empty_failure');
+    db.prepare(
+      `UPDATE filings SET raw_object_key = 'raw/miss.pdf', source_url = 'https://example.test/doc.pdf'
+        WHERE doc_id = 'E-2026-timeout-278e'`,
+    ).run();
+    classifyOverride.fn = async () => {
+      throw new Error('classifier must not run without bytes');
+    };
+    // R2 miss, then the source_url fallback times out: a blip, not a verdict.
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      throw new Error('The operation timed out');
+    }));
+    const env = withBytes(db, async () => null);
+
+    const out = await maybeRunAgreementAutopublish(env);
+    expect(out).toMatchObject({ terminalized: 0 });
+    const row = reviewRow(db, 'E-2026-timeout-278e');
+    // Not relabeled agreement_cascade_unresolved (a label later recovery
+    // excludes); the row retries after the 15-minute lease expiry.
+    expect(row).toMatchObject({ resolved: 0, reason: 'extract_empty_failure' });
+    expect(row.agreement_claim_token).toEqual(expect.any(String));
+    vi.unstubAllGlobals();
+  });
+
   it('keeps the lease and the empty-failure reason when storage throws', async () => {
     const db = await sqliteDatabase();
     seedReview(db, 'E-2026-blip-278e', 'extract_empty_failure');
