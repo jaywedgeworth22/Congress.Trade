@@ -20,7 +20,7 @@
 
 import { extractText, getDocumentProxy } from 'unpdf';
 import type { Env } from '../shared/types.ts';
-import { all, run } from '../shared/db.ts';
+import { all, batch, run } from '../shared/db.ts';
 import { checkPipelineHealth } from '../shared/pipelineHealth.ts';
 import { sendPushover } from '../shared/pushover.ts';
 import { sentryLoggerWarn } from '../shared/sentryRuntime.ts';
@@ -31,7 +31,8 @@ import {
   type DeterministicDrainResult,
   type LocalVisionRequeueResult,
 } from '../extraction/deterministicDrain.ts';
-import { reconcileResolvedReviewStatus } from './reviewStatusReconcile.ts';
+import { DESYNCED_INGEST_STATUSES, reconcileResolvedReviewStatus } from './reviewStatusReconcile.ts';
+import { PROVIDER_ONLY_LEAD_CLEARED_REASON } from './providerMissingStubClose.ts';
 
 /** Provider-placeholder bookkeeping rows (tradeLatency.ts
  *  routeProviderOnlyObservationsToReview) are working-as-designed synthetic
@@ -853,6 +854,8 @@ export async function sweepLivenessAlarms(
 
 export interface ProviderOnlyStubSweepResult {
   cleared: number;
+  /** Stub filings moved to verified_empty alongside their review close. */
+  filingsUpdated: number;
 }
 
 /**
@@ -868,9 +871,18 @@ export interface ProviderOnlyStubSweepResult {
  * the next ship re-ran migrations. This sweep applies the exact same terminal
  * state hourly, bounded and idempotent, so the next similar row closes itself.
  *
+ * The stub's filing row is moved to verified_empty in the same batch.
+ * reviewStatusReconcile.ts deliberately skips provider-missing-* docs, so
+ * nothing else would ever bring the synthetic filing out of needs_review.
+ * The filing step also heals stubs the deploy-time migration closed earlier
+ * without touching their filing.
+ *
  * The official-counterpart case (an official filing now exists) is left to
  * providerMissingStubClose.ts, which rejects the stub as a duplicate when the
- * provider observation is reprocessed — this sweep never invents that verdict.
+ * provider observation is reprocessed — this sweep never invents that verdict,
+ * and that path still overrides this sweep's verified_empty close if the
+ * official filing lands later. review_revision is bumped so a concurrent
+ * duplicate rejection that read the pre-sweep revision no-ops cleanly.
  * Rows with stored raw bytes or a live transaction are excluded so a real
  * filing that happens to carry this reason is never swept.
  */
@@ -879,32 +891,60 @@ export async function sweepProviderOnlyReviewStubs(
   opts: { limit?: number } = {},
 ): Promise<ProviderOnlyStubSweepResult> {
   const limit = opts.limit ?? 500;
-  const res = await run(
-    env.DB,
-    `UPDATE review_queue
-        SET resolved = 1,
-            resolution_kind = 'verified_empty',
-            resolution_reason = 'provider_only_lead_cleared',
-            resolved_at = CURRENT_TIMESTAMP
-      WHERE resolved = 0
-        AND reason = 'provider_discovered_missing_official'
-        AND doc_id IN (
-          SELECT rq.doc_id
-            FROM review_queue rq
-            LEFT JOIN filings f ON f.doc_id = rq.doc_id
-           WHERE rq.resolved = 0
+  const statusPlaceholders = DESYNCED_INGEST_STATUSES.map(() => '?').join(',');
+  const results = await batch(env.DB, [
+    [
+      `UPDATE review_queue
+          SET resolved = 1,
+              resolution_kind = 'verified_empty',
+              resolution_reason = ?,
+              resolved_at = CURRENT_TIMESTAMP,
+              review_revision = review_revision + 1
+        WHERE resolved = 0
+          AND reason = 'provider_discovered_missing_official'
+          AND doc_id IN (
+            SELECT rq.doc_id
+              FROM review_queue rq
+              LEFT JOIN filings f ON f.doc_id = rq.doc_id
+             WHERE rq.resolved = 0
+               AND rq.reason = 'provider_discovered_missing_official'
+               AND (f.raw_object_key IS NULL OR f.raw_object_key = '')
+               AND NOT EXISTS (
+                 SELECT 1 FROM transactions t
+                  WHERE t.doc_id = rq.doc_id AND t.deprecated_at IS NULL
+               )
+             ORDER BY rq.created_at ASC
+             LIMIT ?
+          )`,
+      [PROVIDER_ONLY_LEAD_CLEARED_REASON, limit],
+    ],
+    [
+      `UPDATE filings
+          SET ingest_status = 'verified_empty',
+              error = NULL
+        WHERE doc_id IN (
+          SELECT f.doc_id
+            FROM filings f
+            JOIN review_queue rq ON rq.doc_id = f.doc_id
+           WHERE rq.resolved = 1
              AND rq.reason = 'provider_discovered_missing_official'
+             AND rq.resolution_kind = 'verified_empty'
+             AND rq.resolution_reason = ?
+             AND f.ingest_status IN (${statusPlaceholders})
              AND (f.raw_object_key IS NULL OR f.raw_object_key = '')
              AND NOT EXISTS (
                SELECT 1 FROM transactions t
-                WHERE t.doc_id = rq.doc_id AND t.deprecated_at IS NULL
+                WHERE t.doc_id = f.doc_id AND t.deprecated_at IS NULL
              )
-           ORDER BY rq.created_at ASC
            LIMIT ?
         )`,
-    [limit],
-  );
-  return { cleared: res.meta?.changes ?? 0 };
+      [PROVIDER_ONLY_LEAD_CLEARED_REASON, ...DESYNCED_INGEST_STATUSES, limit],
+    ],
+  ]);
+  return {
+    cleared: results[0]?.meta?.changes ?? 0,
+    filingsUpdated: results[1]?.meta?.changes ?? 0,
+  };
 }
 
 /**
