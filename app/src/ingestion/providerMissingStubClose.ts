@@ -15,7 +15,7 @@
  */
 
 import type { Env } from '../shared/types.ts';
-import { all, batch, get } from '../shared/db.ts';
+import { all, batch, get, type SqlParam } from '../shared/db.ts';
 import { recordIngestionDecision } from '../shared/ingestionDecisions.ts';
 import { PIPELINE_TX_SOURCES_SQL } from '../extraction/sourceSupersede.ts';
 import type { DisclosureProviderRow } from './tradeLatency.ts';
@@ -352,6 +352,9 @@ export interface ProviderMissingStubReconcileResult {
 interface StubReconcileCandidate {
   doc_id: string;
   payload: string | null;
+  /** Keyset cursor columns: selected for pagination, not used per stub. */
+  created_at: string;
+  stub_rowid: number;
   chamber: string | null;
   source_url: string | null;
   filed_date: string | null;
@@ -428,9 +431,14 @@ function observationFromStub(stub: StubReconcileCandidate): DisclosureProviderRo
  * Rotation: a plain newest-first LIMIT would re-scan the same newest rows every
  * hour and never reach older eligible stubs.  Eligible stubs are split into
  * buckets by rowid (stable per row), sized so each bucket is about half the row
- * limit, and each run scans the bucket for the current hour.  Every eligible
- * stub is therefore checked at least once every `buckets` hours, with headroom
- * under the limit so a bucket does not overflow.
+ * limit, and each run scans the bucket for the current hour.  rowid % N only
+ * bounds the *average* bucket size — the queue also holds non-stub rows, so the
+ * stub rowids are uneven and one bucket can hold more than `limit` eligible
+ * stubs — so each run pages through its whole bucket with a keyset cursor on
+ * (created_at, rowid) instead of taking a single newest-first page.  Every
+ * eligible stub is therefore checked at least once every `buckets` hours, and
+ * an oversized bucket is drained over its visit instead of starving its oldest
+ * rows.
  */
 export async function reconcileProviderMissingStubsWithOfficial(
   env: Env,
@@ -459,17 +467,42 @@ export async function reconcileProviderMissingStubsWithOfficial(
   const bucketTarget = Math.max(1, Math.floor(limit / 2));
   const buckets = Math.max(1, Math.ceil(total / bucketTarget));
   const bucket = Math.floor(now.getTime() / 3_600_000) % buckets;
-  const stubs = await all<StubReconcileCandidate>(
-    env.DB,
-    `SELECT rq.doc_id, rq.payload, f.chamber, f.source_url, f.filed_date, f.error
-       FROM review_queue rq
-       LEFT JOIN filings f ON f.doc_id = rq.doc_id
-      WHERE ${eligibleSql}
-        AND (rq.rowid % ?) = ?
-      ORDER BY rq.created_at DESC
-      LIMIT ?`,
-    [cutoffIso, PROVIDER_ONLY_LEAD_CLEARED_REASON, buckets, bucket, limit],
-  );
+  // Page through the whole current bucket with a keyset cursor on
+  // (created_at, rowid).  A single newest-first page would re-scan the same
+  // newest rows on every visit, so the oldest stubs in a bucket that holds
+  // more than `limit` eligible rows would never be reached.
+  const stubs: StubReconcileCandidate[] = [];
+  let cursorCreatedAt: string | null = null;
+  let cursorRowid = 0;
+  for (;;) {
+    const keysetSql = cursorCreatedAt === null
+      ? ''
+      : 'AND (rq.created_at < ? OR (rq.created_at = ? AND rq.rowid < ?))';
+    const params: SqlParam[] = [cutoffIso, PROVIDER_ONLY_LEAD_CLEARED_REASON, buckets, bucket];
+    if (cursorCreatedAt !== null) {
+      params.push(cursorCreatedAt, cursorCreatedAt, cursorRowid);
+    }
+    params.push(limit);
+    const page = await all<StubReconcileCandidate>(
+      env.DB,
+      `SELECT rq.doc_id, rq.payload, rq.created_at, rq.rowid AS stub_rowid,
+              f.chamber, f.source_url, f.filed_date, f.error
+         FROM review_queue rq
+         LEFT JOIN filings f ON f.doc_id = rq.doc_id
+        WHERE ${eligibleSql}
+          AND (rq.rowid % ?) = ?
+          ${keysetSql}
+        ORDER BY rq.created_at DESC, rq.rowid DESC
+        LIMIT ?`,
+      params,
+    );
+    if (page.length === 0) break;
+    stubs.push(...page);
+    if (page.length < limit) break;
+    const last = page[page.length - 1];
+    cursorCreatedAt = last.created_at;
+    cursorRowid = last.stub_rowid;
+  }
   let rejected = 0;
   for (const stub of stubs) {
     const row = observationFromStub(stub);
