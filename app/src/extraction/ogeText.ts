@@ -264,7 +264,17 @@ export function classifyOgeTransactionText(text: string, docId = ''): OgeTextCla
 }
 
 const PART7_HEADING_RE = /(?:^|\s)(?:part\s*7[.:\s]+transactions?|(?<!\d)7[.]\s*transactions?)\b/i;
+const PART7_HEADING_GLOBAL_RE = new RegExp(PART7_HEADING_RE.source, 'gi');
 const PART7_END_RE = /(?:^|\s)(?:part\s*8\b|(?<!\d)8[.]\s*[a-z]|summary\s+of\s+contents)/i;
+/** One short table-of-contents entry: "6. Agreements" / "Part 6 Agreements". */
+const PART7_TOC_ENTRY_RE = /(?:part\s*\d{1,2}\b|(?<!\d)\d{1,2}[.])\s*[A-Za-z]/i;
+/**
+ * How far around a Part 7 heading to look for neighbouring contents entries.
+ * TOC lines sit right next to each other; a real Part 7 heading follows the
+ * whole Part 6 body and its Part 8 successor heads a real section, so real
+ * headings never have part entries on BOTH sides within this window.
+ */
+const PART7_TOC_ENTRY_WINDOW = 120;
 
 /**
  * Positive evidence that an OGE 278e Part 7 (Transactions) section has no
@@ -282,22 +292,45 @@ export function ogePart7SectionLooksEmpty(text: string | null | undefined): bool
     .trim();
   if (!normalized) return false;
   if (looksLikeOgePart7ExplicitNone(normalized)) return true;
-  const heading = PART7_HEADING_RE.exec(normalized);
-  if (!heading) return false;
-  const rest = normalized.slice(heading.index + heading[0].length);
-  const end = PART7_END_RE.exec(rest);
-  if (!end) return false;
-  const body = rest.slice(0, end.index);
-  // A table header (or its `#` row-number column) with no rows under it is a
-  // read that lost the row glyphs, not an empty section.  Real empty 278e
-  // Part 7s print no table at all, or say None (handled above).
-  if (/#|\b(?:description|type|date|amount|notification)\b/i.test(body)) return false;
-  // Any digit (row number, date, amount) means content we could not parse.
-  if (/\d/.test(body)) return false;
-  if (/\b(?:purchase|sale|exchange)\b/i.test(body)) return false;
-  if (/\d{1,2}\/\d{1,2}\/\d{2,4}/.test(body)) return false;
-  if (/\$\s*\d/.test(body)) return false;
-  return true;
+  // Walk EVERY Part 7 heading, not just the first. A table of contents
+  // carries the same words ("7. Transactions 8. Liabilities"), and a
+  // first-match search stops there: bounded by the next TOC entry the
+  // "section" looks empty, so a filing whose real Part 7 sits further down -
+  // trades included - would close verified_empty. Same fail-closed class as
+  // the header-only guard below: a TOC stub is not positive evidence of an
+  // empty section, so skip headings inside a contents run (another part
+  // entry just before AND just after) and keep scanning for the real one.
+  let sawPositivelyEmptySection = false;
+  PART7_HEADING_GLOBAL_RE.lastIndex = 0;
+  let heading: RegExpExecArray | null;
+  while ((heading = PART7_HEADING_GLOBAL_RE.exec(normalized)) !== null) {
+    const rest = normalized.slice(heading.index + heading[0].length);
+    const end = PART7_END_RE.exec(rest);
+    // A Part 7 whose end we cannot see is not evidence; a later heading may
+    // still be readable.
+    if (!end) continue;
+    const before = normalized.slice(
+      Math.max(0, heading.index - PART7_TOC_ENTRY_WINDOW),
+      heading.index,
+    );
+    const after = rest.slice(
+      end.index + end[0].length,
+      end.index + end[0].length + PART7_TOC_ENTRY_WINDOW,
+    );
+    if (PART7_TOC_ENTRY_RE.test(before) && PART7_TOC_ENTRY_RE.test(after)) continue;
+    const body = rest.slice(0, end.index);
+    // A table header (or its `#` row-number column) with no rows under it is a
+    // read that lost the row glyphs, not an empty section.  Real empty 278e
+    // Part 7s print no table at all, or say None (handled above).
+    if (/#|\b(?:description|type|date|amount|notification)\b/i.test(body)) return false;
+    // Any digit (row number, date, amount) means content we could not parse.
+    if (/\d/.test(body)) return false;
+    if (/\b(?:purchase|sale|exchange)\b/i.test(body)) return false;
+    if (/\d{1,2}\/\d{1,2}\/\d{2,4}/.test(body)) return false;
+    if (/\$\s*\d/.test(body)) return false;
+    sawPositivelyEmptySection = true;
+  }
+  return sawPositivelyEmptySection;
 }
 
 /** Parse the merged 278-T text into ParsedTx[]. Pure / unit-testable. */
