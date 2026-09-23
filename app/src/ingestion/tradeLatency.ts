@@ -2187,6 +2187,23 @@ function providerOnlyDocId(row: DisclosureProviderRow): string {
   return `provider-missing-${row.provider}-${row.chamber}-${key}`;
 }
 
+/**
+ * review_queue payload for a provider-only stub, capped at PAYLOAD_LIMIT.
+ * Slicing the whole JSON leaves invalid JSON, which loses provider/providerKey
+ * for the official-side reconcile (providerMissingStubClose.ts).  When the
+ * payload is over the cap, drop the raw provider payload first so the identity
+ * fields stay parseable.  Exported for unit tests.
+ */
+export function providerStubReviewPayload(
+  fields: { payload: unknown } & Record<string, unknown>,
+  limit = PAYLOAD_LIMIT,
+): string {
+  const full = JSON.stringify(fields);
+  if (full.length <= limit) return full;
+  const compact = JSON.stringify({ ...fields, payload: null, payloadTruncated: true });
+  return compact.slice(0, limit);
+}
+
 /** Exported for unit tests. */
 export async function routeProviderOnlyObservationsToReview(
   env: Env,
@@ -2216,7 +2233,7 @@ export async function routeProviderOnlyObservationsToReview(
     );
     if (exists3) continue;
 
-    const payload = JSON.stringify({
+    const payload = providerStubReviewPayload({
       reason: 'provider_discovered_missing_official',
       provider,
       providerKey: row.providerKey,
@@ -2225,7 +2242,7 @@ export async function routeProviderOnlyObservationsToReview(
       filerName: row.filerName,
       sourceUrl: row.sourceUrl,
       payload: row.payload,
-    }).slice(0, PAYLOAD_LIMIT);
+    });
 
     // No notifyReviewQueuePublisher here: a provider-only stub is a synthetic
     // lead that the hourly sweep closes as verified_empty (or rejects as a

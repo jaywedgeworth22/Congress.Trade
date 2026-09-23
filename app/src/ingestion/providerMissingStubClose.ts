@@ -15,13 +15,20 @@
  */
 
 import type { Env } from '../shared/types.ts';
-import { all, batch, get } from '../shared/db.ts';
+import { all, batch, get, type SqlParam } from '../shared/db.ts';
 import { recordIngestionDecision } from '../shared/ingestionDecisions.ts';
 import { PIPELINE_TX_SOURCES_SQL } from '../extraction/sourceSupersede.ts';
 import type { DisclosureProviderRow } from './tradeLatency.ts';
 import { enqueueIngestionOutboxNow, ingestionOutboxInsertForDoc } from './outbox.ts';
 
-const REJECT_PREFIX = 'rejected: duplicate — official filing';
+/**
+ * Prefix of the review_queue reason / resolution_reason stamped when a
+ * provider-missing stub is rejected as a duplicate of its official filing.
+ * Exported so admin diagnostics can recognise that closed stub (whose
+ * filings.error still holds the provider-only raw-key marker) as not an error.
+ */
+export const PROVIDER_STUB_DUPLICATE_REJECT_PREFIX = 'rejected: duplicate — official filing';
+const REJECT_PREFIX = PROVIDER_STUB_DUPLICATE_REJECT_PREFIX;
 
 /**
  * resolution_reason the hourly provider-only sweep (autonomySweeps.ts
@@ -55,6 +62,28 @@ async function officialCounterpartQuery(
   const key = row.providerKey.trim().toLowerCase();
   if (!key) return null;
   const persistedClause = persistedOnly ? `AND ingest_status = 'persisted'` : '';
+
+  // Provider rows matched to an official filing by the latency matcher.  This
+  // is the only link for Unusual Whales / Quiver rows without an official URL,
+  // whose provider_key is a synthetic hash that never equals an S-/H- doc id
+  // (mirrors the trade_latency_candidates check in
+  // tradeLatency.ts routeProviderOnlyObservationsToReview).
+  const rawKey = row.providerKey.trim();
+  if (row.provider && rawKey) {
+    const byCandidate = await get<{ doc_id: string }>(
+      db,
+      `SELECT f.doc_id FROM trade_latency_candidates tlc
+         JOIN filings f ON f.doc_id = tlc.doc_id
+        WHERE tlc.provider = ?
+          AND tlc.provider_key = ?
+          AND tlc.status = 'matched'
+          AND f.doc_id NOT LIKE 'provider-missing-%'
+          ${persistedClause}
+        LIMIT 1`,
+      [row.provider, rawKey],
+    );
+    if (byCandidate?.doc_id) return byCandidate.doc_id;
+  }
 
   if (row.sourceUrl) {
     const byUrl = await get<{ doc_id: string }>(
@@ -330,12 +359,30 @@ export interface ProviderMissingStubReconcileResult {
 interface StubReconcileCandidate {
   doc_id: string;
   payload: string | null;
+  /** Keyset cursor columns: selected for pagination, not used per stub. */
+  created_at: string;
+  stub_rowid: number;
   chamber: string | null;
   source_url: string | null;
   filed_date: string | null;
+  /** Stub filing's error column: `provider-only:{provider}:{raw providerKey}`. */
+  error: string | null;
 }
 
 const STUB_DOC_PREFIX = 'provider-missing-';
+const PROVIDER_ONLY_ERROR_PREFIX = 'provider-only:';
+
+/** Parse the `provider-only:{provider}:{providerKey}` marker the stub insert writes to filings.error. */
+function providerMarkerFromStubError(error: string | null): { provider: string | null; providerKey: string | null } {
+  const value = (error || '').trim();
+  if (!value.startsWith(PROVIDER_ONLY_ERROR_PREFIX)) return { provider: null, providerKey: null };
+  const rest = value.slice(PROVIDER_ONLY_ERROR_PREFIX.length);
+  const sep = rest.indexOf(':');
+  if (sep <= 0) return { provider: null, providerKey: null };
+  const provider = rest.slice(0, sep).trim() || null;
+  const providerKey = rest.slice(sep + 1).trim() || null;
+  return { provider, providerKey };
+}
 
 /** Rebuild the provider observation a stub was created from (payload first, doc_id fallback). */
 function observationFromStub(stub: StubReconcileCandidate): DisclosureProviderRow | null {
@@ -349,18 +396,25 @@ function observationFromStub(stub: StubReconcileCandidate): DisclosureProviderRo
     // Payload is sliced to PAYLOAD_LIMIT on insert and can be truncated JSON.
   }
   const str = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v.trim() : null);
-  let providerKey = str(parsed.providerKey);
-  if (!providerKey) {
-    // providerOnlyDocId: provider-missing-{provider}-{chamber}-{sanitized key}.
-    // Provider ids never contain '-', so the first -{chamber}- splits it.
-    const rest = stub.doc_id.startsWith(STUB_DOC_PREFIX) ? stub.doc_id.slice(STUB_DOC_PREFIX.length) : '';
-    const marker = `-${chamber}-`;
-    const at = rest.indexOf(marker);
-    providerKey = at > 0 ? str(rest.slice(at + marker.length)) : null;
-  }
+  // providerOnlyDocId: provider-missing-{provider}-{chamber}-{sanitized key}.
+  // Provider ids never contain '-', so the first -{chamber}- splits it.
+  const rest = stub.doc_id.startsWith(STUB_DOC_PREFIX) ? stub.doc_id.slice(STUB_DOC_PREFIX.length) : '';
+  const marker = `-${chamber}-`;
+  const at = rest.indexOf(marker);
+  const fromError = providerMarkerFromStubError(stub.error);
+  // Raw key order: payload (can be truncated JSON), then the untruncated
+  // filings.error marker, then the sanitized doc_id suffix (last resort; it can
+  // differ from the raw key, so the candidate lookup may miss on it).
+  const providerKey = str(parsed.providerKey)
+    ?? fromError.providerKey
+    ?? (at > 0 ? str(rest.slice(at + marker.length)) : null);
   if (!providerKey) return null;
+  const provider = str(parsed.provider)
+    ?? fromError.provider
+    ?? (at > 0 ? str(rest.slice(0, at)) : null)
+    ?? 'fmp';
   return {
-    provider: (str(parsed.provider) ?? 'fmp') as DisclosureProviderRow['provider'],
+    provider: provider as DisclosureProviderRow['provider'],
     chamber,
     providerKey,
     tradeHash: '',
@@ -377,9 +431,21 @@ function observationFromStub(stub: StubReconcileCandidate): DisclosureProviderRo
  * otherwise only runs when the provider feed re-serves the same observation, so an
  * official filing that persists after the provider row has aged out of the feed
  * would leave the stub open (or swept to verified_empty) forever.  This checks
- * every recent open or sweep-closed stub against persisted official filings,
+ * recent open or sweep-closed stubs against persisted official filings,
  * independent of the current provider response, and applies the same duplicate
  * rejection.  Bounded by age and row count; idempotent.
+ *
+ * Rotation: a plain newest-first LIMIT would re-scan the same newest rows every
+ * hour and never reach older eligible stubs.  Eligible stubs are split into
+ * buckets by rowid (stable per row), sized so each bucket is about half the row
+ * limit, and each run scans the bucket for the current hour.  rowid % N only
+ * bounds the *average* bucket size — the queue also holds non-stub rows, so the
+ * stub rowids are uneven and one bucket can hold more than `limit` eligible
+ * stubs — so each run pages through its whole bucket with a keyset cursor on
+ * (created_at, rowid) instead of taking a single newest-first page.  Every
+ * eligible stub is therefore checked at least once every `buckets` hours, and
+ * an oversized bucket is drained over its visit instead of starving its oldest
+ * rows.
  */
 export async function reconcileProviderMissingStubsWithOfficial(
   env: Env,
@@ -387,26 +453,63 @@ export async function reconcileProviderMissingStubsWithOfficial(
 ): Promise<ProviderMissingStubReconcileResult> {
   const now = opts.now ?? new Date();
   const nowIso = now.toISOString();
-  const limit = opts.limit ?? 500;
+  const limit = Math.max(1, opts.limit ?? 500);
   const maxAgeDays = opts.maxAgeDays ?? 120;
   const cutoffIso = new Date(now.getTime() - maxAgeDays * 86_400_000).toISOString();
-  const stubs = await all<StubReconcileCandidate>(
-    env.DB,
-    `SELECT rq.doc_id, rq.payload, f.chamber, f.source_url, f.filed_date
-       FROM review_queue rq
-       LEFT JOIN filings f ON f.doc_id = rq.doc_id
-      WHERE rq.reason = 'provider_discovered_missing_official'
+  const eligibleSql = `rq.reason = 'provider_discovered_missing_official'
         AND rq.doc_id LIKE '${STUB_DOC_PREFIX}%'
         AND rq.created_at >= ?
         AND (rq.resolved = 0 OR (
               rq.resolved = 1
               AND rq.resolution_kind = 'verified_empty'
               AND rq.resolution_reason = ?
-            ))
-      ORDER BY rq.created_at DESC
-      LIMIT ?`,
-    [cutoffIso, PROVIDER_ONLY_LEAD_CLEARED_REASON, limit],
+            ))`;
+  const eligible = await get<{ n: number }>(
+    env.DB,
+    `SELECT COUNT(*) AS n FROM review_queue rq WHERE ${eligibleSql}`,
+    [cutoffIso, PROVIDER_ONLY_LEAD_CLEARED_REASON],
   );
+  const total = Number(eligible?.n ?? 0);
+  if (total === 0) return { scanned: 0, rejected: 0 };
+  const bucketTarget = Math.max(1, Math.floor(limit / 2));
+  const buckets = Math.max(1, Math.ceil(total / bucketTarget));
+  const bucket = Math.floor(now.getTime() / 3_600_000) % buckets;
+  // Page through the whole current bucket with a keyset cursor on
+  // (created_at, rowid).  A single newest-first page would re-scan the same
+  // newest rows on every visit, so the oldest stubs in a bucket that holds
+  // more than `limit` eligible rows would never be reached.
+  const stubs: StubReconcileCandidate[] = [];
+  let cursorCreatedAt: string | null = null;
+  let cursorRowid = 0;
+  for (;;) {
+    const keysetSql = cursorCreatedAt === null
+      ? ''
+      : 'AND (rq.created_at < ? OR (rq.created_at = ? AND rq.rowid < ?))';
+    const params: SqlParam[] = [cutoffIso, PROVIDER_ONLY_LEAD_CLEARED_REASON, buckets, bucket];
+    if (cursorCreatedAt !== null) {
+      params.push(cursorCreatedAt, cursorCreatedAt, cursorRowid);
+    }
+    params.push(limit);
+    const page = await all<StubReconcileCandidate>(
+      env.DB,
+      `SELECT rq.doc_id, rq.payload, rq.created_at, rq.rowid AS stub_rowid,
+              f.chamber, f.source_url, f.filed_date, f.error
+         FROM review_queue rq
+         LEFT JOIN filings f ON f.doc_id = rq.doc_id
+        WHERE ${eligibleSql}
+          AND (rq.rowid % ?) = ?
+          ${keysetSql}
+        ORDER BY rq.created_at DESC, rq.rowid DESC
+        LIMIT ?`,
+      params,
+    );
+    if (page.length === 0) break;
+    stubs.push(...page);
+    if (page.length < limit) break;
+    const last = page[page.length - 1];
+    cursorCreatedAt = last.created_at;
+    cursorRowid = last.stub_rowid;
+  }
   let rejected = 0;
   for (const stub of stubs) {
     const row = observationFromStub(stub);

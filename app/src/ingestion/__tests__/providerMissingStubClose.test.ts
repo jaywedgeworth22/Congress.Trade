@@ -3,7 +3,11 @@ import Database from 'libsql';
 import { d1Database } from '../../prices/__tests__/sqliteD1.ts';
 import { runMigrations } from '../../admin/migrations.ts';
 import type { Env } from '../../shared/types.ts';
-import { routeProviderOnlyObservationsToReview, type DisclosureProviderRow } from '../tradeLatency.ts';
+import {
+  providerStubReviewPayload,
+  routeProviderOnlyObservationsToReview,
+  type DisclosureProviderRow,
+} from '../tradeLatency.ts';
 import {
   closeProviderMissingStubIfOfficialPersisted,
   enqueueOfficialSenateFromProviderObservation,
@@ -373,6 +377,265 @@ describe('providerMissingStubClose', () => {
       const human = await reconcileProviderMissingStubsWithOfficial(makeEnv(), { now: NOW });
       expect(human).toEqual({ scanned: 0, rejected: 0 });
       expect((await reviewState(STUB_SENATE_ID))?.resolution_reason).toBe('reviewer: checked by hand');
+    });
+
+    async function seedHouseStub(stub: string, payload: string, errorMarker: string | null, createdAt = '2026-08-25T00:00:00.000Z') {
+      await d1.prepare(
+        `INSERT INTO filings (doc_id, chamber, ingest_status, filing_type, first_seen_at, source_url, error)
+         VALUES (?, 'house', 'needs_review', 'P', ?, NULL, ?)`,
+      ).bind(stub, createdAt, errorMarker).run();
+      await d1.prepare(
+        `INSERT INTO review_queue (doc_id, reason, payload, created_at, resolved, review_revision)
+         VALUES (?, 'provider_discovered_missing_official', ?, ?, 0, 1)`,
+      ).bind(stub, payload, createdAt).run();
+    }
+
+    async function seedMatchedCandidate(provider: string, providerKey: string, officialDocId: string) {
+      await d1.prepare(
+        `INSERT INTO trade_latency_candidates
+           (trade_hash, doc_id, provider, chamber, congress_first_seen_at, provider_key, status, created_at, updated_at)
+         VALUES (?, ?, ?, 'house', '2026-08-26T00:00:00.000Z', ?, 'matched', '2026-08-26T00:00:00.000Z', '2026-08-26T00:00:00.000Z')`,
+      ).bind(`hash-${providerKey}`, officialDocId, provider, providerKey).run();
+    }
+
+    it('matches a hashed Unusual Whales key through its matched trade_latency_candidates row', async () => {
+      const hashKey = 'uw-hash-fixture-a';
+      const stub = `provider-missing-unusual_whales-house-${hashKey}`;
+      await seedHouseStub(
+        stub,
+        JSON.stringify({ reason: 'provider_discovered_missing_official', provider: 'unusual_whales', providerKey: hashKey }),
+        `provider-only:unusual_whales:${hashKey}`,
+      );
+      await d1.prepare(
+        `INSERT INTO filings (doc_id, chamber, ingest_status, filing_type, first_seen_at)
+         VALUES ('H-2026-20040001', 'house', 'persisted', 'P', '2026-08-26T00:00:00.000Z')`,
+      ).run();
+
+      // No S-/H- key match exists, and no candidate yet: stays open.
+      expect(await reconcileProviderMissingStubsWithOfficial(makeEnv(), { now: NOW }))
+        .toEqual({ scanned: 1, rejected: 0 });
+
+      await seedMatchedCandidate('unusual_whales', hashKey, 'H-2026-20040001');
+      expect(await reconcileProviderMissingStubsWithOfficial(makeEnv(), { now: NOW }))
+        .toEqual({ scanned: 1, rejected: 1 });
+      const review = await reviewState(stub);
+      expect(review?.resolution_kind).toBe('rejected');
+      expect(review?.resolution_reason).toContain('H-2026-20040001');
+    });
+
+    it('recovers provider and raw key from the filings.error marker when the payload is truncated', async () => {
+      const rawKey = 'Quiver:ab/12#x';
+      const stub = 'provider-missing-quiver-house-Quiver-ab-12-x';
+      await seedHouseStub(stub, '{"reason":"provider_discovered_missing_official","prov', `provider-only:quiver:${rawKey}`);
+      await d1.prepare(
+        `INSERT INTO filings (doc_id, chamber, ingest_status, filing_type, first_seen_at)
+         VALUES ('H-2026-20040002', 'house', 'persisted', 'P', '2026-08-26T00:00:00.000Z')`,
+      ).run();
+      await seedMatchedCandidate('quiver', rawKey, 'H-2026-20040002');
+
+      expect(await reconcileProviderMissingStubsWithOfficial(makeEnv(), { now: NOW }))
+        .toEqual({ scanned: 1, rejected: 1 });
+      expect((await reviewState(stub))?.resolution_reason).toContain('H-2026-20040002');
+    });
+
+    it('keeps the raw key after the provider-only sweep closes a truncated-payload stub', async () => {
+      const rawKey = 'quiver:9c1e4f07aa';
+      const stub = 'provider-missing-quiver-house-quiver-9c1e4f07aa';
+      const marker = `provider-only:quiver:${rawKey}`;
+      await seedHouseStub(stub, '{"reason":"provider_discovered_missing_official","prov', marker);
+
+      // The hourly sweep runs right after the reconcile and closes the stub.
+      expect((await sweepProviderOnlyReviewStubs(makeEnv())).cleared).toBe(1);
+      expect(await filingStatus(stub)).toBe('verified_empty');
+      const swept = await d1.prepare('SELECT error FROM filings WHERE doc_id = ?')
+        .bind(stub).first<{ error: string | null }>();
+      expect(swept?.error).toBe(marker);
+
+      // The official filing lands later; only the raw key matches the candidate.
+      await d1.prepare(
+        `INSERT INTO filings (doc_id, chamber, ingest_status, filing_type, first_seen_at)
+         VALUES ('H-2026-20040003', 'house', 'persisted', 'P', '2026-08-26T00:00:00.000Z')`,
+      ).run();
+      await seedMatchedCandidate('quiver', rawKey, 'H-2026-20040003');
+
+      expect(await reconcileProviderMissingStubsWithOfficial(makeEnv(), { now: NOW }))
+        .toEqual({ scanned: 1, rejected: 1 });
+      const review = await reviewState(stub);
+      expect(review?.resolution_kind).toBe('rejected');
+      expect(review?.resolution_reason).toContain('H-2026-20040003');
+    });
+
+    it('still clears filings.error on sweep when the payload holds the raw key', async () => {
+      const rawKey = 'quiver:5d20b8e1c4';
+      const stub = 'provider-missing-quiver-house-quiver-5d20b8e1c4';
+      await seedHouseStub(
+        stub,
+        JSON.stringify({ reason: 'provider_discovered_missing_official', provider: 'quiver', providerKey: rawKey }),
+        `provider-only:quiver:${rawKey}`,
+      );
+
+      expect((await sweepProviderOnlyReviewStubs(makeEnv())).cleared).toBe(1);
+      const swept = await d1.prepare('SELECT error FROM filings WHERE doc_id = ?')
+        .bind(stub).first<{ error: string | null }>();
+      expect(swept?.error).toBeNull();
+
+      await d1.prepare(
+        `INSERT INTO filings (doc_id, chamber, ingest_status, filing_type, first_seen_at)
+         VALUES ('H-2026-20040004', 'house', 'persisted', 'P', '2026-08-26T00:00:00.000Z')`,
+      ).run();
+      await seedMatchedCandidate('quiver', rawKey, 'H-2026-20040004');
+      expect(await reconcileProviderMissingStubsWithOfficial(makeEnv(), { now: NOW }))
+        .toEqual({ scanned: 1, rejected: 1 });
+    });
+
+    it('stores an oversized provider payload as parseable JSON that keeps the raw key', async () => {
+      const rawKey = 'quiver:77ab03e9f1';
+      const row: DisclosureProviderRow = {
+        provider: 'quiver',
+        chamber: 'house',
+        providerKey: rawKey,
+        tradeHash: 'h',
+        payload: { notes: 'x'.repeat(30_000) },
+        sourceUrl: null,
+        filedDate: '2026-08-20',
+        filerName: 'Example Member',
+        providerPublishedAt: '2026-08-25T10:00:00.000Z',
+      };
+      await routeProviderOnlyObservationsToReview(makeEnv(), 'quiver', [row], '2026-08-25T12:00:00.000Z');
+
+      const stub = 'provider-missing-quiver-house-quiver-77ab03e9f1';
+      const stored = await d1.prepare('SELECT payload FROM review_queue WHERE doc_id = ?')
+        .bind(stub).first<{ payload: string }>();
+      const parsed = JSON.parse(stored?.payload ?? '');
+      expect(parsed.providerKey).toBe(rawKey);
+      expect(parsed.provider).toBe('quiver');
+      expect(parsed.payloadTruncated).toBe(true);
+
+      // The sweep may clear filings.error now: the payload still carries the key.
+      await sweepProviderOnlyReviewStubs(makeEnv());
+      await d1.prepare(
+        `INSERT INTO filings (doc_id, chamber, ingest_status, filing_type, first_seen_at)
+         VALUES ('H-2026-20040005', 'house', 'persisted', 'P', '2026-08-26T00:00:00.000Z')`,
+      ).run();
+      await seedMatchedCandidate('quiver', rawKey, 'H-2026-20040005');
+      expect(await reconcileProviderMissingStubsWithOfficial(makeEnv(), { now: NOW }))
+        .toEqual({ scanned: 1, rejected: 1 });
+    });
+
+    it('caps the stub payload without touching payloads under the limit', () => {
+      const small = { reason: 'r', provider: 'quiver', providerKey: 'k', payload: { a: 1 } };
+      expect(providerStubReviewPayload(small, 1_000)).toBe(JSON.stringify(small));
+      const big = { ...small, payload: { a: 'y'.repeat(2_000) } };
+      const capped = providerStubReviewPayload(big, 1_000);
+      expect(capped.length).toBeLessThanOrEqual(1_000);
+      expect(JSON.parse(capped)).toMatchObject({ providerKey: 'k', payload: null, payloadTruncated: true });
+    });
+
+    it('ignores a matched candidate whose official filing is not persisted yet', async () => {
+      const hashKey = 'uw-00aa11bb22';
+      const stub = `provider-missing-unusual_whales-house-${hashKey}`;
+      await seedHouseStub(stub, JSON.stringify({ provider: 'unusual_whales', providerKey: hashKey }), null);
+      await d1.prepare(
+        `INSERT INTO filings (doc_id, chamber, ingest_status, filing_type, first_seen_at)
+         VALUES ('H-2026-20040003', 'house', 'extracted', 'P', '2026-08-26T00:00:00.000Z')`,
+      ).run();
+      await seedMatchedCandidate('unusual_whales', hashKey, 'H-2026-20040003');
+      expect(await reconcileProviderMissingStubsWithOfficial(makeEnv(), { now: NOW }))
+        .toEqual({ scanned: 1, rejected: 0 });
+      expect((await reviewState(stub))?.resolved).toBe(0);
+    });
+
+    it('rotates through every eligible stub instead of re-scanning the newest page each hour', async () => {
+      // 7 open stubs, none with an official counterpart, so the eligible set is stable.
+      for (let i = 0; i < 7; i += 1) {
+        await seedHouseStub(
+          `provider-missing-fmp-house-3000000${i}`,
+          JSON.stringify({ provider: 'fmp', providerKey: `3000000${i}` }),
+          null,
+          `2026-08-25T0${i}:00:00.000Z`,
+        );
+      }
+      const hour0 = Date.parse('2026-08-26T00:00:00.000Z');
+      let scannedTotal = 0;
+      for (let h = 0; h < 7; h += 1) {
+        const r = await reconcileProviderMissingStubsWithOfficial(makeEnv(), {
+          now: new Date(hour0 + h * 3_600_000),
+          limit: 2,
+        });
+        expect(r.scanned).toBeLessThanOrEqual(2);
+        scannedTotal += r.scanned;
+      }
+      // Buckets are disjoint (rowid % buckets), so 7 over one full rotation = all covered.
+      expect(scannedTotal).toBe(7);
+    });
+
+    it('drains an oversized bucket in one visit instead of starving its oldest stubs', async () => {
+      // review_queue also holds non-stub rows, so stub rowids are uneven and
+      // rowid % N only bounds the *average* bucket size.  Space 5 stubs 5
+      // review_queue rowids apart with ineligible filler rows: with 5 buckets
+      // every stub lands in the SAME bucket, which then holds 5 eligible rows
+      // against a limit of 2.  A single newest-first page would re-scan the
+      // newest 2 on every visit and never reach the oldest 3.
+      for (let i = 0; i < 5; i += 1) {
+        await seedHouseStub(
+          `provider-missing-fmp-house-5000000${i}`,
+          JSON.stringify({ provider: 'fmp', providerKey: `5000000${i}` }),
+          null,
+          `2026-08-25T0${i}:00:00.000Z`,
+        );
+        for (let f = 0; f < 4 && i < 4; f += 1) {
+          await d1.prepare(
+            `INSERT INTO review_queue (doc_id, reason, payload, created_at, resolved, review_revision)
+             VALUES (?, 'extract_banner_eligible', '{}', '2026-08-25T00:00:00.000Z', 0, 1)`,
+          ).bind(`filler-${i}-${f}`).run();
+        }
+      }
+      const stubRows = await d1.prepare(
+        `SELECT rowid FROM review_queue WHERE reason = 'provider_discovered_missing_official'`,
+      ).all<{ rowid: number }>();
+      const residues = new Set(stubRows.results.map((r) => r.rowid % 5));
+      expect(residues.size).toBe(1);
+
+      const hour0 = Date.parse('2026-08-26T00:00:00.000Z');
+      let scannedTotal = 0;
+      let maxScannedInOneVisit = 0;
+      for (let h = 0; h < 5; h += 1) {
+        const r = await reconcileProviderMissingStubsWithOfficial(makeEnv(), {
+          now: new Date(hour0 + h * 3_600_000),
+          limit: 2,
+        });
+        scannedTotal += r.scanned;
+        maxScannedInOneVisit = Math.max(maxScannedInOneVisit, r.scanned);
+      }
+      // The bucket visit must drain all 5 in a single run, not just the newest 2.
+      expect(maxScannedInOneVisit).toBe(5);
+      expect(scannedTotal).toBe(5);
+    });
+
+    it('eventually rejects the oldest stub even when newer stubs exceed the row limit', async () => {
+      for (let i = 0; i < 6; i += 1) {
+        await seedHouseStub(
+          `provider-missing-fmp-house-4000000${i}`,
+          JSON.stringify({ provider: 'fmp', providerKey: `4000000${i}` }),
+          null,
+          `2026-08-25T0${i}:00:00.000Z`,
+        );
+      }
+      // Only the oldest stub has a persisted official filing.
+      await d1.prepare(
+        `INSERT INTO filings (doc_id, chamber, ingest_status, filing_type, first_seen_at)
+         VALUES ('H-2026-40000000', 'house', 'persisted', 'P', '2026-08-26T00:00:00.000Z')`,
+      ).run();
+      const hour0 = Date.parse('2026-08-26T00:00:00.000Z');
+      let rejected = 0;
+      for (let h = 0; h < 6 && rejected === 0; h += 1) {
+        rejected += (await reconcileProviderMissingStubsWithOfficial(makeEnv(), {
+          now: new Date(hour0 + h * 3_600_000),
+          limit: 2,
+        })).rejected;
+      }
+      expect(rejected).toBe(1);
+      expect((await reviewState('provider-missing-fmp-house-40000000'))?.resolution_kind).toBe('rejected');
     });
 
     it('skips stubs older than the reconcile window', async () => {
