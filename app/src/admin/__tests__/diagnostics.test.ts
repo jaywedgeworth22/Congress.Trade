@@ -432,3 +432,60 @@ describe('admin diagnostics API', () => {
     });
   });
 });
+
+describe('admin diagnostics: provider-only stub markers', () => {
+  it('leaves a sweep-closed truncated-payload stub marker out of filing errors', async () => {
+    const { default: Database } = await import('libsql');
+    const { d1Database } = await import('../../prices/__tests__/sqliteD1.ts');
+    const { runMigrations } = await import('../migrations.ts');
+    const { sweepProviderOnlyReviewStubs } = await import('../../ingestion/autonomySweeps.ts');
+
+    const fileDb = new Database(':memory:');
+    const d1 = d1Database(fileDb);
+    try {
+      await runMigrations(d1);
+      const stub = 'provider-missing-quiver-house-quiver-3f9a61c0de';
+      const marker = 'provider-only:quiver:quiver:3f9a61c0de';
+      // Stub whose review payload was truncated to invalid JSON: the sweep keeps
+      // the raw-key marker in filings.error.  It is newer than the real error.
+      await d1.prepare(
+        `INSERT INTO filings (doc_id, chamber, ingest_status, filing_type, first_seen_at, source_url, error)
+         VALUES (?, 'house', 'needs_review', 'P', '2026-08-25T00:00:00.000Z', NULL, ?)`,
+      ).bind(stub, marker).run();
+      await d1.prepare(
+        `INSERT INTO review_queue (doc_id, reason, payload, created_at, resolved, review_revision)
+         VALUES (?, 'provider_discovered_missing_official', ?, '2026-08-25T00:00:00.000Z', 0, 1)`,
+      ).bind(stub, '{"reason":"provider_discovered_missing_official","prov').run();
+      await d1.prepare(
+        `INSERT INTO filings (doc_id, chamber, ingest_status, filing_type, first_seen_at, error)
+         VALUES ('H-2026-20049999', 'house', 'error', 'P', '2026-08-24T00:00:00.000Z', 'pdf fetch failed: HTTP 503')`,
+      ).run();
+
+      const env = { DB: d1 } as never;
+      expect((await sweepProviderOnlyReviewStubs(env)).cleared).toBe(1);
+      const swept = await d1.prepare('SELECT ingest_status, error FROM filings WHERE doc_id = ?')
+        .bind(stub).first<{ ingest_status: string; error: string | null }>();
+      // Raw-key preservation is intact: the marker is still stored.
+      expect(swept?.ingest_status).toBe('verified_empty');
+      expect(swept?.error).toBe(marker);
+
+      const res = await app.request(
+        '/diagnostics',
+        { headers: { Authorization: 'Bearer admin-secret' } },
+        { ADMIN_TOKEN: 'admin-secret', DB: d1 } as never,
+      );
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { errors: Array<{ area: string; subject: string; message: string }> };
+      const filingErrors = body.errors.filter((e) => e.area === 'Filing');
+      expect(filingErrors).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ subject: 'H-2026-20049999', message: 'pdf fetch failed: HTTP 503' }),
+        ]),
+      );
+      expect(filingErrors.map((e) => e.subject)).not.toContain(stub);
+      expect(JSON.stringify(body.errors)).not.toContain(marker);
+    } finally {
+      fileDb.close();
+    }
+  });
+});
