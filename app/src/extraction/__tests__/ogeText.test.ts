@@ -306,6 +306,41 @@ describe('classifyOgeTransactionText', () => {
       .toEqual({ disposition: 'empty', rows: [] });
   });
 
+  it('does not let a table-of-contents Part 7 entry hide the real Part 7 further down', () => {
+    const bondi = 'E-undated-pam-bondi-2026-278term';
+    // TOC stub first, then the real Part 7 with a traded row: verified_empty
+    // here would bury trades (same fail-closed class as the header-only guard).
+    const tocThenTrades =
+      'OGE Form 278e Summary of Contents 5. Other Income 6. Agreements 7. Transactions 8. Liabilities 9. Gifts '
+      + 'Part One Filer Information pages of earlier parts follow then the real sections '
+      + 'Part 7. Transactions 1 Apple Inc. (AAPL) Purchase 01/05/2026 $1,001 - $15,000 Part 8. Liabilities';
+    expect(ogePart7SectionLooksEmpty(tocThenTrades)).toBe(false);
+    expect(classifyOgeTransactionText(tocThenTrades, bondi))
+      .toEqual({ disposition: 'unconfirmed', rows: [] });
+    // TOC stub + a real, positively-empty Part 7 further down still closes empty.
+    const tocThenEmpty =
+      'OGE Form 278e Summary of Contents 5. Other Income 6. Agreements 7. Transactions 8. Liabilities 9. Gifts '
+      + 'Part One Filer Information pages of earlier parts follow then the real sections '
+      + 'Part 7. Transactions Part 8. Liabilities';
+    expect(ogePart7SectionLooksEmpty(tocThenEmpty)).toBe(true);
+    expect(classifyOgeTransactionText(tocThenEmpty, bondi))
+      .toEqual({ disposition: 'empty', rows: [] });
+    // A TOC alone (the real section is unreadable or lost) is not evidence of empty.
+    const tocOnly =
+      'OGE Form 278e Summary of Contents 5. Other Income 6. Agreements 7. Transactions 8. Liabilities 9. Gifts';
+    expect(ogePart7SectionLooksEmpty(tocOnly)).toBe(false);
+    expect(classifyOgeTransactionText(tocOnly, bondi))
+      .toEqual({ disposition: 'unconfirmed', rows: [] });
+    // TOC stub + a header-only real Part 7 stays unconfirmed, not empty.
+    const tocThenHeaderOnly =
+      'OGE Form 278e Summary of Contents 5. Other Income 6. Agreements 7. Transactions 8. Liabilities 9. Gifts '
+      + 'Part One Filer Information pages of earlier parts follow then the real sections '
+      + 'Part 7. Transactions # DESCRIPTION TYPE DATE AMOUNT Part 8. Liabilities';
+    expect(ogePart7SectionLooksEmpty(tocThenHeaderOnly)).toBe(false);
+    expect(classifyOgeTransactionText(tocThenHeaderOnly, bondi))
+      .toEqual({ disposition: 'unconfirmed', rows: [] });
+  });
+
   it('treats an explicit Part 7 None as empty', () => {
     expect(classifyOgeTransactionText(
       'OGE Form 278e Part 7. Transactions None 8. Liabilities',
