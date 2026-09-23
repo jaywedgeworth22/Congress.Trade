@@ -877,7 +877,10 @@ export interface ProviderOnlyStubSweepResult {
  * the next ship re-ran migrations. This sweep applies the exact same terminal
  * state hourly, bounded and idempotent, so the next similar row closes itself.
  *
- * The stub's filing row is moved to verified_empty in the same batch.
+ * The stub's filing row is moved to verified_empty in the same batch.  Its
+ * filings.error is cleared, except the provider-only raw-key marker on a stub
+ * whose review payload was truncated to invalid JSON: that marker is the only
+ * untruncated raw key the later official-side reconcile can match on.
  * reviewStatusReconcile.ts deliberately skips provider-missing-* docs, so
  * nothing else would ever bring the synthetic filing out of needs_review.
  * The filing step also heals stubs the deploy-time migration closed earlier
@@ -928,7 +931,22 @@ export async function sweepProviderOnlyReviewStubs(
     [
       `UPDATE filings
           SET ingest_status = 'verified_empty',
-              error = NULL
+              -- Keep the provider-only:{provider}:{raw key} marker when the
+              -- review payload is truncated (invalid) JSON: it is then the only
+              -- untruncated copy of the raw provider key, and the hourly
+              -- reconcileProviderMissingStubsWithOfficial needs it for the exact
+              -- trade_latency_candidates.provider_key match on hashed keys.
+              error = CASE
+                        WHEN error LIKE 'provider-only:%'
+                          AND EXISTS (
+                            SELECT 1 FROM review_queue rqp
+                             WHERE rqp.doc_id = filings.doc_id
+                               AND rqp.reason = 'provider_discovered_missing_official'
+                               AND NOT json_valid(COALESCE(rqp.payload, ''))
+                          )
+                        THEN error
+                        ELSE NULL
+                      END
         WHERE doc_id IN (
           SELECT f.doc_id
             FROM filings f
