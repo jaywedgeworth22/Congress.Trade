@@ -21,7 +21,14 @@ import { PIPELINE_TX_SOURCES_SQL } from '../extraction/sourceSupersede.ts';
 import type { DisclosureProviderRow } from './tradeLatency.ts';
 import { enqueueIngestionOutboxNow, ingestionOutboxInsertForDoc } from './outbox.ts';
 
-const REJECT_PREFIX = 'rejected: duplicate — official filing';
+/**
+ * Prefix of the review_queue reason / resolution_reason stamped when a
+ * provider-missing stub is rejected as a duplicate of its official filing.
+ * Exported so admin diagnostics can recognise that closed stub (whose
+ * filings.error still holds the provider-only raw-key marker) as not an error.
+ */
+export const PROVIDER_STUB_DUPLICATE_REJECT_PREFIX = 'rejected: duplicate — official filing';
+const REJECT_PREFIX = PROVIDER_STUB_DUPLICATE_REJECT_PREFIX;
 
 /**
  * resolution_reason the hourly provider-only sweep (autonomySweeps.ts
