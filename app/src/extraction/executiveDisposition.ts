@@ -224,6 +224,9 @@ export async function closeUnreadableExecutive(
   opts: ExecutiveCloseOptions = {},
 ): Promise<boolean> {
   if (await hasLiveTransactions(env, docId)) return false;
+  // A later refused read must not reject a filing an earlier successful read
+  // already found rows for - same guard the verified_empty close applies.
+  if (await otherSuccessfulReadHasRows(env, docId)) return false;
   return writeClose(
     env,
     docId,
