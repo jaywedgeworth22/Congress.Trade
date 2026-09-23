@@ -13,7 +13,13 @@ vi.mock('unpdf', () => ({
   extractText: unpdfMocks.extractText,
 }));
 
-import { OgeTextExtractor, isOgeRowSequenceCoherent, parseOgeTransactionRows } from '../ogeText.ts';
+import {
+  OgeTextExtractor,
+  classifyOgeTransactionText,
+  executiveDisclosureForm,
+  isOgeRowSequenceCoherent,
+  parseOgeTransactionRows,
+} from '../ogeText.ts';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -241,6 +247,10 @@ describe('parseOgeTransactionRows', () => {
       (_, i) => `1 001 - $15 000 ${74 + i} EXAMPLE CORP (EX${i}) Purchase 07/17/2026 No $1,001 - $15,000`,
     ).join(' ');
     expect(parseOgeTransactionRows(garbled)).toHaveLength(0);
+    expect(classifyOgeTransactionText(
+      garbled,
+      'E-2026-donald-j-trump-09-8-2026-278t',
+    )).toMatchObject({ disposition: 'unreadable', reason: 'index_incoherent' });
   });
 
   it('keeps a coherent multi-row parse (guard against over-eager sequence gating)', () => {
@@ -249,6 +259,25 @@ describe('parseOgeTransactionRows', () => {
       (_, i) => `${i + 1} Issuer ${i + 1} (T${i + 1}) Purchase 07/17/2026 No $1,001 - $15,000`,
     ).join('\n');
     expect(parseOgeTransactionRows(coherent)).toHaveLength(8);
+  });
+});
+
+describe('classifyOgeTransactionText', () => {
+  it('treats a 278e Part 7 with no table and no rows as empty, including a 278term id', () => {
+    expect(executiveDisclosureForm('E-undated-pam-bondi-2026-278term')).toBe('278e');
+    expect(executiveDisclosureForm('E-2026-donald-j-trump-09-8-2026-278t')).toBe('278t');
+    const text = 'OGE Form 278e Termination Report 7. Transactions 8. Liabilities';
+    expect(classifyOgeTransactionText(text, 'E-undated-pam-bondi-2026-278term')).toEqual({
+      disposition: 'empty',
+      rows: [],
+    });
+  });
+
+  it('does not call a 278-T with zero matches empty', () => {
+    expect(classifyOgeTransactionText(
+      'Periodic Transaction Report with no readable rows',
+      'E-2026-donald-j-trump-09-8-2026-278t',
+    )).toMatchObject({ disposition: 'unreadable', reason: 'unreadable_278t' });
   });
 });
 

@@ -450,6 +450,36 @@ describe('OgePdfExtractor', () => {
     expect(visionExtract).not.toHaveBeenCalled();
   });
 
+  it('keeps a refused typed executive PDF on the unreadable disposition and does not spend vision', async () => {
+    const ogeText = extractor('ogeText', result([], {
+      extractor: 'ogeText',
+      parseDisposition: 'unreadable',
+    }));
+    const vision = {
+      name: 'vision',
+      canHandle: () => true,
+      extract: async () => {
+        throw new Error('vision must not run for a refused typed 278-T');
+      },
+    };
+    const ogePdf = new OgePdfExtractor(ogeText, vision);
+    const out = await ogePdf.extract({ filing: execText() });
+    expect(out.parseDisposition).toBe('unreadable');
+    expect(out.transactions).toHaveLength(0);
+  });
+
+  it('keeps a refused scan unreadable when vision also returns nothing', async () => {
+    const ogeText = extractor('ogeText', result([], {
+      extractor: 'ogeText',
+      parseDisposition: 'unreadable',
+    }));
+    const vision = extractor('vision', result([], { extractor: 'vision' }));
+    const ogePdf = new OgePdfExtractor(ogeText, vision);
+    const out = await ogePdf.extract({ filing: execScan() });
+    expect(out.parseDisposition).toBe('unreadable');
+    expect(out.transactions).toHaveLength(0);
+  });
+
   it('does not charge vision for typed executive PDFs that parse to zero rows', async () => {
     const ogeText = extractor('ogeText', result([], { extractor: 'ogeText', raw: 'none' }));
     const vision = {

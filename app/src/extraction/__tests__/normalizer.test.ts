@@ -678,7 +678,29 @@ describe('normalize', () => {
     ]));
   });
 
-  it('does not verified_empty a zero-row extract without a Part 7 None marker', async () => {
+  it('closes an empty executive 278e as verified_empty instead of parking it', async () => {
+    const { env, cap } = makeEnv([]);
+    const result = await normalize(
+      env,
+      filing({
+        docId: 'E-undated-pam-bondi-2026-278term',
+        chamber: 'executive',
+        docKind: 'text_pdf',
+        extractor: 'ogeText',
+      }),
+      [],
+      { extractor: 'ogeText', parseDisposition: 'empty' },
+    );
+    expect(result.needsReview).toBe(false);
+    expect(result.reviewReason).toBe('executive_278e_no_transactions');
+    const sql = cap.batches.flat().join('\n');
+    expect(sql).toContain('resolution_kind = ?');
+    expect(sql).toContain('ingest_status = ?');
+    expect(cap.auditRows.some((row) => row[2] === 'auto_resolved_empty')).toBe(true);
+    expect(cap.reviewRows.some((row) => String(row[1]).includes('extract_empty_failure'))).toBe(false);
+  });
+
+  it('does not verified_empty a zero-row extract without a Part 7 None marker or empty disposition', async () => {
     const { env, cap } = makeEnv([]);
     const result = await normalize(
       env,
@@ -704,6 +726,28 @@ describe('normalize', () => {
     expect(result.reviewReason).not.toBe('nothing_to_report');
     expect(String(cap.reviewRows[0][1])).toContain('extract_empty_failure');
     expect(cap.filingUpdates.some((row) => row[0] === 'verified_empty')).toBe(false);
+  });
+
+  it('closes a refused executive extract as unreadable, not verified_empty', async () => {
+    const { env, cap } = makeEnv([]);
+    const result = await normalize(
+      env,
+      filing({
+        docId: 'E-2026-donald-j-trump-09-8-2026-278t',
+        chamber: 'executive',
+        docKind: 'text_pdf',
+        extractor: 'ogeText',
+      }),
+      [],
+      { extractor: 'ogeText', parseDisposition: 'unreadable' },
+    );
+    expect(result.needsReview).toBe(false);
+    expect(result.reviewReason).toContain('oge_text_unreadable');
+    expect(result.reviewReason).toContain('ocr_unusable');
+    const sql = cap.batches.flat().join('\n');
+    expect(sql).toContain('resolution_kind = ?');
+    expect(sql).not.toContain("ingest_status = 'verified_empty'");
+    expect(cap.auditRows.some((row) => row[2] === 'rejected' && row[5] === 'oge_text_unreadable')).toBe(true);
   });
 
   it('closes a handwritten PTR sample / nothing-to-report extract as verified empty', async () => {

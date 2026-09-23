@@ -44,10 +44,11 @@
  * type+date+notification+amount suffix to immediately follow the description,
  * so 278e prose fails to match and yields zero rows, never a wrong parse.
  * A Part 7 body that is only None / N/A / No transactions is an honest empty
- * (looksLikeOgePart7ExplicitNone → verified_empty). A zero-row 278-T whose
- * amounts are garbled is NOT that marker and stays in review. A scanned 278-T
- * whose text layer is garbled (e.g. "Fobn.iary" for "February") also yields
- * zero rows rather than guessed data.
+ * (looksLikeOgePart7ExplicitNone → verified_empty).  A 278e with no 278-T
+ * table and no other successful read is the same close even without the
+ * word None.  A refused or unreadable 278-T (index/coverage gate, or a
+ * periodic report with no readable rows) is not that empty.  Callers must
+ * not treat a refusal as "nothing to report".
  */
 
 import { extractText, getDocumentProxy } from 'unpdf';
@@ -135,9 +136,26 @@ const MAX_NON_INCREASING_STEP_RATIO = 0.3;
 const MIN_INDEX_SPAN_COVERAGE = 0.8;
 
 /**
+ * Doc-id shape for the two executive disclosure forms this parser sees.
+ * `278term` / `278e` must win over `278t`: a termination id contains the
+ * letters "278t" as a prefix of "278term".
+ */
+export function executiveDisclosureForm(docId: string): '278e' | '278t' | 'unknown' {
+  const id = docId.toLowerCase();
+  if (id.includes('278term') || id.includes('278e') || id.includes('278-e')) return '278e';
+  if (id.includes('278t') || id.includes('278-t')) return '278t';
+  return 'unknown';
+}
+
+export type OgeTextClassification =
+  | { disposition: 'rows'; rows: ParsedTx[] }
+  | { disposition: 'empty'; rows: ParsedTx[] }
+  | { disposition: 'unreadable'; rows: ParsedTx[]; reason: 'index_incoherent' | 'unreadable_278t' };
+
+/**
  * True when the matched rows' leading "#" tokens look like a real table index:
  * essentially unique, strictly increasing (allowing a few OCR skips/dupes),
- * and covering their span. Filings with fewer than eight rows are always
+ * and covering their span.  Filings with fewer than eight rows are always
  * treated as coherent.
  */
 export function isOgeRowSequenceCoherent(indexes: readonly number[]): boolean {
@@ -172,7 +190,8 @@ export class OgeTextExtractor implements Extractor {
       throw new Error('ogeText: no bytes provided on ExtractorInput');
     }
     const { text, pageCount } = await extractPdfText(input.bytes);
-    const rows = parseOgeTransactionRows(text);
+    const classified = classifyOgeTransactionText(text, input.filing.docId);
+    const rows = classified.rows;
     const confidence =
       rows.length > 0 ? rows.reduce((s, r) => s + r.confidence, 0) / rows.length : 0.3;
     const result = {
@@ -181,6 +200,7 @@ export class OgeTextExtractor implements Extractor {
       raw: text,
       extractor: this.name,
       pageCount,
+      parseDisposition: classified.disposition,
     };
     return result;
   }
@@ -214,8 +234,41 @@ async function extractPdfText(
   };
 }
 
+/**
+ * Parse the merged text and say whether zero rows means "no transactions"
+ * or "this read is not usable".
+ *
+ * `278e` with no table and no matches is empty (Bondi-style Part 7).  A
+ * `278t` that matches nothing, or any parse the index/coverage gate
+ * refuses, is unreadable — the same zero-row array must not take the empty
+ * path.
+ */
+export function classifyOgeTransactionText(text: string, docId = ''): OgeTextClassification {
+  const scanned = scanOgeTransactionRows(text);
+  if (scanned.refused) {
+    return { disposition: 'unreadable', rows: [], reason: 'index_incoherent' };
+  }
+  if (scanned.rows.length > 0) return { disposition: 'rows', rows: scanned.rows };
+  const form = executiveDisclosureForm(docId);
+  if (form === '278t' || (form !== '278e' && scanned.has278tTable)) {
+    return { disposition: 'unreadable', rows: [], reason: 'unreadable_278t' };
+  }
+  return { disposition: 'empty', rows: [] };
+}
+
 /** Parse the merged 278-T text into ParsedTx[]. Pure / unit-testable. */
 export function parseOgeTransactionRows(text: string): ParsedTx[] {
+  return classifyOgeTransactionText(text).rows;
+}
+
+interface OgeTextScan {
+  rows: ParsedTx[];
+  refused: boolean;
+  /** True when the 278-T transactions table header is present. */
+  has278tTable: boolean;
+}
+
+function scanOgeTransactionRows(text: string): OgeTextScan {
   // Fold NUL bytes, non-breaking spaces, and every run of whitespace
   // (including real newlines, when the runtime's pdf.js DOES emit them) down
   // to single spaces, so the same global scan below is correct regardless of
@@ -225,7 +278,7 @@ export function parseOgeTransactionRows(text: string): ParsedTx[] {
     .replace(/\u00a0/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
-  if (!normalized) return [];
+  if (!normalized) return { rows: [], refused: false, has278tTable: false };
 
   // Prefer scanning only after the table header (see TABLE_HEADER_RE above);
   // fall back to the whole text if the header wasn't found (a format variant
@@ -288,9 +341,21 @@ export function parseOgeTransactionRows(text: string): ParsedTx[] {
   }
   // Refuse a garbled-OCR parse: if the matched "#" tokens are not a plausible
   // unique/increasing table index, ROW_RE was latching onto years/amounts and
-  // the rows are mis-merged guesses. Zero rows is the safe outcome.
-  if (!isOgeRowSequenceCoherent(rowIndexes)) return [];
-  return rows;
+  // the rows are mis-merged guesses.  Callers must keep this distinct from
+  // a section that simply had no rows.
+  if (!isOgeRowSequenceCoherent(rowIndexes)) {
+    return { rows: [], refused: true, has278tTable: Boolean(headerMatch) };
+  }
+  return { rows, refused: false, has278tTable: Boolean(headerMatch) };
+}
+
+/** Text-layer classification for one stored executive PDF. */
+export async function classifyExecutivePdfBytes(
+  bytes: ArrayBuffer,
+  docId = '',
+): Promise<OgeTextClassification> {
+  const { text } = await extractPdfText(bytes);
+  return classifyOgeTransactionText(text, docId);
 }
 
 /**

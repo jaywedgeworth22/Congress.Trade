@@ -28,6 +28,13 @@ import {
   looksLikePtrFormSampleRow,
   looksLikeSeeAttachmentPointer,
 } from './extractRouting.ts';
+import type { ExtractorParseDisposition } from '../extractors/types.ts';
+import {
+  closeUnreadableExecutive,
+  closeVerifiedEmptyExecutive,
+  EXECUTIVE_EMPTY_RESOLUTION_REASON,
+  OGE_TEXT_UNREADABLE_REASON,
+} from './executiveDisposition.ts';
 import { all, batch, fromBool, get, parseJson, run } from '../shared/db.ts';
 import { isValidBracket, matchBracket, nearestBracket } from '../shared/brackets.ts';
 import { canonicalizeAssetType, inferHouseAssetTypeCode, HOUSE_ASSET_TYPE_NAMES } from '../shared/assetTypes.ts';
@@ -347,8 +354,10 @@ export async function normalize(
     extractor?: string;
     modelVersion?: string | null;
     source?: TxSource;
-    /** Full document text. Zero parsed rows still need this to see Part 7 "None". */
+    /** Full document text.  Zero parsed rows still need this to see Part 7 "None". */
     sourceText?: string | null;
+    /** Set by ogeText.  `empty` and `unreadable` are different zero-row outcomes. */
+    parseDisposition?: ExtractorParseDisposition;
   },
 ): Promise<NormalizeResult> {
   const nowIso = new Date().toISOString();
@@ -521,6 +530,28 @@ export async function normalize(
   }
 
   if (needsReview) {
+    // A refused 278-T is not an empty filing.  docClassifier calls every
+    // text_pdf `typed`, so this is the close the empty doc-class path misses.
+    if (
+      filing.chamber === 'executive'
+      && flagged.length === 0
+      && reviewSnapshot?.resolved !== 1
+      && meta?.parseDisposition === 'unreadable'
+    ) {
+      const closed = await closeUnreadableExecutive(env, filing.docId, {
+        nowIso,
+        respectSuppression: true,
+      });
+      if (closed) {
+        return {
+          transactions: [],
+          minConfidence: 0,
+          needsReview: false,
+          published: false,
+          reviewReason: OGE_TEXT_UNREADABLE_REASON,
+        };
+      }
+    }
     // Form-sample chrome alone is not NTR.  Example Mega Corp is printed on
     // every House PTR; OCR often reads it and misses the real trades.
     if (flagged.length === 0 && sawNothingToReport) {
@@ -541,6 +572,28 @@ export async function normalize(
           needsReview: false,
           published: false,
           reviewReason: resolutionReason,
+        };
+      }
+    }
+    // 278e with no 278-T table and no rows, including a Part 7 that does not
+    // literally say None.  A successful read that already found rows blocks this.
+    if (
+      filing.chamber === 'executive'
+      && flagged.length === 0
+      && reviewSnapshot?.resolved !== 1
+      && meta?.parseDisposition === 'empty'
+    ) {
+      const closed = await closeVerifiedEmptyExecutive(env, filing.docId, {
+        nowIso,
+        respectSuppression: true,
+      });
+      if (closed) {
+        return {
+          transactions: [],
+          minConfidence: 0,
+          needsReview: false,
+          published: false,
+          reviewReason: EXECUTIVE_EMPTY_RESOLUTION_REASON,
         };
       }
     }
@@ -566,6 +619,12 @@ export async function normalize(
     let reason = exceedsPublishLimit
       ? classifyRowLimitReason(flagged)
       : reviewReason(flagged, minConfidence, confThreshold);
+    // A refused text layer that could not be closed still must not be labeled
+    // as an empty extract.  ocr_unusable is already a health terminal and an
+    // agreement hard-stop.
+    if (filing.chamber === 'executive' && meta?.parseDisposition === 'unreadable' && flagged.length === 0) {
+      reason = OGE_TEXT_UNREADABLE_REASON;
+    }
     // When every extracted row was form chrome (or empty after drop), tag the
     // park reason so ops/dashboard can tell OCR letterhead floods from real
     // low-confidence trades — and agreement can skip burning budget on them.
@@ -578,7 +637,7 @@ export async function normalize(
     // hundreds of fake rows for humans/agreement — empty extract_empty class
     // so local-vision pending can re-claim the stored raw copy.
     let reviewFlagged = flagged;
-    if (ocrUnusable && !exceedsPublishLimit) {
+    if (ocrUnusable && !exceedsPublishLimit && meta?.parseDisposition !== 'unreadable') {
       // Keep dated, non-chrome rows (amendment letters with one real Treasury
       // line). Only wipe when nothing recoverable remains.
       const keepable = flagged.filter((f) =>
@@ -610,6 +669,7 @@ export async function normalize(
           exceedsPublishLimit
           || (flagged.length === 0 && droppedFormChrome > 0)
           || ocrUnusable
+          || (filing.chamber === 'executive' && meta?.parseDisposition === 'unreadable')
             ? reason
             : undefined,
       },

@@ -181,10 +181,19 @@ export interface ExtractorModelRun {
   usage?: ExtractorUsage;
 }
 
+/**
+ * What a zero-row deterministic parse means.  `empty` is a real miss.
+ * `unreadable` is a refusal (garbled index / a 278-T the parser would not
+ * trust).  Absent on extractors that do not make this distinction.
+ */
+export type ExtractorParseDisposition = 'rows' | 'empty' | 'unreadable';
+
 /** Result of running an extractor over one filing. */
 export interface ExtractorResult {
   /** Parsed (pre-normalization) transactions. */
   transactions: ParsedTx[];
+  /** Deterministic empty-vs-refusal signal.  See ExtractorParseDisposition. */
+  parseDisposition?: ExtractorParseDisposition;
   /** Document-level confidence in [0,1]. */
   confidence: number;
   /** Raw extracted text/markup retained for audit + review. */
@@ -484,7 +493,14 @@ export class OgePdfExtractor implements Extractor {
     }
 
     try {
-      return await this.visionPdf.extract(input);
+      const vision = await this.visionPdf.extract(input);
+      if (vision.transactions.length > 0) return vision;
+      // A refused text layer must stay unreadable when vision also finds
+      // nothing.  An honest empty text layer stays empty.
+      if (textResult?.parseDisposition === 'unreadable' || textResult?.parseDisposition === 'empty') {
+        return { ...vision, parseDisposition: textResult.parseDisposition, transactions: [] };
+      }
+      return vision;
     } catch (error) {
       if (error instanceof IngestRetryError) throw error;
       const reason = error instanceof Error ? error.message : String(error);

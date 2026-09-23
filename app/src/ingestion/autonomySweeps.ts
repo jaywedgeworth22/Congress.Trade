@@ -37,6 +37,10 @@ import {
   reconcileProviderMissingStubsWithOfficial,
   type ProviderMissingStubReconcileResult,
 } from './providerMissingStubClose.ts';
+import {
+  sweepKnownParkedExecutiveTerminals,
+  type ExecutiveTerminalSweepResult,
+} from '../extraction/executiveDisposition.ts';
 
 /** Provider-placeholder bookkeeping rows (tradeLatency.ts
  *  routeProviderOnlyObservationsToReview) are working-as-designed synthetic
@@ -421,6 +425,8 @@ export interface AutonomySweepResult {
    *  check cannot see, because a tick that never fires is not a tick that
    *  failed). */
   pollingHeartbeat: PollingHeartbeatResult | null;
+  /** Empty 278e → verified_empty; refused 278-T → unreadable.  Allowlist only. */
+  executiveTerminals: ExecutiveTerminalSweepResult | null;
   errors: string[];
 }
 
@@ -987,6 +993,7 @@ export async function runAutonomySweeps(
     localVisionRequeue: null,
     hostedFallback: null,
     pollingHeartbeat: null,
+    executiveTerminals: null,
     errors,
   };
   const throwIfAborted = () => {
@@ -1062,6 +1069,15 @@ export async function runAutonomySweeps(
     result.ogeUndated = await sweepOgeUndatedFilingDates(env);
   } catch (err) {
     errors.push(`ogeUndated: ${(err as Error).message}`);
+  }
+
+  // Close the two parked executive rows: empty 278e vs unreadable 278-T.
+  // Allowlist, idempotent, no PDF refetch.
+  try {
+    throwIfAborted();
+    result.executiveTerminals = await sweepKnownParkedExecutiveTerminals(env, now);
+  } catch (err) {
+    errors.push(`executiveTerminals: ${(err as Error).message}`);
   }
 
   // A5/C8: one-shot local-vision requeue for rejected scanned+raw garbage OCR.

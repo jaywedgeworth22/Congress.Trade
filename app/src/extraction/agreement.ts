@@ -23,7 +23,11 @@
  * agreement read returns zero rows, that is total extraction failure
  * (`extract_empty_failure`). We mark the filing `error`, keep review
  * unresolved with reason `extract_empty_failure`, and do NOT escalate tiers
- * (escalating burns budget on a dead extract).
+ * (escalating burns budget on a dead extract).  An executive 278e whose
+ * deterministic read also found no 278-T table closes as verified_empty
+ * instead.  A deterministic refusal (garbled 278-T) closes as unreadable.
+ * Capped-row recovery must not relabel either outcome as
+ * agreement_cascade_unresolved.
  *
  * When a doc trips cheap complexity signals (page_count / raw_bytes over their
  * thresholds) the cascade starts directly at tier 2 (AGREEMENT_BIG_DOC_START_TIER2,
@@ -90,7 +94,7 @@ import {
   loadResolver,
   resolveVerifiedEmpty,
 } from './normalizer.ts';
-import { pdfBytesLookLikeOgePart7ExplicitNone } from './ogeText.ts';
+import { classifyExecutivePdfBytes, pdfBytesLookLikeOgePart7ExplicitNone } from './ogeText.ts';
 import { cleanAssetString } from './nameNormalizer.ts';
 import { prepareExtractedTx } from './prepareTx.ts';
 import { mapFiling, type FilingRow } from '../delivery/rows.ts';
@@ -110,6 +114,10 @@ import {
 } from './extractRouting.ts';
 import { notifyReviewQueuePublisher } from '../ingestion/reviewQueueNotify.ts';
 import { isUsdMeteredExtractionProvider, LLM_DOC_BUDGET_ERROR_MARKER } from '../shared/llmSpend.ts';
+import {
+  closeUnreadableExecutive,
+  closeVerifiedEmptyExecutive,
+} from './executiveDisposition.ts';
 
 export interface AgreementModels {
   a: BakeoffCandidate;
@@ -1670,6 +1678,60 @@ export async function markExtractEmptyFailure(
 }
 
 /**
+ * Executive zero-row agreement.  House and Senate stay on
+ * markExtractEmptyFailure.  Returns null when this doc is not an executive
+ * filing the deterministic parser can close, so the caller keeps the
+ * existing empty-failure path.
+ */
+async function maybeSettleExecutiveZeroRead(
+  env: Env,
+  docId: string,
+  loadBytes: () => Promise<ArrayBuffer | null>,
+  claimToken?: string,
+): Promise<'empty' | 'unreadable' | null> {
+  const filing = await loadFilingRow(env, docId);
+  if (!filing || filing.chamber !== 'executive') return null;
+  let bytes: ArrayBuffer | null = null;
+  try {
+    bytes = await loadBytes();
+  } catch (err) {
+    console.warn('executive zero-read: bytes unavailable', docId, (err as Error).message);
+    return null;
+  }
+  if (!bytes) return null;
+  let classified;
+  try {
+    classified = await classifyExecutivePdfBytes(bytes, docId);
+  } catch (err) {
+    console.warn('executive zero-read: classify failed', docId, (err as Error).message);
+    return null;
+  }
+  if (classified.disposition === 'rows') return null;
+  if (classified.disposition === 'unreadable') {
+    const closed = await closeUnreadableExecutive(env, docId, { respectSuppression: true, claimToken });
+    return closed ? 'unreadable' : null;
+  }
+  const closed = await closeVerifiedEmptyExecutive(env, docId, { respectSuppression: true, claimToken });
+  return closed ? 'empty' : null;
+}
+
+function settledZeroReadResult(
+  docId: string,
+  tier: number,
+  settled: 'empty' | 'unreadable',
+): AgreementDocResult {
+  const reason = settled === 'empty' ? 'auto_resolved_empty' : 'oge_text_unreadable';
+  return {
+    docId,
+    outcome: 'agree_but_hardfail',
+    tier,
+    rowCount: 0,
+    flags: [reason],
+    reason,
+  };
+}
+
+/**
  * Leave a doc in human review, flagged high-priority, when the cascade could not
  * resolve it. Records the distinguishing ingestion_decisions audit row and
  * annotates the review_queue reason/payload with the cascade context.
@@ -1830,6 +1892,10 @@ export async function processAgreementCascadeTier2(
         reason: 'extract_empty_failure',
       };
     }
+    const settled = await maybeSettleExecutiveZeroRead(
+      env, docId, async () => loaded.bytes, claimToken,
+    );
+    if (settled) return settledZeroReadResult(docId, 2, settled);
     return markExtractEmptyFailure(env, docId, 2, labels, claimToken);
   }
   if (decision.action === 'junk') {
@@ -2485,6 +2551,8 @@ export async function handleAgreementCheck(
         && (
           (res.flags ?? []).includes('extract_empty_failure')
           || (res.flags ?? []).includes('oge_part7_explicit_none')
+          || (res.flags ?? []).includes('auto_resolved_empty')
+          || (res.flags ?? []).includes('oge_text_unreadable')
         )
       ) {
         // markExtractEmptyFailure or resolveVerifiedEmpty already applied.
@@ -2538,6 +2606,19 @@ export async function handleAgreementCheck(
         // processAgreementDoc already closed this as verified_empty.
       } else if (flags.includes('extract_empty_failure')) {
         // Do not escalate empty×empty and do not soft-label as cascade_unresolved.
+        // Executive 278e empty / refused 278-T close themselves; everything
+        // else stays extract_empty_failure.
+        const settled = await maybeSettleExecutiveZeroRead(env, docId, async () => {
+          const loaded = signal
+            ? await loadDocBytes(env, docId, rawObjectKey, signal)
+            : await loadDocBytes(env, docId, rawObjectKey);
+          return 'skip' in loaded ? null : loaded.bytes;
+        }, claimed.token);
+        if (settled) {
+          await finishTerminalClaim(env, docId, claimed.token, max);
+          console.log(`agreement.check ${docId} tier1: executive ${settled}`);
+          return settledZeroReadResult(docId, 1, settled);
+        }
         await markExtractEmptyFailure(
           env, docId, 1, modelLabels(tier1Models), claimed.token,
           `hard_fail:${(res.flags ?? []).join(',')}`,
@@ -2584,10 +2665,24 @@ export async function handleAgreementCheck(
 }
 
 /**
+ * Reasons capped-row recovery must leave alone.  Rewriting an empty failure
+ * or an unreadable/OCR terminal into agreement_cascade_unresolved made those
+ * filings health-terminal and ineligible, so they never closed.
+ */
+export const CAPPED_RECOVERY_REASON_EXCLUDE_SQL = `
+  COALESCE(reason, '') <> 'agreement_cascade_unresolved'
+  AND COALESCE(reason, '') NOT LIKE '%empty_failure%'
+  AND COALESCE(reason, '') NOT LIKE '%oge_text_unreadable%'
+  AND COALESCE(reason, '') NOT LIKE '%ocr_unusable%'
+`.trim();
+
+/**
  * Repair a capped row whose previous consumer died before it could write the
  * terminal human-review flag. A fresh CAS lease makes this safe under
  * concurrent cron ticks; failures retain the lease and are retried after its
  * 15-minute expiry instead of silently stranding the row at the attempt cap.
+ * Empty-failure and unreadable rows are already an honest terminal.  Do not
+ * relabel them.
  */
 async function recoverExpiredCappedReviews(
   env: Env,
@@ -2602,7 +2697,7 @@ async function recoverExpiredCappedReviews(
     `SELECT doc_id, agreement_tier FROM review_queue
       WHERE resolved = 0 AND agreement_suppressed_at IS NULL
         AND COALESCE(agreement_attempts, 0) >= ?
-        AND COALESCE(reason, '') <> 'agreement_cascade_unresolved'
+        AND ${CAPPED_RECOVERY_REASON_EXCLUDE_SQL}
         AND (
           agreement_claim_token IS NULL OR agreement_claimed_at IS NULL
           OR agreement_claimed_at <= ?
@@ -2620,7 +2715,7 @@ async function recoverExpiredCappedReviews(
             SET agreement_claim_token = ?, agreement_claimed_at = ?
           WHERE doc_id = ? AND resolved = 0 AND agreement_suppressed_at IS NULL
             AND COALESCE(agreement_attempts, 0) >= ?
-            AND COALESCE(reason, '') <> 'agreement_cascade_unresolved'
+            AND ${CAPPED_RECOVERY_REASON_EXCLUDE_SQL}
             AND (
               agreement_claim_token IS NULL OR agreement_claimed_at IS NULL
               OR agreement_claimed_at <= ?
