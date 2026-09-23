@@ -273,6 +273,29 @@ describe('classifyOgeTransactionText', () => {
     });
   });
 
+  it('does not call a 278e empty without positive Part 7 evidence', () => {
+    const bondi = 'E-undated-pam-bondi-2026-278term';
+    // Blank / garbled text layer: no Part 7 heading at all.
+    expect(classifyOgeTransactionText('', bondi)).toEqual({ disposition: 'unconfirmed', rows: [] });
+    expect(classifyOgeTransactionText('Fobn.iary ~~ l1l1 ##', bondi))
+      .toEqual({ disposition: 'unconfirmed', rows: [] });
+    // Real 278e Part 7 rows use a layout ROW_RE does not match (no notification column).
+    const withRows = 'OGE Form 278e 7. Transactions # DESCRIPTION TYPE DATE AMOUNT '
+      + '1 Apple Inc. (AAPL) Purchase 01/05/2026 $1,001 - $15,000 8. Liabilities';
+    expect(classifyOgeTransactionText(withRows, 'E-2026-someone-278e'))
+      .toEqual({ disposition: 'unconfirmed', rows: [] });
+    // Part 7 whose end we cannot see is not evidence.
+    expect(classifyOgeTransactionText('OGE Form 278e 7. Transactions # DESCRIPTION TYPE DATE AMOUNT', bondi))
+      .toEqual({ disposition: 'unconfirmed', rows: [] });
+  });
+
+  it('treats an explicit Part 7 None as empty', () => {
+    expect(classifyOgeTransactionText(
+      'OGE Form 278e Part 7. Transactions None 8. Liabilities',
+      'E-undated-pam-bondi-2026-278term',
+    )).toEqual({ disposition: 'empty', rows: [] });
+  });
+
   it('does not call a 278-T with zero matches empty', () => {
     expect(classifyOgeTransactionText(
       'Periodic Transaction Report with no readable rows',
