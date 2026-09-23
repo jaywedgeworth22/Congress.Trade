@@ -13,7 +13,7 @@ vi.mock('unpdf', () => ({
   extractText: unpdfMocks.extractText,
 }));
 
-import { OgeTextExtractor, parseOgeTransactionRows } from '../ogeText.ts';
+import { OgeTextExtractor, isOgeRowSequenceCoherent, parseOgeTransactionRows } from '../ogeText.ts';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -156,6 +156,21 @@ describe('parseOgeTransactionRows', () => {
     }
   });
 
+  it('reads OCR spaced and period-thousands brackets, not the next row number', () => {
+    const rows = parseOgeTransactionRows(
+      [
+        '44 TESLA INC (TSLA) Sale 07/17/2026 No $15 001 - $50 000',
+        '126 QUALCOMM INC Sale 07/17/2026 No $15,001 - $50 000',
+        '127 INTUIT INC Sale 07/17/2026 No $1.000.001 - $5.000.000',
+      ].join(' '),
+    );
+    expect(rows.map((r) => [r.ticker ?? r.assetName, r.amountMin, r.amountMax])).toEqual([
+      ['TSLA', 15001, 50000],
+      ['QUALCOMM INC', 15001, 50000],
+      ['INTUIT INC', 1000001, 5000000],
+    ]);
+  });
+
   it('handles an Exchange row and an open-ended top-tier amount', () => {
     const rows = parseOgeTransactionRows(
       '1 Some Bond Fund (XYZ) Exchange 01/02/2026 Yes $50,000,001 +',
@@ -211,6 +226,56 @@ describe('parseOgeTransactionRows', () => {
 
   it('returns an empty array for text with no matching rows', () => {
     expect(parseOgeTransactionRows('nothing to see here')).toEqual([]);
+  });
+
+  it('rejects a garbled-OCR parse whose matched row indices are not a coherent table sequence', () => {
+    // Production signature (E-2026-donald-j-trump-09-8-2026-278t, 2026-09-23):
+    // on a scanned-then-OCR'd 278-T most type words are corrupted ("salo",
+    // "lourchaso"), so ROW_RE only matched the minority whose type survived and
+    // its leading \d then latched onto bond maturity years / dollar fragments.
+    // The deployed parser emitted 334 "rows" with only 94 distinct leading
+    // numbers and 62% non-increasing steps — mis-merged rows, not transactions.
+    // The same signature (repeated leading index) must now yield zero rows.
+    const garbled = Array.from(
+      { length: 8 },
+      (_, i) => `1 001 - $15 000 ${74 + i} EXAMPLE CORP (EX${i}) Purchase 07/17/2026 No $1,001 - $15,000`,
+    ).join(' ');
+    expect(parseOgeTransactionRows(garbled)).toHaveLength(0);
+  });
+
+  it('keeps a coherent multi-row parse (guard against over-eager sequence gating)', () => {
+    const coherent = Array.from(
+      { length: 8 },
+      (_, i) => `${i + 1} Issuer ${i + 1} (T${i + 1}) Purchase 07/17/2026 No $1,001 - $15,000`,
+    ).join('\n');
+    expect(parseOgeTransactionRows(coherent)).toHaveLength(8);
+  });
+});
+
+describe('isOgeRowSequenceCoherent', () => {
+  it('accepts a short sequence even when it repeats (too few rows to judge)', () => {
+    expect(isOgeRowSequenceCoherent([])).toBe(true);
+    expect(isOgeRowSequenceCoherent([1, 1, 2])).toBe(true);
+  });
+
+  it('accepts a unique, strictly increasing table index', () => {
+    expect(isOgeRowSequenceCoherent([1, 2, 3, 4, 5, 6, 7, 8])).toBe(true);
+    // A few OCR skips/dupes are tolerated.
+    expect(isOgeRowSequenceCoherent([1, 2, 3, 5, 6, 7, 8, 9])).toBe(true);
+  });
+
+  it('rejects repeated or wildly non-monotonic indices (the OCR latched onto years/amounts)', () => {
+    expect(isOgeRowSequenceCoherent([1, 1, 2, 2, 3, 3, 4, 4])).toBe(false);
+    expect(isOgeRowSequenceCoherent([1, 1, 2026, 1, 15000, 89, 15, 5])).toBe(false);
+  });
+
+  it('rejects a sparse parse that only covers a sliver of its own index span', () => {
+    // The production Trump-filing signature: after the amount hardening the
+    // leading numbers were unique-ish and mostly increasing, but only ~300 of
+    // the table's 1156 rows matched (span 0..15000, coverage 0.02) — a partial,
+    // mis-merged transcript that would silently drop real transactions.
+    expect(isOgeRowSequenceCoherent([1, 2, 3, 4, 5, 6, 7, 1156])).toBe(false);
+    expect(isOgeRowSequenceCoherent([0, 1, 2, 3, 4, 5, 6, 15000])).toBe(false);
   });
 });
 
