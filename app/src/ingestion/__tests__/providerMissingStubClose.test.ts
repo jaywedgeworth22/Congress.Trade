@@ -1,16 +1,20 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Database from 'libsql';
 import { d1Database } from '../../prices/__tests__/sqliteD1.ts';
 import { runMigrations } from '../../admin/migrations.ts';
 import type { Env } from '../../shared/types.ts';
-import type { DisclosureProviderRow } from '../tradeLatency.ts';
+import { routeProviderOnlyObservationsToReview, type DisclosureProviderRow } from '../tradeLatency.ts';
 import {
   closeProviderMissingStubIfOfficialPersisted,
   enqueueOfficialSenateFromProviderObservation,
+  reconcileProviderMissingStubsWithOfficial,
   findPersistedOfficialCounterpartForObservation,
   senateOfficialDocIdFromProvider,
 } from '../providerMissingStubClose.ts';
 import { sweepProviderOnlyReviewStubs } from '../autonomySweeps.ts';
+
+const { notifySpy } = vi.hoisted(() => ({ notifySpy: vi.fn(async () => undefined) }));
+vi.mock('../reviewQueueNotify.ts', () => ({ notifyReviewQueuePublisher: notifySpy }));
 
 const SENATE_UUID = '51455bcd-4966-4e77-b481-09897ada81ae';
 const OFFICIAL_SENATE_ID = `S-${SENATE_UUID}`;
@@ -270,5 +274,115 @@ describe('providerMissingStubClose', () => {
       'SELECT COUNT(*) AS n FROM filings WHERE doc_id = ?',
     ).bind(OFFICIAL_SENATE_ID).first<{ n: number }>();
     expect(count?.n).toBe(1);
+  });
+
+  it('creates a provider-only stub without waking the Publisher (review_queue.entered)', async () => {
+    notifySpy.mockClear();
+    const row: DisclosureProviderRow = {
+      provider: 'fmp',
+      chamber: 'house',
+      providerKey: '20035492',
+      tradeHash: 'h',
+      payload: { ticker: 'VEA' },
+      sourceUrl: null,
+      filedDate: '2026-09-20',
+      filerName: 'Example Member',
+      providerPublishedAt: '2026-09-21T10:00:00.000Z',
+    };
+
+    await routeProviderOnlyObservationsToReview(makeEnv(), 'fmp', [row], '2026-09-21T12:00:00.000Z');
+
+    const review = await d1.prepare('SELECT reason, resolved FROM review_queue WHERE doc_id = ?')
+      .bind('provider-missing-fmp-house-20035492').first<{ reason: string; resolved: number }>();
+    expect(review?.reason).toBe('provider_discovered_missing_official');
+    expect(review?.resolved).toBe(0);
+    expect(notifySpy).not.toHaveBeenCalled();
+  });
+
+  describe('reconcileProviderMissingStubsWithOfficial (official lands after provider row aged out)', () => {
+    const NOW = new Date('2026-08-26T12:00:00.000Z');
+
+    async function reviewState(docId: string) {
+      return d1.prepare(
+        'SELECT resolved, resolution_kind, resolution_reason FROM review_queue WHERE doc_id = ?',
+      ).bind(docId).first<{ resolved: number; resolution_kind: string | null; resolution_reason: string | null }>();
+    }
+
+    async function filingStatus(docId: string) {
+      const row = await d1.prepare('SELECT ingest_status FROM filings WHERE doc_id = ?')
+        .bind(docId).first<{ ingest_status: string }>();
+      return row?.ingest_status;
+    }
+
+    it('rejects a swept stub once its official filing persists, without a provider observation', async () => {
+      await seedStubReview(STUB_SENATE_ID);
+      expect((await sweepProviderOnlyReviewStubs(makeEnv())).cleared).toBe(1);
+      expect(await filingStatus(STUB_SENATE_ID)).toBe('verified_empty');
+
+      await seedOfficialTx(OFFICIAL_SENATE_ID);
+      await seedFiling(OFFICIAL_SENATE_ID, 'persisted', SOURCE_URL);
+
+      // payload is '{}' here, so the provider key comes from the stub doc_id.
+      const result = await reconcileProviderMissingStubsWithOfficial(makeEnv(), { now: NOW });
+      expect(result).toEqual({ scanned: 1, rejected: 1 });
+      const review = await reviewState(STUB_SENATE_ID);
+      expect(review?.resolution_kind).toBe('rejected');
+      expect(review?.resolution_reason).toContain(OFFICIAL_SENATE_ID);
+      expect(await filingStatus(STUB_SENATE_ID)).toBe('error');
+
+      const again = await reconcileProviderMissingStubsWithOfficial(makeEnv(), { now: NOW });
+      expect(again).toEqual({ scanned: 0, rejected: 0 });
+    });
+
+    it('rejects an open House stub using the provider key stored in its payload', async () => {
+      const stub = 'provider-missing-fmp-house-20035492';
+      await d1.prepare(
+        `INSERT INTO filings (doc_id, chamber, ingest_status, filing_type, first_seen_at, source_url)
+         VALUES (?, 'house', 'needs_review', 'P', '2026-08-25T00:00:00.000Z', NULL)`,
+      ).bind(stub).run();
+      await d1.prepare(
+        `INSERT INTO review_queue (doc_id, reason, payload, created_at, resolved, review_revision)
+         VALUES (?, 'provider_discovered_missing_official', ?, '2026-08-25T00:00:00.000Z', 0, 1)`,
+      ).bind(stub, JSON.stringify({ reason: 'provider_discovered_missing_official', provider: 'fmp', providerKey: '20035492' })).run();
+      await d1.prepare(
+        `INSERT INTO filings (doc_id, chamber, ingest_status, filing_type, first_seen_at)
+         VALUES ('H-2026-20035492', 'house', 'persisted', 'P', '2026-08-26T00:00:00.000Z')`,
+      ).run();
+
+      const result = await reconcileProviderMissingStubsWithOfficial(makeEnv(), { now: NOW });
+      expect(result.rejected).toBe(1);
+      const review = await reviewState(stub);
+      expect(review?.resolution_kind).toBe('rejected');
+      expect(review?.resolution_reason).toContain('H-2026-20035492');
+    });
+
+    it('leaves stubs alone when the official is not persisted, or a human resolved them', async () => {
+      await seedStubReview(STUB_SENATE_ID);
+      await seedFiling(OFFICIAL_SENATE_ID, 'extracted', SOURCE_URL);
+      const pending = await reconcileProviderMissingStubsWithOfficial(makeEnv(), { now: NOW });
+      expect(pending).toEqual({ scanned: 1, rejected: 0 });
+      expect((await reviewState(STUB_SENATE_ID))?.resolved).toBe(0);
+
+      await d1.prepare(
+        `UPDATE review_queue SET resolved = 1, resolution_kind = 'verified_empty',
+                resolution_reason = 'reviewer: checked by hand', resolved_at = CURRENT_TIMESTAMP
+          WHERE doc_id = ?`,
+      ).bind(STUB_SENATE_ID).run();
+      await d1.prepare(`UPDATE filings SET ingest_status = 'persisted' WHERE doc_id = ?`)
+        .bind(OFFICIAL_SENATE_ID).run();
+      const human = await reconcileProviderMissingStubsWithOfficial(makeEnv(), { now: NOW });
+      expect(human).toEqual({ scanned: 0, rejected: 0 });
+      expect((await reviewState(STUB_SENATE_ID))?.resolution_reason).toBe('reviewer: checked by hand');
+    });
+
+    it('skips stubs older than the reconcile window', async () => {
+      await seedStubReview(STUB_SENATE_ID);
+      await seedOfficialTx(OFFICIAL_SENATE_ID);
+      await seedFiling(OFFICIAL_SENATE_ID, 'persisted', SOURCE_URL);
+      const result = await reconcileProviderMissingStubsWithOfficial(makeEnv(), {
+        now: new Date('2027-06-01T00:00:00.000Z'),
+      });
+      expect(result).toEqual({ scanned: 0, rejected: 0 });
+    });
   });
 });
