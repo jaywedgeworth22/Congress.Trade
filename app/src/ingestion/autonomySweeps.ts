@@ -32,7 +32,11 @@ import {
   type LocalVisionRequeueResult,
 } from '../extraction/deterministicDrain.ts';
 import { DESYNCED_INGEST_STATUSES, reconcileResolvedReviewStatus } from './reviewStatusReconcile.ts';
-import { PROVIDER_ONLY_LEAD_CLEARED_REASON } from './providerMissingStubClose.ts';
+import {
+  PROVIDER_ONLY_LEAD_CLEARED_REASON,
+  reconcileProviderMissingStubsWithOfficial,
+  type ProviderMissingStubReconcileResult,
+} from './providerMissingStubClose.ts';
 
 /** Provider-placeholder bookkeeping rows (tradeLatency.ts
  *  routeProviderOnlyObservationsToReview) are working-as-designed synthetic
@@ -407,6 +411,8 @@ export interface AutonomySweepResult {
   resolvedDesync: ResolvedDesyncSweepResult | null;
   /** Provider-only placeholder review rows closed to verified_empty. */
   providerOnlyStubs: ProviderOnlyStubSweepResult | null;
+  /** Open or sweep-closed provider-only stubs rejected because the official filing has since persisted. */
+  providerStubOfficialReconcile: ProviderMissingStubReconcileResult | null;
   filedDateBackfill: FiledDateBackfillResult | null;
   ogeUndated: OgeUndatedBackfillResult | null;
   livenessAlarms: LivenessAlarmResult | null;
@@ -879,9 +885,10 @@ export interface ProviderOnlyStubSweepResult {
  *
  * The official-counterpart case (an official filing now exists) is left to
  * providerMissingStubClose.ts, which rejects the stub as a duplicate when the
- * provider observation is reprocessed — this sweep never invents that verdict,
- * and that path still overrides this sweep's verified_empty close if the
- * official filing lands later. review_revision is bumped so a concurrent
+ * provider observation is reprocessed or when the hourly
+ * reconcileProviderMissingStubsWithOfficial pass finds a persisted counterpart
+ * — this sweep never invents that verdict, and both paths still override this
+ * sweep's verified_empty close if the official filing lands later. review_revision is bumped so a concurrent
  * duplicate rejection that read the pre-sweep revision no-ops cleanly.
  * Rows with stored raw bytes or a live transaction are excluded so a real
  * filing that happens to carry this reason is never swept.
@@ -972,6 +979,7 @@ export async function runAutonomySweeps(
     stranded: null,
     resolvedDesync: null,
     providerOnlyStubs: null,
+    providerStubOfficialReconcile: null,
     filedDateBackfill: null,
     ogeUndated: null,
     livenessAlarms: null,
@@ -1013,6 +1021,16 @@ export async function runAutonomySweeps(
     result.stranded = await sweepStrandedFilings(env, now);
   } catch (err) {
     errors.push(`stranded: ${(err as Error).message}`);
+  }
+
+  // Reject stubs whose official filing has persisted since (including ones the
+  // provider feed no longer serves) before the verified_empty sweep below, so a
+  // stub with a known official counterpart gets the duplicate verdict instead.
+  try {
+    throwIfAborted();
+    result.providerStubOfficialReconcile = await reconcileProviderMissingStubsWithOfficial(env, { now });
+  } catch (err) {
+    errors.push(`providerStubOfficialReconcile: ${(err as Error).message}`);
   }
 
   // Close provider-only placeholder stubs before the desync reconcile below,
