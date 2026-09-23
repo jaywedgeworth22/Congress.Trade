@@ -3,6 +3,7 @@ import type { Env } from '../../shared/types.ts';
 import { maybeRunAgreementAutopublish } from '../agreement.ts';
 import {
   BONDI_EMPTY_DOC_ID,
+  closeUnreadableExecutive,
   closeVerifiedEmptyExecutive,
   sweepKnownParkedExecutiveTerminals,
   TRUMP_UNREADABLE_DOC_ID,
@@ -247,6 +248,58 @@ describe('sweepKnownParkedExecutiveTerminals', () => {
   });
 });
 
+describe('admin reopen and first-pass closes', () => {
+  it('leaves an administrator-reopened (suppressed) row open on the sweep', async () => {
+    const db = await sqliteDatabase();
+    seedReview(db, BONDI_EMPTY_DOC_ID, 'agreement_cascade_unresolved');
+    seedReview(db, TRUMP_UNREADABLE_DOC_ID, 'agreement_cascade_unresolved');
+    db.prepare(`UPDATE review_queue SET agreement_suppressed_at = '2026-09-23T00:00:00.000Z'`).run();
+
+    const result = await sweepKnownParkedExecutiveTerminals(envFor(db));
+    expect(result).toEqual({ verifiedEmpty: 0, unreadable: 0 });
+    const rows = db.prepare(`SELECT resolved FROM review_queue ORDER BY doc_id`).all() as Array<{ resolved: number }>;
+    expect(rows.every((row) => row.resolved === 0)).toBe(true);
+    expect(db.prepare(`SELECT COUNT(*) AS n FROM ingestion_decisions`).get()).toEqual({ n: 0 });
+  });
+
+  it('inserts a resolved row on first pass when no review row exists yet', async () => {
+    const db = await sqliteDatabase();
+    db.prepare(
+      `INSERT INTO filings (doc_id, chamber, ingest_status, doc_kind, extractor)
+       VALUES (?, 'executive', 'pending', 'text_pdf', 'ogeText')`,
+    ).run(TRUMP_UNREADABLE_DOC_ID);
+    const env = envFor(db);
+
+    expect(await closeUnreadableExecutive(env, TRUMP_UNREADABLE_DOC_ID)).toBe(false);
+    expect(await closeUnreadableExecutive(env, TRUMP_UNREADABLE_DOC_ID, { insertIfAbsent: true })).toBe(true);
+    const row = db.prepare(
+      `SELECT rq.resolved, rq.resolution_kind, rq.resolution_reason, f.ingest_status
+         FROM review_queue rq JOIN filings f ON f.doc_id = rq.doc_id WHERE rq.doc_id = ?`,
+    ).get(TRUMP_UNREADABLE_DOC_ID);
+    expect(row).toMatchObject({
+      resolved: 1,
+      resolution_kind: 'rejected',
+      resolution_reason: 'oge_text_unreadable',
+      ingest_status: 'error',
+    });
+    // Idempotent: a second first-pass close changes nothing.
+    expect(await closeUnreadableExecutive(env, TRUMP_UNREADABLE_DOC_ID, { insertIfAbsent: true })).toBe(false);
+  });
+
+  it('does not insert over an existing unresolved row a human suppressed', async () => {
+    const db = await sqliteDatabase();
+    seedReview(db, BONDI_EMPTY_DOC_ID, 'extract_empty_failure');
+    db.prepare(`UPDATE review_queue SET agreement_suppressed_at = '2026-09-23T00:00:00.000Z'`).run();
+    const closed = await closeVerifiedEmptyExecutive(envFor(db), BONDI_EMPTY_DOC_ID, {
+      respectSuppression: true,
+      insertIfAbsent: true,
+    });
+    expect(closed).toBe(false);
+    expect(db.prepare(`SELECT resolved FROM review_queue WHERE doc_id = ?`).get(BONDI_EMPTY_DOC_ID))
+      .toEqual({ resolved: 0 });
+  });
+});
+
 describe('recoverExpiredCappedReviews', () => {
   it('does not rewrite empty-failure or unreadable rows into agreement_cascade_unresolved', async () => {
     const db = await sqliteDatabase();
@@ -255,9 +308,13 @@ describe('recoverExpiredCappedReviews', () => {
     seedReview(db, 'E-unread', 'ocr_unusable,oge_text_unreadable');
     seedReview(db, 'E-capped', 'needs_review');
     seedReview(db, 'E-already', 'agreement_cascade_unresolved');
+    // House/Senate empty failures are not health-terminal; they keep the
+    // capped-row terminal label instead of stranding as eligible forever.
+    seedReview(db, 'H-2026-empty', 'extract_empty_failure');
+    seedReview(db, 'S-2026-empty', 'extract_empty_failure,no_transactions_extracted');
 
     const out = await maybeRunAgreementAutopublish(envFor(db));
-    expect(out).toMatchObject({ terminalized: 1, attempted: 0 });
+    expect(out).toMatchObject({ terminalized: 3, attempted: 0 });
 
     const reason = (docId: string) =>
       (db.prepare(`SELECT reason FROM review_queue WHERE doc_id = ?`).get(docId) as { reason: string }).reason;
@@ -266,5 +323,7 @@ describe('recoverExpiredCappedReviews', () => {
     expect(reason('E-unread')).toBe('ocr_unusable,oge_text_unreadable');
     expect(reason('E-already')).toBe('agreement_cascade_unresolved');
     expect(reason('E-capped')).toBe('agreement_cascade_unresolved');
+    expect(reason('H-2026-empty')).toBe('agreement_cascade_unresolved');
+    expect(reason('S-2026-empty')).toBe('agreement_cascade_unresolved');
   });
 });
