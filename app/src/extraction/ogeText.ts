@@ -269,8 +269,9 @@ const PART7_END_RE = /(?:^|\s)(?:part\s*8\b|(?<!\d)8[.]\s*[a-z]|summary\s+of\s+c
 /**
  * Positive evidence that an OGE 278e Part 7 (Transactions) section has no
  * rows: an explicit None marker, or a Part 7 heading whose body up to the
- * next part holds no type word, date, or dollar amount.  A blank or garbled
- * text layer, or a Part 7 we cannot see the end of, is not evidence.
+ * next part holds no table header, row number, type word, date, or dollar
+ * amount.  A blank or garbled text layer, a header-only table, or a Part 7 we
+ * cannot see the end of, is not evidence.
  */
 export function ogePart7SectionLooksEmpty(text: string | null | undefined): boolean {
   if (!text) return false;
@@ -287,6 +288,12 @@ export function ogePart7SectionLooksEmpty(text: string | null | undefined): bool
   const end = PART7_END_RE.exec(rest);
   if (!end) return false;
   const body = rest.slice(0, end.index);
+  // A table header (or its `#` row-number column) with no rows under it is a
+  // read that lost the row glyphs, not an empty section.  Real empty 278e
+  // Part 7s print no table at all, or say None (handled above).
+  if (/#|\b(?:description|type|date|amount|notification)\b/i.test(body)) return false;
+  // Any digit (row number, date, amount) means content we could not parse.
+  if (/\d/.test(body)) return false;
   if (/\b(?:purchase|sale|exchange)\b/i.test(body)) return false;
   if (/\d{1,2}\/\d{1,2}\/\d{2,4}/.test(body)) return false;
   if (/\$\s*\d/.test(body)) return false;
