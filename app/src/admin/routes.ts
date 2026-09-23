@@ -4691,9 +4691,16 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       error: string;
     }>(
       c.env,
+      // A provider-only stub closed as verified_empty can keep its
+      // provider-only:{provider}:{raw key} marker in filings.error (the
+      // autonomy sweep preserves it when the review payload is truncated JSON,
+      // so the official-side reconcile can still match the raw key).  That is
+      // a closed lead, not a failure: leave it out so it neither shows as a
+      // prod error nor pushes real filing errors out of the newest 40.
       `SELECT first_seen_at, doc_id, error
          FROM filings
         WHERE error IS NOT NULL AND error != ''
+          AND NOT (ingest_status = 'verified_empty' AND error LIKE 'provider-only:%')
         ORDER BY first_seen_at DESC
         LIMIT 40`,
     );
