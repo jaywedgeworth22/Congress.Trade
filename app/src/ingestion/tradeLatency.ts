@@ -19,7 +19,6 @@ import { assertFmpTierOk } from '../shared/fmpStatus.ts';
 import { getLastPollAt, setLastPollAt } from '../shared/config.ts';
 import type { DiscoveredFiling } from './watcher.ts';
 import { trackedFetch } from '../shared/thirdPartyTelemetry.ts';
-import { notifyReviewQueuePublisher } from './reviewQueueNotify.ts';
 import { cleanFilerName } from '../extraction/nameNormalizer.ts';
 import { resolveExecutiveFilerIdFromName } from '../shared/executiveIdentity.ts';
 import {
@@ -2188,7 +2187,8 @@ function providerOnlyDocId(row: DisclosureProviderRow): string {
   return `provider-missing-${row.provider}-${row.chamber}-${key}`;
 }
 
-async function routeProviderOnlyObservationsToReview(
+/** Exported for unit tests. */
+export async function routeProviderOnlyObservationsToReview(
   env: Env,
   provider: ProviderId,
   rows: DisclosureProviderRow[],
@@ -2227,7 +2227,11 @@ async function routeProviderOnlyObservationsToReview(
       payload: row.payload,
     }).slice(0, PAYLOAD_LIMIT);
 
-    const results = await batch(env.DB, [
+    // No notifyReviewQueuePublisher here: a provider-only stub is a synthetic
+    // lead that the hourly sweep closes as verified_empty (or rejects as a
+    // duplicate once the official filing persists).  It never needs a human,
+    // so waking the Publisher with review_queue.entered for it is pure noise.
+    await batch(env.DB, [
       [
         `INSERT OR IGNORE INTO filings
            (doc_id, chamber, filer_id, filing_type, filed_date, source_url,
@@ -2251,14 +2255,6 @@ async function routeProviderOnlyObservationsToReview(
         [docId, payload, nowIso],
       ],
     ]);
-    if ((results[1]?.meta?.changes ?? 0) > 0) {
-      void notifyReviewQueuePublisher(env, {
-        docId,
-        reason: 'provider_discovered_missing_official',
-        kind: 'insert',
-        at: nowIso,
-      });
-    }
   }
 }
 

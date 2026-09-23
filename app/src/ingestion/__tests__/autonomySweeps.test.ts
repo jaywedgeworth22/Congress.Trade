@@ -29,6 +29,7 @@ vi.mock('unpdf', () => ({
 import {
   sweepExtractionPendingLocalCeiling,
   sweepStrandedFilings,
+  sweepProviderOnlyReviewStubs,
   sweepFiledDateBackfill,
   sweepOgeUndatedFilingDates,
   extractPrintedDateFromText,
@@ -203,6 +204,101 @@ describe('autonomySweeps', () => {
 
       const result = await sweepStrandedFilings(env, now);
       expect(result.terminalized).toBe(0);
+    });
+  });
+
+  describe('sweepProviderOnlyReviewStubs', () => {
+    async function insertReviewStub(docId: string, reason = 'provider_discovered_missing_official') {
+      await d1.prepare(
+        `INSERT INTO review_queue (doc_id, reason, payload, created_at, resolved, review_revision)
+         VALUES (?, ?, '{}', ?, 0, 1)`,
+      ).bind(docId, reason, new Date().toISOString()).run();
+    }
+
+    it('closes an open provider-only placeholder as verified_empty', async () => {
+      const env = makeEnv();
+      await insertFiling({ doc_id: 'provider-missing-fmp-house-20035492', ingest_status: 'needs_review', first_seen_at: new Date().toISOString() });
+      await insertReviewStub('provider-missing-fmp-house-20035492');
+
+      const result = await sweepProviderOnlyReviewStubs(env);
+      expect(result.cleared).toBe(1);
+      const row = await d1.prepare(
+        `SELECT resolved, resolution_kind, resolution_reason FROM review_queue WHERE doc_id = ?`,
+      ).bind('provider-missing-fmp-house-20035492').first<{ resolved: number; resolution_kind: string; resolution_reason: string }>();
+      expect(row?.resolved).toBe(1);
+      expect(row?.resolution_kind).toBe('verified_empty');
+      expect(row?.resolution_reason).toBe('provider_only_lead_cleared');
+    });
+
+    it('moves the stub filing out of needs_review with its review close', async () => {
+      const env = makeEnv();
+      const docId = 'provider-missing-fmp-house-20035493';
+      await insertFiling({ doc_id: docId, ingest_status: 'needs_review', first_seen_at: new Date().toISOString() });
+      await insertReviewStub(docId);
+
+      const result = await sweepProviderOnlyReviewStubs(env);
+      expect(result.cleared).toBe(1);
+      expect(result.filingsUpdated).toBe(1);
+      const filing = await d1.prepare(`SELECT ingest_status FROM filings WHERE doc_id = ?`)
+        .bind(docId).first<{ ingest_status: string }>();
+      expect(filing?.ingest_status).toBe('verified_empty');
+      const review = await d1.prepare(`SELECT review_revision FROM review_queue WHERE doc_id = ?`)
+        .bind(docId).first<{ review_revision: number }>();
+      expect(review?.review_revision).toBe(2);
+
+      const again = await sweepProviderOnlyReviewStubs(env);
+      expect(again).toEqual({ cleared: 0, filingsUpdated: 0 });
+    });
+
+    it('heals a stub filing whose review was already cleared without it', async () => {
+      const env = makeEnv();
+      const docId = 'provider-missing-fmp-house-migrated';
+      await insertFiling({ doc_id: docId, ingest_status: 'needs_review', first_seen_at: new Date().toISOString() });
+      await d1.prepare(
+        `INSERT INTO review_queue (doc_id, reason, payload, created_at, resolved, resolution_kind, resolution_reason, review_revision)
+         VALUES (?, 'provider_discovered_missing_official', '{}', ?, 1, 'verified_empty', 'provider_only_lead_cleared', 1)`,
+      ).bind(docId, new Date().toISOString()).run();
+
+      const result = await sweepProviderOnlyReviewStubs(env);
+      expect(result).toEqual({ cleared: 0, filingsUpdated: 1 });
+      const filing = await d1.prepare(`SELECT ingest_status FROM filings WHERE doc_id = ?`)
+        .bind(docId).first<{ ingest_status: string }>();
+      expect(filing?.ingest_status).toBe('verified_empty');
+    });
+
+    it('leaves a provider-reason row with stored raw bytes alone', async () => {
+      const env = makeEnv();
+      await insertFiling({ doc_id: 'provider-missing-fmp-house-real', ingest_status: 'needs_review', first_seen_at: new Date().toISOString(), raw_object_key: 'raw/real.pdf' });
+      await insertReviewStub('provider-missing-fmp-house-real');
+
+      const result = await sweepProviderOnlyReviewStubs(env);
+      expect(result.cleared).toBe(0);
+      const row = await d1.prepare(`SELECT resolved FROM review_queue WHERE doc_id = ?`).bind('provider-missing-fmp-house-real').first<{ resolved: number }>();
+      expect(row?.resolved).toBe(0);
+      const filing = await d1.prepare(`SELECT ingest_status FROM filings WHERE doc_id = ?`).bind('provider-missing-fmp-house-real').first<{ ingest_status: string }>();
+      expect(filing?.ingest_status).toBe('needs_review');
+    });
+
+    it('leaves a provider-reason row with a live transaction alone', async () => {
+      const env = makeEnv();
+      await insertFiling({ doc_id: 'provider-missing-fmp-house-live', ingest_status: 'needs_review', first_seen_at: new Date().toISOString() });
+      await insertReviewStub('provider-missing-fmp-house-live');
+      await d1.prepare(`INSERT INTO transactions (id, doc_id, source, created_at) VALUES (?, ?, 'primary', ?)`)
+        .bind('tx-live-1', 'provider-missing-fmp-house-live', new Date().toISOString()).run();
+
+      const result = await sweepProviderOnlyReviewStubs(env);
+      expect(result.cleared).toBe(0);
+    });
+
+    it('leaves other review reasons untouched', async () => {
+      const env = makeEnv();
+      await insertFiling({ doc_id: 'doc-lowconf', ingest_status: 'needs_review', first_seen_at: new Date().toISOString() });
+      await insertReviewStub('doc-lowconf', 'low_confidence');
+
+      const result = await sweepProviderOnlyReviewStubs(env);
+      expect(result.cleared).toBe(0);
+      const row = await d1.prepare(`SELECT resolved FROM review_queue WHERE doc_id = ?`).bind('doc-lowconf').first<{ resolved: number }>();
+      expect(row?.resolved).toBe(0);
     });
   });
 
