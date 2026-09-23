@@ -18,6 +18,7 @@ import {
   classifyOgeTransactionText,
   executiveDisclosureForm,
   isOgeRowSequenceCoherent,
+  ogePart7SectionLooksEmpty,
   parseOgeTransactionRows,
 } from '../ogeText.ts';
 
@@ -287,6 +288,22 @@ describe('classifyOgeTransactionText', () => {
     // Part 7 whose end we cannot see is not evidence.
     expect(classifyOgeTransactionText('OGE Form 278e 7. Transactions # DESCRIPTION TYPE DATE AMOUNT', bondi))
       .toEqual({ disposition: 'unconfirmed', rows: [] });
+  });
+
+  it('keeps a bounded header-only Part 7 unconfirmed (row glyphs lost)', () => {
+    const bondi = 'E-undated-pam-bondi-2026-278term';
+    const headerOnly = 'OGE Form 278e 7. Transactions # DESCRIPTION TYPE DATE AMOUNT 8. Liabilities';
+    expect(ogePart7SectionLooksEmpty(headerOnly)).toBe(false);
+    expect(classifyOgeTransactionText(headerOnly, bondi)).toEqual({ disposition: 'unconfirmed', rows: [] });
+    // Header split across lines / partial header still counts as a table.
+    expect(classifyOgeTransactionText('7. Transactions\n#\nDESCRIPTION\n8. Liabilities', bondi))
+      .toEqual({ disposition: 'unconfirmed', rows: [] });
+    // Orphan row numbers with no parseable row are not an empty section.
+    expect(classifyOgeTransactionText('7. Transactions 1 2 3 8. Liabilities', bondi))
+      .toEqual({ disposition: 'unconfirmed', rows: [] });
+    // The bare bounded heading (real empty 278e) still closes.
+    expect(classifyOgeTransactionText('OGE Form 278e 7. Transactions 8. Liabilities', bondi))
+      .toEqual({ disposition: 'empty', rows: [] });
   });
 
   it('treats an explicit Part 7 None as empty', () => {
