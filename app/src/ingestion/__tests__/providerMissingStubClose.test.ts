@@ -395,7 +395,7 @@ describe('providerMissingStubClose', () => {
     }
 
     it('matches a hashed Unusual Whales key through its matched trade_latency_candidates row', async () => {
-      const hashKey = 'uw-9f3a1c77e2';
+      const hashKey = 'uw-hash-fixture-a';
       const stub = `provider-missing-unusual_whales-house-${hashKey}`;
       await seedHouseStub(
         stub,
@@ -470,6 +470,49 @@ describe('providerMissingStubClose', () => {
       }
       // Buckets are disjoint (rowid % buckets), so 7 over one full rotation = all covered.
       expect(scannedTotal).toBe(7);
+    });
+
+    it('drains an oversized bucket in one visit instead of starving its oldest stubs', async () => {
+      // review_queue also holds non-stub rows, so stub rowids are uneven and
+      // rowid % N only bounds the *average* bucket size.  Space 5 stubs 5
+      // review_queue rowids apart with ineligible filler rows: with 5 buckets
+      // every stub lands in the SAME bucket, which then holds 5 eligible rows
+      // against a limit of 2.  A single newest-first page would re-scan the
+      // newest 2 on every visit and never reach the oldest 3.
+      for (let i = 0; i < 5; i += 1) {
+        await seedHouseStub(
+          `provider-missing-fmp-house-5000000${i}`,
+          JSON.stringify({ provider: 'fmp', providerKey: `5000000${i}` }),
+          null,
+          `2026-08-25T0${i}:00:00.000Z`,
+        );
+        for (let f = 0; f < 4 && i < 4; f += 1) {
+          await d1.prepare(
+            `INSERT INTO review_queue (doc_id, reason, payload, created_at, resolved, review_revision)
+             VALUES (?, 'extract_banner_eligible', '{}', '2026-08-25T00:00:00.000Z', 0, 1)`,
+          ).bind(`filler-${i}-${f}`).run();
+        }
+      }
+      const stubRows = await d1.prepare(
+        `SELECT rowid FROM review_queue WHERE reason = 'provider_discovered_missing_official'`,
+      ).all<{ rowid: number }>();
+      const residues = new Set(stubRows.results.map((r) => r.rowid % 5));
+      expect(residues.size).toBe(1);
+
+      const hour0 = Date.parse('2026-08-26T00:00:00.000Z');
+      let scannedTotal = 0;
+      let maxScannedInOneVisit = 0;
+      for (let h = 0; h < 5; h += 1) {
+        const r = await reconcileProviderMissingStubsWithOfficial(makeEnv(), {
+          now: new Date(hour0 + h * 3_600_000),
+          limit: 2,
+        });
+        scannedTotal += r.scanned;
+        maxScannedInOneVisit = Math.max(maxScannedInOneVisit, r.scanned);
+      }
+      // The bucket visit must drain all 5 in a single run, not just the newest 2.
+      expect(maxScannedInOneVisit).toBe(5);
+      expect(scannedTotal).toBe(5);
     });
 
     it('eventually rejects the oldest stub even when newer stubs exceed the row limit', async () => {
