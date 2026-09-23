@@ -126,6 +126,14 @@ describe('mergeResults', () => {
     expect(merged.raw).toContain('secondaryOnly=1');
   });
 
+  it('exposes the per-side only counts so downstream empty checks see a contested empty', () => {
+    const merged = mergeResults(result([]), result([tx({ ticker: 'TSLA' })]));
+    expect(merged.transactions).toHaveLength(0);
+    expect(merged.arbitrationCounts).toEqual({ primaryOnly: 0, secondaryOnly: 1 });
+    const agreed = mergeResults(result([]), result([]));
+    expect(agreed.arbitrationCounts).toEqual({ primaryOnly: 0, secondaryOnly: 0 });
+  });
+
   it('retains usage and provider request identity for every arbitrated model call', () => {
     const primary = result([tx()], {
       extractor: 'vision-primary',
@@ -478,6 +486,72 @@ describe('OgePdfExtractor', () => {
     const out = await ogePdf.extract({ filing: execScan() });
     expect(out.parseDisposition).toBe('unreadable');
     expect(out.transactions).toHaveLength(0);
+  });
+
+  it('does not restore the empty/unreadable terminal when the arbitrated secondary vision read saw rows', async () => {
+    const ogeText = extractor('ogeText', result([], {
+      extractor: 'ogeText',
+      parseDisposition: 'unreadable',
+    }));
+    // Primary vision finds nothing; the arbitration secondary finds a row.
+    // mergeResults keeps the merged array empty (primary-authoritative) but
+    // marks the doc contested for human review.
+    const primary = extractor('vision-primary', result([], { extractor: 'vision-primary' }));
+    const secondary = extractor('vision-secondary', result([tx({ ticker: 'XOM' })], { extractor: 'vision-secondary' }));
+    const arbitrating = new ArbitratingExtractor(
+      primary,
+      { ARBITRATION_ENABLED: 'true' } as unknown as Env,
+      secondary,
+    );
+    const ogePdf = new OgePdfExtractor(ogeText, arbitrating);
+
+    const out = await ogePdf.extract({ filing: execScan() });
+
+    // The terminal unreadable label must not bury the contested doc.
+    expect(out.parseDisposition).toBeUndefined();
+    expect(out.transactions).toHaveLength(0);
+    expect(out.raw).toContain('secondaryOnly=1');
+  });
+
+  it('restores the terminal state when every arbitrated vision read found nothing', async () => {
+    const ogeText = extractor('ogeText', result([], {
+      extractor: 'ogeText',
+      parseDisposition: 'unreadable',
+    }));
+    const primary = extractor('vision-primary', result([], { extractor: 'vision-primary' }));
+    const secondary = extractor('vision-secondary', result([], { extractor: 'vision-secondary' }));
+    const arbitrating = new ArbitratingExtractor(
+      primary,
+      { ARBITRATION_ENABLED: 'true' } as unknown as Env,
+      secondary,
+    );
+    const ogePdf = new OgePdfExtractor(ogeText, arbitrating);
+
+    const out = await ogePdf.extract({ filing: execScan() });
+
+    expect(out.parseDisposition).toBe('unreadable');
+    expect(out.transactions).toHaveLength(0);
+    expect(out.arbitrationCounts).toEqual({ primaryOnly: 0, secondaryOnly: 0 });
+  });
+
+  it('does not restore the empty terminal on an honest-empty 278e when the arbitrated secondary saw rows', async () => {
+    const ogeText = extractor('ogeText', result([], {
+      extractor: 'ogeText',
+      parseDisposition: 'empty',
+    }));
+    const primary = extractor('vision-primary', result([], { extractor: 'vision-primary' }));
+    const secondary = extractor('vision-secondary', result([tx({ ticker: 'MSFT' })], { extractor: 'vision-secondary' }));
+    const arbitrating = new ArbitratingExtractor(
+      primary,
+      { ARBITRATION_ENABLED: 'true' } as unknown as Env,
+      secondary,
+    );
+    const ogePdf = new OgePdfExtractor(ogeText, arbitrating);
+
+    const out = await ogePdf.extract({ filing: execScan() });
+
+    expect(out.parseDisposition).toBeUndefined();
+    expect(out.raw).toContain('secondaryOnly=1');
   });
 
   it('does not charge vision for typed executive PDFs that parse to zero rows', async () => {
