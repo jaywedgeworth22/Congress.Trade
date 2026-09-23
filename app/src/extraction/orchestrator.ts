@@ -189,6 +189,7 @@ export async function extractAndNormalize(
   const result = await normalize(env, extracted.filing, extracted.transactions, {
     extractor: extracted.extractor,
     modelVersion: extracted.modelVersion ?? null,
+    sourceText: extracted.raw,
   });
 
   // Fast path: a doc that just landed in review gets a cross-vendor agreement
@@ -226,6 +227,8 @@ export interface ExtractedFiling {
   transactions: ParsedTx[];
   extractor: string;
   modelVersion: string | null;
+  /** Extractor raw text. Part 7 "None" is visible here when the parser yields 0 rows. */
+  raw: string;
   modelRuns?: ExtractorModelRun[];
 }
 
@@ -340,7 +343,7 @@ export async function extractParsed(
   if (!extractor) {
     // Unknown / unsupported doc form (e.g. an ambiguous scan): no extractor, no
     // parsed rows. Callers decide what to do (normalize([]) routes to review).
-    return { filing, transactions: [], extractor: 'none', modelVersion: null };
+    return { filing, transactions: [], extractor: 'none', modelVersion: null, raw: '' };
   }
 
   const breakerName = extractor.circuitBreakerName ?? extractor.name;
@@ -436,6 +439,7 @@ export async function extractParsed(
     transactions: result.transactions,
     extractor: result.extractor,
     modelVersion: result.modelVersion ?? null,
+    raw: result.raw ?? '',
     modelRuns: result.modelRuns,
   };
 }

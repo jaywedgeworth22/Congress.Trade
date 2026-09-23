@@ -646,6 +646,66 @@ describe('normalize', () => {
     expect(String(cap.reviewRows[0][1])).not.toContain('low_confidence');
   });
 
+  const BONDI_PART7_NONE = [
+    'OGE Form 278e',
+    '7. Transactions',
+    'None',
+    '8. Liabilities',
+    'None',
+  ].join('\n');
+
+  it('closes an OGE 278e Part 7 explicit None extract as verified_empty', async () => {
+    const { env, cap } = makeEnv([]);
+    const result = await normalize(
+      env,
+      filing({
+        docId: 'E-undated-pam-bondi-2026-278term',
+        chamber: 'executive',
+        docKind: 'text_pdf',
+        extractor: 'ogeText',
+      }),
+      [],
+      { extractor: 'ogeText', sourceText: BONDI_PART7_NONE },
+    );
+    expect(result.needsReview).toBe(false);
+    expect(result.published).toBe(false);
+    expect(result.reviewReason).toBe('oge_part7_explicit_none');
+    expect(cap.insertedTx).toHaveLength(0);
+    expect(cap.filingUpdates[0][0]).toBe('verified_empty');
+    expect(cap.reviewRows[0]).toEqual(expect.arrayContaining([
+      'oge_part7_explicit_none',
+      'verified_empty',
+    ]));
+  });
+
+  it('does not verified_empty a zero-row extract without a Part 7 None marker', async () => {
+    const { env, cap } = makeEnv([]);
+    const result = await normalize(
+      env,
+      filing({
+        docId: 'E-2026-donald-j-trump-08-12-2026-278t',
+        chamber: 'executive',
+        docKind: 'text_pdf',
+        extractor: 'ogeText',
+      }),
+      [],
+      {
+        extractor: 'ogeText',
+        sourceText: [
+          'Periodic Transaction Report',
+          '# DESCRIPTION TYPE DATE NOTIFICATION RECEIVED OVER 30 DAYS AGO AMOUNT',
+          '1 SPOR SERIES TRUST HIGH YlELD BONO ETF ourchoeo 1/20/2028 no',
+        ].join('\n'),
+      },
+    );
+    expect(result.needsReview).toBe(true);
+    expect(result.published).toBe(false);
+    expect(result.reviewReason).not.toBe('oge_part7_explicit_none');
+    expect(result.reviewReason).not.toBe('nothing_to_report');
+    expect(String(cap.reviewRows[0][1])).toContain('extract_empty_failure');
+    expect(cap.filingUpdates.some((row) => row[0] === 'verified_empty')).toBe(false);
+  });
+
   it('closes a handwritten PTR sample / nothing-to-report extract as verified empty', async () => {
     const { env, cap } = makeEnv([]);
     const result = await normalize(env, filing(), [

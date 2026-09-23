@@ -286,6 +286,7 @@ export async function maybeRunDeterministicReviewDrain(
         const result = await normalize(env, extracted.filing, extracted.transactions, {
           extractor: extracted.extractor,
           modelVersion: extracted.modelVersion,
+          sourceText: extracted.raw,
         });
         if (result.published) {
           out.published++;

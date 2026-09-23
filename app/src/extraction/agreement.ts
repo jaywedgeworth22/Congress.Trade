@@ -88,7 +88,9 @@ import {
   HARD_FAILURE_FLAGS,
   MAX_PUBLISH_TRANSACTIONS_PER_FILING,
   loadResolver,
+  resolveVerifiedEmpty,
 } from './normalizer.ts';
+import { pdfBytesLookLikeOgePart7ExplicitNone } from './ogeText.ts';
 import { cleanAssetString } from './nameNormalizer.ts';
 import { prepareExtractedTx } from './prepareTx.ts';
 import { mapFiling, type FilingRow } from '../delivery/rows.ts';
@@ -1154,6 +1156,9 @@ export async function processAgreementDoc(
     ? await loadDocBytes(env, docId, rawObjectKey, options.signal)
     : await loadDocBytes(env, docId, rawObjectKey);
   if ('skip' in loaded) return loaded.skip;
+  // Copy before model reads. pdf.js detaches the buffer it is handed, and a
+  // later empty close still needs the text layer to see Part 7 "None".
+  const part7Bytes = docId.startsWith('E-') ? loaded.bytes.slice(0) : null;
 
   // Live-toggleable text-field agreement normalization (default on). Resolved
   // here (not just threaded from handleAgreementCheck) so the operator
@@ -1210,6 +1215,14 @@ export async function processAgreementDoc(
     return { docId, outcome: 'skipped', tier: audit?.tier, reason: 'doc_budget_stop', rows: lineupRows() };
   }
   if (decision.action === 'empty') {
+    const part7 = await closeOgePart7ExplicitNone(
+      env,
+      docId,
+      part7Bytes,
+      audit?.tier ?? (models.c ? 2 : 1),
+      dryRun,
+    );
+    if (part7) return { ...part7, rows: lineupRows() };
     return {
       docId,
       outcome: 'agree_but_hardfail',
@@ -1481,6 +1494,51 @@ function voteSummary(consensus: ConsensusResult, totalModels: number): unknown {
  * cap. Clearing the claim first made finishTerminalClaim a no-op, so the next
  * autopilot scan re-queued empty docs forever and burned more model reads.
  */
+
+/**
+ * Agreement reads returned zero rows, and the OGE text layer says Part 7 is
+ * explicitly None. That is verified_empty, not extract_empty_failure.
+ * A zero-row 278-T without the marker returns null so the caller still parks.
+ */
+async function closeOgePart7ExplicitNone(
+  env: Env,
+  docId: string,
+  bytes: ArrayBuffer | null,
+  tier: number,
+  dryRun: boolean,
+): Promise<AgreementDocResult | null> {
+  if (!bytes || !docId.startsWith('E-')) return null;
+  const explicitNone = await pdfBytesLookLikeOgePart7ExplicitNone(bytes);
+  if (!explicitNone) return null;
+  if (!dryRun) {
+    const frow = await loadFilingRow(env, docId);
+    if (!frow) return null;
+    const review = await loadReviewState(env, docId);
+    const closed = await resolveVerifiedEmpty(
+      env,
+      mapFiling(frow),
+      new Date().toISOString(),
+      review
+        ? {
+            resolved: review.resolved,
+            review_revision: review.review_revision,
+            agreement_suppressed_at: review.agreement_suppressed_at,
+          }
+        : null,
+      'oge_part7_explicit_none',
+    );
+    if (!closed) return null;
+  }
+  return {
+    docId,
+    outcome: 'agree_but_hardfail',
+    tier,
+    rowCount: 0,
+    flags: ['oge_part7_explicit_none'],
+    reason: 'oge_part7_explicit_none',
+  };
+}
+
 export async function markExtractEmptyFailure(
   env: Env,
   docId: string,
@@ -1489,6 +1547,25 @@ export async function markExtractEmptyFailure(
   claimToken?: string,
   detail?: string,
 ): Promise<AgreementDocResult> {
+  // Part 7 "None" is an honest empty. Park extract_empty_failure only when
+  // the text layer does not say so (bare zero-row OCR stays in review).
+  try {
+    const filing = await loadFilingRow(env, docId);
+    const loaded = await loadDocBytes(env, docId, filing?.raw_object_key ?? null);
+    if (!('skip' in loaded)) {
+      const part7 = await closeOgePart7ExplicitNone(
+        env,
+        docId,
+        loaded.bytes.slice(0),
+        tier,
+        false,
+      );
+      if (part7) return part7;
+    }
+  } catch (err) {
+    console.warn('markExtractEmptyFailure part7 check failed:', docId, (err as Error).message);
+  }
+
   const nowIso = new Date().toISOString();
   const errMsg = detail
     ?? 'extract_empty_failure: all agreement reads returned zero transactions';
@@ -1691,6 +1768,7 @@ export async function processAgreementCascadeTier2(
     ? await loadDocBytes(env, docId, rawObjectKey, signal)
     : await loadDocBytes(env, docId, rawObjectKey);
   if ('skip' in loaded) return loaded.skip;
+  const part7Bytes = docId.startsWith('E-') ? loaded.bytes.slice(0) : null;
 
   // Live-toggleable text-field agreement normalization (default on) — see the
   // matching comment in processAgreementDoc.
@@ -1740,6 +1818,8 @@ export async function processAgreementCascadeTier2(
     return { docId, outcome: 'skipped', tier: 2, reason: 'doc_budget_stop' };
   }
   if (decision.action === 'empty') {
+    const part7 = await closeOgePart7ExplicitNone(env, docId, part7Bytes, 2, dryRun);
+    if (part7) return part7;
     if (dryRun) {
       return {
         docId,
@@ -2402,9 +2482,12 @@ export async function handleAgreementCheck(
         await finishTerminalClaim(env, docId, claimed.token, max);
       } else if (
         res.outcome === 'agree_but_hardfail'
-        && (res.flags ?? []).includes('extract_empty_failure')
+        && (
+          (res.flags ?? []).includes('extract_empty_failure')
+          || (res.flags ?? []).includes('oge_part7_explicit_none')
+        )
       ) {
-        // markExtractEmptyFailure already applied inside tier-2 empty path.
+        // markExtractEmptyFailure or resolveVerifiedEmpty already applied.
         await finishTerminalClaim(env, docId, claimed.token, max);
       } else if (res.outcome === 'skipped' && res.reason === 'doc_budget_stop') {
         await refundLlmBudget(env, budget, readsNeeded);
@@ -2450,8 +2533,10 @@ export async function handleAgreementCheck(
       return { ...res, reason: 'attempt_cap_reached' };
     }
     if (res.outcome === 'agree_but_hardfail') {
-      const emptyFail = (res.flags ?? []).includes('extract_empty_failure');
-      if (emptyFail) {
+      const flags = res.flags ?? [];
+      if (flags.includes('oge_part7_explicit_none')) {
+        // processAgreementDoc already closed this as verified_empty.
+      } else if (flags.includes('extract_empty_failure')) {
         // Do not escalate empty×empty and do not soft-label as cascade_unresolved.
         await markExtractEmptyFailure(
           env, docId, 1, modelLabels(tier1Models), claimed.token,

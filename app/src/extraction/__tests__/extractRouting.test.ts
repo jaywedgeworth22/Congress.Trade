@@ -17,6 +17,7 @@ import {
   looksLikePtrFormSampleRow,
   looksLikeSeeAttachmentPointer,
   looksLikeNothingToReport,
+  looksLikeOgePart7ExplicitNone,
   isDeletedFilingStatus,
   shouldEnqueueAgreement,
   shouldSkipAgreementForReviewReason,
@@ -93,6 +94,60 @@ describe('classifyHouseExtractRoute / allowOpenRouterFiles', () => {
       docKind: 'scanned_pdf',
       ...{ docClass: 'hard_scan' },
     } as Filing))).toBe(true);
+  });
+});
+
+const BONDI_PART7_NONE = [
+  'OGE Form 278e (January 2019)',
+  'U.S. Office of Government Ethics',
+  '1. Filer\'s Positions Held Outside United States Government',
+  'None',
+  '6. Other Assets and Income',
+  'None',
+  '7. Transactions',
+  'None',
+  '8. Liabilities',
+  'None',
+  '9. Gifts and Travel Reimbursements',
+  'None',
+].join('\n');
+
+const TRUMP_278T_GARBLED_ZERO_ROWS = [
+  'Periodic Transaction Report',
+  '# DESCRIPTION TYPE DATE NOTIFICATION RECEIVED OVER 30 DAYS AGO AMOUNT',
+  '1 SPOR SERIES TRUST HIGH YlELD BONO ETF ourchoeo 1/20/2028 no',
+  '2 Amazon.com Inc AMZN Sale 06/10/2022 No 1001 15000',
+].join('\n');
+
+describe('looksLikeOgePart7ExplicitNone', () => {
+  it('accepts a Bondi-like 278e whose Part 7 Transactions body is None', () => {
+    expect(looksLikeOgePart7ExplicitNone(BONDI_PART7_NONE)).toBe(true);
+    expect(looksLikeOgePart7ExplicitNone(
+      '6. Other Assets and Income None 7. Transactions None 8. Liabilities None',
+    )).toBe(true);
+    expect(looksLikeOgePart7ExplicitNone('Part 7. Transactions\nN/A\n8. Liabilities\nNone')).toBe(true);
+    expect(looksLikeOgePart7ExplicitNone('7. Transactions\nNo transactions\n8. Liabilities\nNone')).toBe(true);
+  });
+
+  it('rejects zero rows without a Part 7 None marker', () => {
+    expect(looksLikeOgePart7ExplicitNone(TRUMP_278T_GARBLED_ZERO_ROWS)).toBe(false);
+    expect(looksLikeOgePart7ExplicitNone('')).toBe(false);
+    expect(looksLikeOgePart7ExplicitNone(null)).toBe(false);
+    expect(looksLikeOgePart7ExplicitNone('None')).toBe(false);
+    expect(looksLikeOgePart7ExplicitNone('Nothing to report')).toBe(false);
+    expect(looksLikeOgePart7ExplicitNone([
+      '7. Transactions',
+      '8. Liabilities',
+      'None',
+    ].join('\n'))).toBe(false);
+    expect(looksLikeOgePart7ExplicitNone([
+      '2. Filer\'s Employment Assets & Income',
+      'None',
+      '7. Transactions',
+      '1 Amazon.com, Inc. (AMZN) Sale 06/10/2022 No $1,001 - $15,000',
+      '8. Liabilities',
+      'None',
+    ].join('\n'))).toBe(false);
   });
 });
 
