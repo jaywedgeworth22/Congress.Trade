@@ -1706,7 +1706,9 @@ async function maybeSettleExecutiveZeroRead(
     console.warn('executive zero-read: classify failed', docId, (err as Error).message);
     return null;
   }
-  if (classified.disposition === 'rows') return null;
+  // 'unconfirmed': zero rows but no positive evidence Part 7 is empty.
+  // Keep the fail-closed extract_empty_failure path.
+  if (classified.disposition === 'rows' || classified.disposition === 'unconfirmed') return null;
   if (classified.disposition === 'unreadable') {
     const closed = await closeUnreadableExecutive(env, docId, { respectSuppression: true, claimToken });
     return closed ? 'unreadable' : null;
@@ -1830,6 +1832,9 @@ export async function processAgreementCascadeTier2(
     ? await loadDocBytes(env, docId, rawObjectKey, signal)
     : await loadDocBytes(env, docId, rawObjectKey);
   if ('skip' in loaded) return loaded.skip;
+  // Copy before model reads: pdf.js detaches the buffer it is handed, so
+  // loaded.bytes is not safe to reuse after readAndPersist.  The Part 7 None
+  // check and the executive zero-read settle both read from this copy.
   const part7Bytes = docId.startsWith('E-') ? loaded.bytes.slice(0) : null;
 
   // Live-toggleable text-field agreement normalization (default on) — see the
@@ -1893,7 +1898,7 @@ export async function processAgreementCascadeTier2(
       };
     }
     const settled = await maybeSettleExecutiveZeroRead(
-      env, docId, async () => loaded.bytes, claimToken,
+      env, docId, async () => (part7Bytes ? part7Bytes.slice(0) : null), claimToken,
     );
     if (settled) return settledZeroReadResult(docId, 2, settled);
     return markExtractEmptyFailure(env, docId, 2, labels, claimToken);
@@ -2665,13 +2670,16 @@ export async function handleAgreementCheck(
 }
 
 /**
- * Reasons capped-row recovery must leave alone.  Rewriting an empty failure
- * or an unreadable/OCR terminal into agreement_cascade_unresolved made those
- * filings health-terminal and ineligible, so they never closed.
+ * Reasons capped-row recovery must leave alone.  Rewriting an executive
+ * empty failure or an unreadable/OCR terminal into
+ * agreement_cascade_unresolved made those filings health-terminal and
+ * ineligible, so they never closed.  House/Senate empty failures are not
+ * health-terminal (reviewQueueHealth only treats ocr_unusable etc. as
+ * terminal), so they still need the capped-row terminal label.
  */
 export const CAPPED_RECOVERY_REASON_EXCLUDE_SQL = `
   COALESCE(reason, '') <> 'agreement_cascade_unresolved'
-  AND COALESCE(reason, '') NOT LIKE '%empty_failure%'
+  AND NOT (doc_id LIKE 'E-%' AND COALESCE(reason, '') LIKE '%empty_failure%')
   AND COALESCE(reason, '') NOT LIKE '%oge_text_unreadable%'
   AND COALESCE(reason, '') NOT LIKE '%ocr_unusable%'
 `.trim();
