@@ -542,6 +542,9 @@ export async function normalize(
         nowIso,
         respectSuppression: true,
         insertIfAbsent: true,
+        // Close only the review version we read: a human revision that lands
+        // after the snapshot must win over this stale zero-row parse.
+        reviewRevision: reviewSnapshot?.review_revision ?? null,
       });
       if (closed) {
         return {
