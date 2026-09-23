@@ -277,6 +277,20 @@ const PART7_TOC_ENTRY_RE = /(?:part\s*\d{1,2}\b|(?<!\d)\d{1,2}[.])\s*[A-Za-z]/i;
 const PART7_TOC_ENTRY_WINDOW = 120;
 
 /**
+ * True when an explicit Part 7 "None" still references an attachment before
+ * the section ends.  Scoped to the text right after the None marker so form
+ * boilerplate elsewhere cannot veto an honest empty.
+ */
+function part7NoneReferencesAttachment(text: string): boolean {
+  const none = /(?:part\s*7[.:\s]+transactions?|(?<!\d)7[.]\s*transactions?)\s+(?:none|n\/a|no\s+transactions?(?:\s+to\s+report)?)\b/i.exec(text);
+  if (!none) return false;
+  const rest = text.slice(none.index + none[0].length);
+  const end = PART7_END_RE.exec(rest);
+  const tail = end ? rest.slice(0, end.index) : rest.slice(0, 80);
+  return /\battach(?:ed|ments?)\b/i.test(tail);
+}
+
+/**
  * Positive evidence that an OGE 278e Part 7 (Transactions) section has no
  * rows: an explicit None marker, or a Part 7 heading whose body up to the
  * next part holds no table header, row number, type word, date, or dollar
@@ -291,7 +305,11 @@ export function ogePart7SectionLooksEmpty(text: string | null | undefined): bool
     .replace(/\s+/g, ' ')
     .trim();
   if (!normalized) return false;
-  if (looksLikeOgePart7ExplicitNone(normalized)) return true;
+  // An explicit None still fails closed when it points at an attachment:
+  // "None. See attachment." means the rows live on an attached schedule.
+  if (looksLikeOgePart7ExplicitNone(normalized) && !part7NoneReferencesAttachment(normalized)) {
+    return true;
+  }
   // Walk EVERY Part 7 heading, not just the first. A table of contents
   // carries the same words ("7. Transactions 8. Liabilities"), and a
   // first-match search stops there: bounded by the next TOC entry the
@@ -323,6 +341,9 @@ export function ogePart7SectionLooksEmpty(text: string | null | undefined): bool
     // read that lost the row glyphs, not an empty section.  Real empty 278e
     // Part 7s print no table at all, or say None (handled above).
     if (/#|\b(?:description|type|date|amount|notification)\b/i.test(body)) return false;
+    // "See Attachment" means the rows live on an attached schedule; the
+    // section is not empty and the attachment is not in this text layer.
+    if (/\battach(?:ed|ments?)\b/i.test(body)) return false;
     // Any digit (row number, date, amount) means content we could not parse.
     if (/\d/.test(body)) return false;
     if (/\b(?:purchase|sale|exchange)\b/i.test(body)) return false;
