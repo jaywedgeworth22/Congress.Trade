@@ -230,6 +230,42 @@ describe('autonomySweeps', () => {
       expect(row?.resolution_reason).toBe('provider_only_lead_cleared');
     });
 
+    it('moves the stub filing out of needs_review with its review close', async () => {
+      const env = makeEnv();
+      const docId = 'provider-missing-fmp-house-20035493';
+      await insertFiling({ doc_id: docId, ingest_status: 'needs_review', first_seen_at: new Date().toISOString() });
+      await insertReviewStub(docId);
+
+      const result = await sweepProviderOnlyReviewStubs(env);
+      expect(result.cleared).toBe(1);
+      expect(result.filingsUpdated).toBe(1);
+      const filing = await d1.prepare(`SELECT ingest_status FROM filings WHERE doc_id = ?`)
+        .bind(docId).first<{ ingest_status: string }>();
+      expect(filing?.ingest_status).toBe('verified_empty');
+      const review = await d1.prepare(`SELECT review_revision FROM review_queue WHERE doc_id = ?`)
+        .bind(docId).first<{ review_revision: number }>();
+      expect(review?.review_revision).toBe(2);
+
+      const again = await sweepProviderOnlyReviewStubs(env);
+      expect(again).toEqual({ cleared: 0, filingsUpdated: 0 });
+    });
+
+    it('heals a stub filing whose review was already cleared without it', async () => {
+      const env = makeEnv();
+      const docId = 'provider-missing-fmp-house-migrated';
+      await insertFiling({ doc_id: docId, ingest_status: 'needs_review', first_seen_at: new Date().toISOString() });
+      await d1.prepare(
+        `INSERT INTO review_queue (doc_id, reason, payload, created_at, resolved, resolution_kind, resolution_reason, review_revision)
+         VALUES (?, 'provider_discovered_missing_official', '{}', ?, 1, 'verified_empty', 'provider_only_lead_cleared', 1)`,
+      ).bind(docId, new Date().toISOString()).run();
+
+      const result = await sweepProviderOnlyReviewStubs(env);
+      expect(result).toEqual({ cleared: 0, filingsUpdated: 1 });
+      const filing = await d1.prepare(`SELECT ingest_status FROM filings WHERE doc_id = ?`)
+        .bind(docId).first<{ ingest_status: string }>();
+      expect(filing?.ingest_status).toBe('verified_empty');
+    });
+
     it('leaves a provider-reason row with stored raw bytes alone', async () => {
       const env = makeEnv();
       await insertFiling({ doc_id: 'provider-missing-fmp-house-real', ingest_status: 'needs_review', first_seen_at: new Date().toISOString(), raw_object_key: 'raw/real.pdf' });
@@ -239,6 +275,8 @@ describe('autonomySweeps', () => {
       expect(result.cleared).toBe(0);
       const row = await d1.prepare(`SELECT resolved FROM review_queue WHERE doc_id = ?`).bind('provider-missing-fmp-house-real').first<{ resolved: number }>();
       expect(row?.resolved).toBe(0);
+      const filing = await d1.prepare(`SELECT ingest_status FROM filings WHERE doc_id = ?`).bind('provider-missing-fmp-house-real').first<{ ingest_status: string }>();
+      expect(filing?.ingest_status).toBe('needs_review');
     });
 
     it('leaves a provider-reason row with a live transaction alone', async () => {
