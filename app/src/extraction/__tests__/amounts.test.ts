@@ -86,6 +86,20 @@ describe('parseAmountRange -> canonical bracket', () => {
     expect(r).toMatchObject({ min: 15001, max: 50000, exact: true });
   });
 
+  it('does not shorten a comma- or period-grouped trailing 3-digit group', () => {
+    // Only a whitespace-separated trailing group can be a flattened 278-T row
+    // index. Thousands punctuation means the digits belong to the amount, so a
+    // corrupted upper bound must not collapse onto a canonical bracket.
+    for (const raw of ['$1,001 - $15,000,999', '$1,001 - $15.000.999', '$1.001 - $15.000,999']) {
+      const r = parseAmountRange(raw);
+      expect(r).toMatchObject({ min: 1001, max: 15000999, exact: false });
+      expect(isValidBracket(r.min!, r.max)).toBe(false);
+    }
+    // The whitespace-separated row index is still dropped.
+    expect(parseAmountRange('$1,001 - $15,000 999')).toMatchObject({ min: 1001, max: 15000, exact: true });
+    expect(parseAmountRange('$1,001 - $15 000 999')).toMatchObject({ min: 1001, max: 15000, exact: true });
+  });
+
   it('treats a period as thousands only when every group is exactly 3 digits', () => {
     expect(parseAmountRange('$15.001 - $50.000')).toMatchObject({ min: 15001, max: 50000, exact: true });
     expect(parseAmountRange('$1.000.001 - $5.000.000')).toMatchObject({
