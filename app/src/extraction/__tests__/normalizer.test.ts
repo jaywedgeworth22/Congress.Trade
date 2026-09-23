@@ -34,6 +34,7 @@ interface Captured {
   filingUpdates: unknown[][];
   enqueued: Array<{ type: string; txId: string }>;
   batches: string[][];
+  batchParams: unknown[][][];
   auditRows: unknown[][];
   masterReads: number;
   deprecated: unknown[][];
@@ -53,6 +54,7 @@ function makeEnv(
     filingUpdates: [],
     enqueued: [],
     batches: [],
+    batchParams: [],
     auditRows: [],
     masterReads: 0,
     deprecated: [],
@@ -122,8 +124,9 @@ function makeEnv(
   const env = {
     DB: {
       prepare,
-      async batch(statements: Array<{ _sql: string; run(): Promise<unknown> }>) {
+      async batch(statements: Array<{ _sql: string; _params: unknown[]; run(): Promise<unknown> }>) {
         cap.batches.push(statements.map((statement) => statement._sql));
+        cap.batchParams.push(statements.map((statement) => statement._params));
         if (failAudit && statements.some((statement) => /ingestion_decisions/i.test(statement._sql))) {
           throw new Error('audit insert failed');
         }
@@ -748,6 +751,36 @@ describe('normalize', () => {
     expect(sql).toContain('resolution_kind = ?');
     expect(sql).not.toContain("ingest_status = 'verified_empty'");
     expect(cap.auditRows.some((row) => row[2] === 'rejected' && row[5] === 'oge_text_unreadable')).toBe(true);
+  });
+
+  it('closes a refused executive extract only against the captured review revision', async () => {
+    const { env, cap } = makeEnv([], {
+      resolvedReview: { resolved: 0, review_revision: 7, agreement_suppressed_at: null },
+    });
+    const result = await normalize(
+      env,
+      filing({
+        docId: 'E-2026-donald-j-trump-09-8-2026-278t',
+        chamber: 'executive',
+        docKind: 'text_pdf',
+        extractor: 'ogeText',
+      }),
+      [],
+      { extractor: 'ogeText', parseDisposition: 'unreadable' },
+    );
+    expect(result.needsReview).toBe(false);
+    // The close UPDATE must carry the snapshot's review_revision in its guard
+    // (writeClose appends the reviewWhere params after docId), so a row revised
+    // after the snapshot is left for the human instead of resolved by a stale
+    // zero-row parse.
+    const closeIdx = cap.batches.findIndex((batch) =>
+      batch.some((sql) => /UPDATE review_queue\s+SET resolved = 1/i.test(sql)),
+    );
+    expect(closeIdx).toBeGreaterThanOrEqual(0);
+    const closeParams = cap.batchParams[closeIdx][
+      cap.batches[closeIdx].findIndex((sql) => /UPDATE review_queue\s+SET resolved = 1/i.test(sql))
+    ];
+    expect(closeParams).toContain(7);
   });
 
   it('closes a handwritten PTR sample / nothing-to-report extract as verified empty', async () => {
