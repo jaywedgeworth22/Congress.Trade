@@ -10,6 +10,7 @@ import {
   findPersistedOfficialCounterpartForObservation,
   senateOfficialDocIdFromProvider,
 } from '../providerMissingStubClose.ts';
+import { sweepProviderOnlyReviewStubs } from '../autonomySweeps.ts';
 
 const SENATE_UUID = '51455bcd-4966-4e77-b481-09897ada81ae';
 const OFFICIAL_SENATE_ID = `S-${SENATE_UUID}`;
@@ -132,6 +133,75 @@ describe('providerMissingStubClose', () => {
       'SELECT COUNT(*) AS n FROM transactions WHERE doc_id = ?',
     ).bind(STUB_SENATE_ID).first<{ n: number }>();
     expect(stubTxCount?.n).toBe(0);
+  });
+
+  it('reclassifies a stub the hourly sweep closed once the official filing persists', async () => {
+    await seedStubReview(STUB_SENATE_ID);
+    const swept = await sweepProviderOnlyReviewStubs(makeEnv());
+    expect(swept.cleared).toBe(1);
+    const sweptFiling = await d1.prepare(
+      'SELECT ingest_status FROM filings WHERE doc_id = ?',
+    ).bind(STUB_SENATE_ID).first<{ ingest_status: string }>();
+    expect(sweptFiling?.ingest_status).toBe('verified_empty');
+
+    await seedOfficialTx(OFFICIAL_SENATE_ID);
+    await seedFiling(OFFICIAL_SENATE_ID, 'persisted', SOURCE_URL);
+
+    const result = await closeProviderMissingStubIfOfficialPersisted(
+      makeEnv(),
+      senateObservation(),
+      STUB_SENATE_ID,
+      '2026-08-26T12:00:00.000Z',
+    );
+    expect(result.closed).toBe(true);
+    expect(result.officialDocId).toBe(OFFICIAL_SENATE_ID);
+
+    const review = await d1.prepare(
+      'SELECT resolved, resolution_kind, resolution_reason FROM review_queue WHERE doc_id = ?',
+    ).bind(STUB_SENATE_ID).first<{
+      resolved: number;
+      resolution_kind: string;
+      resolution_reason: string;
+    }>();
+    expect(review?.resolved).toBe(1);
+    expect(review?.resolution_kind).toBe('rejected');
+    expect(review?.resolution_reason).toContain(OFFICIAL_SENATE_ID);
+
+    const stubFiling = await d1.prepare(
+      'SELECT ingest_status FROM filings WHERE doc_id = ?',
+    ).bind(STUB_SENATE_ID).first<{ ingest_status: string }>();
+    expect(stubFiling?.ingest_status).toBe('error');
+
+    const again = await closeProviderMissingStubIfOfficialPersisted(
+      makeEnv(),
+      senateObservation(),
+      STUB_SENATE_ID,
+      '2026-08-26T13:00:00.000Z',
+    );
+    expect(again.closed).toBe(false);
+  });
+
+  it('does not override a stub resolution that did not come from the sweep', async () => {
+    await seedFiling(STUB_SENATE_ID, 'verified_empty');
+    await d1.prepare(
+      `INSERT INTO review_queue (doc_id, reason, payload, created_at, resolved, resolution_kind, resolution_reason, review_revision)
+       VALUES (?, 'provider_discovered_missing_official', '{}', '2026-08-25T00:00:00.000Z', 1, 'verified_empty', 'reviewer: checked by hand', 2)`,
+    ).bind(STUB_SENATE_ID).run();
+    await seedOfficialTx(OFFICIAL_SENATE_ID);
+    await seedFiling(OFFICIAL_SENATE_ID, 'persisted', SOURCE_URL);
+
+    const result = await closeProviderMissingStubIfOfficialPersisted(
+      makeEnv(),
+      senateObservation(),
+      STUB_SENATE_ID,
+      '2026-08-26T12:00:00.000Z',
+    );
+    expect(result.closed).toBe(false);
+    const review = await d1.prepare(
+      'SELECT resolution_kind, resolution_reason FROM review_queue WHERE doc_id = ?',
+    ).bind(STUB_SENATE_ID).first<{ resolution_kind: string; resolution_reason: string }>();
+    expect(review?.resolution_kind).toBe('verified_empty');
+    expect(review?.resolution_reason).toBe('reviewer: checked by hand');
   });
 
   it('leaves stub pending when official is not persisted yet', async () => {
