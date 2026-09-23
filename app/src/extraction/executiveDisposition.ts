@@ -34,9 +34,15 @@ export interface ExecutiveCloseOptions {
   nowIso?: string;
   /** When set, only the holder of this lease (or an unclaimed row) may close. */
   claimToken?: string | null;
-  /** Skip rows a human already suppressed.  The corrective sweep does not. */
+  /** Skip rows a human already suppressed (admin reopen sets agreement_suppressed_at). */
   respectSuppression?: boolean;
   reviewRevision?: number | null;
+  /**
+   * First-pass normalize() may run before any review_queue row exists.  When
+   * set, a missing row is inserted already resolved instead of the UPDATE
+   * matching nothing (which would let routeToReview park an unresolved row).
+   */
+  insertIfAbsent?: boolean;
 }
 
 async function hasLiveTransactions(env: Env, docId: string): Promise<boolean> {
@@ -103,7 +109,34 @@ async function writeClose(
 ): Promise<boolean> {
   const nowIso = opts.nowIso ?? new Date().toISOString();
   const where = reviewWhere(opts);
+  const insertStatements: Array<[string, SqlParam[]]> = opts.insertIfAbsent
+    ? [[
+        `INSERT OR IGNORE INTO review_queue (
+            doc_id, reason, payload, created_at, resolved,
+            resolution_kind, resolution_reason, resolved_at
+          ) SELECT ?, ?, '{}', ?, 1, ?, ?, ?
+             WHERE NOT EXISTS (SELECT 1 FROM review_queue WHERE doc_id = ?)
+               AND EXISTS (
+                 SELECT 1 FROM filings WHERE doc_id = ? AND ingest_status <> 'persisted'
+               )
+               AND NOT EXISTS (
+                 SELECT 1 FROM transactions WHERE doc_id = ? AND deprecated_at IS NULL
+               )`,
+        [
+          docId,
+          review.reason,
+          nowIso,
+          review.resolutionKind,
+          review.resolutionReason,
+          nowIso,
+          docId,
+          docId,
+          docId,
+        ],
+      ]]
+    : [];
   const results = await batch(env.DB, [
+    ...insertStatements,
     [
       `UPDATE review_queue
           SET resolved = 1,
@@ -144,7 +177,10 @@ async function writeClose(
       ],
     ],
   ]);
-  const closed = (results[0]?.meta?.changes ?? 0) > 0;
+  // Inserted-resolved or updated-to-resolved; the filings UPDATE is last.
+  const closed = results
+    .slice(0, insertStatements.length + 1)
+    .some((result) => (result?.meta?.changes ?? 0) > 0);
   if (!closed) return false;
   await recordIngestionDecision(env.DB, {
     docId,
@@ -209,7 +245,9 @@ export interface ExecutiveTerminalSweepResult {
 
 /**
  * Correct the two parked rows.  Bondi is an empty 278e.  Trump is an
- * unreadable 278-T.  A second run matches nothing.
+ * unreadable 278-T.  A second run matches nothing.  A row an administrator
+ * reopened (agreement_suppressed_at set) is left for human review; the sweep
+ * must not undo a reopen on its next hourly run.
  */
 export async function sweepKnownParkedExecutiveTerminals(
   env: Env,
@@ -226,14 +264,14 @@ export async function sweepKnownParkedExecutiveTerminals(
     const open = await get<{ doc_id: string }>(
       env.DB,
       `SELECT doc_id FROM review_queue
-        WHERE doc_id = ? AND resolved = 0
+        WHERE doc_id = ? AND resolved = 0 AND agreement_suppressed_at IS NULL
         LIMIT 1`,
       [target.docId],
     ).catch(() => null);
     if (!open) continue;
     const closed = target.kind === 'empty'
-      ? await closeVerifiedEmptyExecutive(env, target.docId, { nowIso, respectSuppression: false })
-      : await closeUnreadableExecutive(env, target.docId, { nowIso, respectSuppression: false });
+      ? await closeVerifiedEmptyExecutive(env, target.docId, { nowIso, respectSuppression: true })
+      : await closeUnreadableExecutive(env, target.docId, { nowIso, respectSuppression: true });
     if (!closed) continue;
     if (target.kind === 'empty') verifiedEmpty += 1;
     else unreadable += 1;
