@@ -341,6 +341,17 @@ describe('classifyOgeTransactionText', () => {
       .toEqual({ disposition: 'unconfirmed', rows: [] });
   });
 
+  it('does not call a Part 7 that points at an attachment empty', () => {
+    const bondi = 'E-undated-pam-bondi-2026-278term';
+    // Rows live on the attached schedule; verified_empty would bury them.
+    for (const body of ['See Attachment', 'See attachment', 'See Attached Schedule', 'None. See attachment.']) {
+      const text = `OGE Form 278e 7. Transactions ${body} 8. Liabilities`;
+      expect(ogePart7SectionLooksEmpty(text)).toBe(false);
+      expect(classifyOgeTransactionText(text, bondi))
+        .toEqual({ disposition: 'unconfirmed', rows: [] });
+    }
+  });
+
   it('treats an explicit Part 7 None as empty', () => {
     expect(classifyOgeTransactionText(
       'OGE Form 278e Part 7. Transactions None 8. Liabilities',
