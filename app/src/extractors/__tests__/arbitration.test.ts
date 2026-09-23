@@ -429,6 +429,27 @@ describe('OgePdfExtractor', () => {
     await expect(ogePdf.extract({ filing: execText() })).rejects.toThrow('ogeText: no bytes provided');
   });
 
+  it('does not charge vision when a scanned 278e text layer says Part 7 is None', async () => {
+    const bondi = [
+      'OGE Form 278e',
+      '7. Transactions',
+      'None',
+      '8. Liabilities',
+      'None',
+    ].join('\n');
+    const ogeText = extractor('ogeText', result([], { extractor: 'ogeText', raw: bondi }));
+    const visionExtract = vi.fn(async () => result([tx({ ticker: 'XOM' })], { extractor: 'vision' }));
+    const vision = { name: 'vision', canHandle: () => true, extract: visionExtract };
+    const ogePdf = new OgePdfExtractor(ogeText, vision);
+
+    const out = await ogePdf.extract({ filing: execScan() });
+
+    expect(out.extractor).toBe('ogeText');
+    expect(out.transactions).toHaveLength(0);
+    expect(out.raw).toContain('7. Transactions');
+    expect(visionExtract).not.toHaveBeenCalled();
+  });
+
   it('does not charge vision for typed executive PDFs that parse to zero rows', async () => {
     const ogeText = extractor('ogeText', result([], { extractor: 'ogeText', raw: 'none' }));
     const vision = {

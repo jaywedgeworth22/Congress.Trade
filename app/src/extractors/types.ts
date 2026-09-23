@@ -11,6 +11,7 @@ import { IngestRetryError } from '../ingestion/fetcher.ts';
 import { resolveSecret } from '../secrets/infisical.ts';
 import {
   classifyHouseExtractRoute,
+  looksLikeOgePart7ExplicitNone,
   looksLikePlausibleTradeTable,
 } from '../extraction/extractRouting.ts';
 import { isProvenOpenRouterCredentialRejection } from '../extraction/openRouterReply.ts';
@@ -466,6 +467,9 @@ export class OgePdfExtractor implements Extractor {
     try {
       textResult = await this.ogeText.extract(input);
       if (textResult.transactions.length > 0) return textResult;
+      // 278e termination/annual reports often have a real text layer and a
+      // Part 7 body of "None". That is an honest empty, not a scan to vision.
+      if (looksLikeOgePart7ExplicitNone(textResult.raw)) return textResult;
     } catch (error) {
       // Image-only or malformed PDFs can throw in unpdf; vision is the fallback
       // for scans. Typed 278-T files keep their previous throw behavior.

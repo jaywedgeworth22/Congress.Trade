@@ -212,6 +212,19 @@ export function looksLikeNothingToReport(text: string | null | undefined): boole
     || /\bnothing\s+to\s+disclose\b/i.test(text);
 }
 
+/**
+ * OGE 278e Part 7 whose immediate body is only None / N/A / No transactions.
+ * Kept off looksLikeNothingToReport so a bare zero-row OCR read (no this
+ * section) still parks for review instead of closing verified_empty.
+ */
+export function looksLikeOgePart7ExplicitNone(text: string | null | undefined): boolean {
+  if (!text) return false;
+  // Part 7 / "7. Transactions" whose immediate body is only None / N/A / No transactions.
+  // Allow same-line OCR collapses ("… None 7. Transactions None 8. …") and
+  // require a word boundary so "None of the above" does not count.
+  return /(?:^|[\n\s])(?:part\s*7[.:\s]+transactions?|(?<!\d)7[.]\s*transactions?)\s+(?:none|n\/a|no\s+transactions?(?:\s+to\s+report)?)\b(?!\s+of\b)/i.test(text);
+}
+
 export function isDeletedFilingStatus(status: string | null | undefined): boolean {
   return typeof status === 'string' && /\bdeleted\b/i.test(status.trim());
 }

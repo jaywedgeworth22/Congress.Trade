@@ -23,6 +23,7 @@ import {
   isDeletedFilingStatus,
   looksLikeHeaderContaminatedAsset,
   looksLikeNothingToReport,
+  looksLikeOgePart7ExplicitNone,
   looksLikePtrFormSampleAsset,
   looksLikePtrFormSampleRow,
   looksLikeSeeAttachmentPointer,
@@ -342,12 +343,19 @@ export async function normalize(
   env: Env,
   filing: Filing,
   parsed: ParsedTx[],
-  meta?: { extractor?: string; modelVersion?: string | null; source?: TxSource },
+  meta?: {
+    extractor?: string;
+    modelVersion?: string | null;
+    source?: TxSource;
+    /** Full document text. Zero parsed rows still need this to see Part 7 "None". */
+    sourceText?: string | null;
+  },
 ): Promise<NormalizeResult> {
   const nowIso = new Date().toISOString();
   const extractorName = meta?.extractor ?? filing.extractor ?? null;
   const modelVersion = meta?.modelVersion ?? filing.modelVersion ?? null;
   const source = meta?.source ?? 'primary';
+  const sourceText = meta?.sourceText ?? null;
 
   // Drop form-chrome rows up front. Pure letterhead OCR floods were parking
   // hundreds of "Clerk of the House…" fakes in review_queue and burning the
@@ -361,7 +369,11 @@ export async function normalize(
     && !looksLikeNothingToReport(p.assetName)
   );
   const droppedFormChrome = parsed.length - usableParsed.length;
-  const sawNothingToReport = parsed.some((p) =>
+  const sawOgePart7ExplicitNone = looksLikeOgePart7ExplicitNone(sourceText)
+    || parsed.some((p) =>
+      looksLikeOgePart7ExplicitNone(p.assetName) || looksLikeOgePart7ExplicitNone(p.rawText)
+    );
+  const sawNothingToReport = sawOgePart7ExplicitNone || parsed.some((p) =>
     looksLikeNothingToReport(p.assetName) || looksLikeNothingToReport(p.rawText)
   );
 
@@ -512,12 +524,15 @@ export async function normalize(
     // Form-sample chrome alone is not NTR.  Example Mega Corp is printed on
     // every House PTR; OCR often reads it and misses the real trades.
     if (flagged.length === 0 && sawNothingToReport) {
+      const resolutionReason = sawOgePart7ExplicitNone
+        ? 'oge_part7_explicit_none'
+        : 'nothing_to_report';
       const closed = await resolveVerifiedEmpty(
         env,
         filing,
         nowIso,
         reviewSnapshot,
-        'nothing_to_report',
+        resolutionReason,
       );
       if (closed) {
         return {
@@ -525,7 +540,7 @@ export async function normalize(
           minConfidence: 0,
           needsReview: false,
           published: false,
-          reviewReason: 'nothing_to_report',
+          reviewReason: resolutionReason,
         };
       }
     }
@@ -1753,7 +1768,7 @@ async function deprecateDeletedMatches(
   return changes;
 }
 
-async function resolveVerifiedEmpty(
+export async function resolveVerifiedEmpty(
   env: Env,
   filing: Filing,
   nowIso: string,

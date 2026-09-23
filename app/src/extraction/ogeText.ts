@@ -40,12 +40,14 @@
  * broader OGE 278e annual/termination disclosure (a much larger multi-section
  * form whose own Part 7 "Transactions" table uses a harder-to-bound layout
  * interleaved with unrelated numbered lists — positions held, agreements,
- * assets) is intentionally NOT targeted: ROW_RE requires the full
+ * assets) is intentionally NOT row-parsed: ROW_RE requires the full
  * type+date+notification+amount suffix to immediately follow the description,
- * so 278e prose simply fails to match and yields zero rows (safe no-op),
- * never a wrong parse. A scanned/OCR'd 278-T whose text layer is garbled
- * (e.g. "Fobn.iary" for "February") also correctly yields zero rows rather
- * than guessed data.
+ * so 278e prose fails to match and yields zero rows, never a wrong parse.
+ * A Part 7 body that is only None / N/A / No transactions is an honest empty
+ * (looksLikeOgePart7ExplicitNone → verified_empty). A zero-row 278-T whose
+ * amounts are garbled is NOT that marker and stays in review. A scanned 278-T
+ * whose text layer is garbled (e.g. "Fobn.iary" for "February") also yields
+ * zero rows rather than guessed data.
  */
 
 import { extractText, getDocumentProxy } from 'unpdf';
@@ -53,6 +55,7 @@ import { extractText, getDocumentProxy } from 'unpdf';
 import type { Extractor, ExtractorInput, ExtractorResult } from '../extractors/types.ts';
 import type { Filing, ParsedTx, TxType } from '../shared/types.ts';
 import { OCR_AMOUNT_TOKEN_SRC, parseAmountRange } from './amounts.ts';
+import { looksLikeOgePart7ExplicitNone } from './extractRouting.ts';
 import { detectOption } from './senateHtml.ts';
 
 /** Penalty applied when a matched row is missing a core field. */
@@ -180,6 +183,16 @@ export class OgeTextExtractor implements Extractor {
       pageCount,
     };
     return result;
+  }
+}
+
+/** Text layer only. Failures return false so a bare zero-row extract is not closed. */
+export async function pdfBytesLookLikeOgePart7ExplicitNone(bytes: ArrayBuffer): Promise<boolean> {
+  try {
+    const { text } = await extractPdfText(bytes.slice(0));
+    return looksLikeOgePart7ExplicitNone(text);
+  } catch {
+    return false;
   }
 }
 
