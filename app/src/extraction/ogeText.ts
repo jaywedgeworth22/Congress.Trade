@@ -52,7 +52,7 @@ import { extractText, getDocumentProxy } from 'unpdf';
 
 import type { Extractor, ExtractorInput, ExtractorResult } from '../extractors/types.ts';
 import type { Filing, ParsedTx, TxType } from '../shared/types.ts';
-import { parseAmountRange } from './amounts.ts';
+import { OCR_AMOUNT_TOKEN_SRC, parseAmountRange } from './amounts.ts';
 import { detectOption } from './senateHtml.ts';
 
 /** Penalty applied when a matched row is missing a core field. */
@@ -86,14 +86,75 @@ const TABLE_HEADER_RE = /#\s*[\.,:;]?\s*DESCRIPTION\s+TYPE\s+DATE\s+NOTIFICATION
 // Name (TICK)" string, so an accidental match that ran past the header
 // anchor (e.g. scanning without TABLE_HEADER_RE found) fails fast instead of
 // swallowing hundreds of characters of prose to reach a later real row.
-const ROW_RE =
-  /(?<![\d,.])\d{1,5}[\.,:;]?\s+(.{1,200}?)\s+(Purchase|Sale|Exchange)\s+(\d{1,2}\/\d{1,2}\/\d{2,4})\s+(?:Yes|No)\s+(\$[\d,]+(?:\.\d+)?(?:\s*(?:-|–|—|to)\s*\$?[\d,]+(?:\.\d+)?|\s*\+)?)/gi;
+const OCR_AMOUNT = `(?:${OCR_AMOUNT_TOKEN_SRC})`;
+const ROW_RE = new RegExp(
+  String.raw`(?<![\d,.])\d{1,5}[\.,:;]?\s+(.{1,200}?)\s+(Purchase|Sale|Exchange)\s+(\d{1,2}/\d{1,2}/\d{2,4})\s+(?:Yes|No)\s+(\$` +
+    OCR_AMOUNT +
+    String.raw`(?:\s*(?:-|–|—|−|•|·|to|\.(?=\s*\$))\s*\$?` +
+    OCR_AMOUNT +
+    String.raw`|\s*\+)?)`,
+  'gi',
+);
 
 const TX_TYPE_MAP: Record<string, TxType> = {
   purchase: 'B',
   sale: 'S',
   exchange: 'E',
 };
+
+/**
+ * Coherence floor for the matched rows' leading "#" tokens.
+ *
+ * On a clean text layer, ROW_RE's row anchor is the table's own sequential,
+ * unique "#" column (1, 2, 3, …). On a scanned-then-OCR'd 278-T the type word
+ * is garbled on most rows ("salo", "lourchaso", "ourchase"), so ROW_RE only
+ * matches the minority of rows whose type survived — and its leading `\d{1,5}`
+ * then latches onto whatever bare number precedes that surviving word: bond
+ * maturity years ("2028"), dollar fragments ("15000"), page numbers. The
+ * resulting sequence jumps around and repeats heavily. Those rows are
+ * mis-merged guesses (a description swallowed from the previous physical row),
+ * not transactions. Producing zero rows instead parks the filing for an honest
+ * human/vision read rather than publishing wrong data — the same "blocked, not
+ * a wrong parse" contract this module already documents for garbled OCR.
+ */
+const MIN_ROWS_FOR_SEQUENCE_CHECK = 8;
+const MIN_DISTINCT_INDEX_RATIO = 0.7;
+const MAX_NON_INCREASING_STEP_RATIO = 0.3;
+/**
+ * The matched indices must also COVER their own span. A clean 278-T parse
+ * matches every physical row, so the distinct indices are the contiguous
+ * range 1..N (coverage ≈ 1). A garbled parse that only matched a minority of
+ * rows while latching onto stray numbers yields a huge max/little overlap
+ * (the Trump filing: 333 matches, span 0..15000, coverage 0.02). Refusing an
+ * incomplete parse is the same "blocked, not a wrong parse" contract: a
+ * partial transcript would silently drop real transactions.
+ */
+const MIN_INDEX_SPAN_COVERAGE = 0.8;
+
+/**
+ * True when the matched rows' leading "#" tokens look like a real table index:
+ * essentially unique, strictly increasing (allowing a few OCR skips/dupes),
+ * and covering their span. Filings with fewer than eight rows are always
+ * treated as coherent.
+ */
+export function isOgeRowSequenceCoherent(indexes: readonly number[]): boolean {
+  const n = indexes.length;
+  if (n < MIN_ROWS_FOR_SEQUENCE_CHECK) return true;
+  const distinct = new Set(indexes).size;
+  if (distinct / n < MIN_DISTINCT_INDEX_RATIO) return false;
+  let min = indexes[0];
+  let max = indexes[0];
+  let nonIncreasing = 0;
+  for (let i = 0; i < n; i += 1) {
+    const v = indexes[i];
+    if (v < min) min = v;
+    if (v > max) max = v;
+    if (i > 0 && v <= indexes[i - 1]) nonIncreasing += 1;
+  }
+  const span = max - min + 1;
+  if (span > 0 && distinct / span < MIN_INDEX_SPAN_COVERAGE) return false;
+  return nonIncreasing / (n - 1) <= MAX_NON_INCREASING_STEP_RATIO;
+}
 
 export class OgeTextExtractor implements Extractor {
   readonly name = 'ogeText';
@@ -163,10 +224,20 @@ export function parseOgeTransactionRows(text: string): ParsedTx[] {
     : normalized;
 
   const rows: ParsedTx[] = [];
+  const rowIndexes: number[] = [];
   ROW_RE.lastIndex = 0;
   let m: RegExpExecArray | null;
   while ((m = ROW_RE.exec(searchText)) !== null) {
+    const amountSpan = amountPrefixLength(m[4]);
+    if (amountSpan < m[4].length) {
+      const extra = m[4].length - amountSpan;
+      m[0] = m[0].slice(0, m[0].length - extra);
+      m[4] = m[4].slice(0, amountSpan);
+      ROW_RE.lastIndex -= extra;
+    }
     const [matchText, descriptionRaw, typeWord, dateRaw, amountRaw] = m;
+    const indexMatch = /^(\d{1,5})/.exec(matchText);
+    if (indexMatch) rowIndexes.push(Number(indexMatch[1]));
     const description = descriptionRaw.trim();
     const tickerMatch = TICKER_SUFFIX_RE.exec(description);
     const ticker = tickerMatch ? normalizeTicker(tickerMatch[1]) : null;
@@ -202,7 +273,29 @@ export function parseOgeTransactionRows(text: string): ParsedTx[] {
     // regex with a zero-width overall match would otherwise stall exec()).
     if (m.index === ROW_RE.lastIndex) ROW_RE.lastIndex += 1;
   }
+  // Refuse a garbled-OCR parse: if the matched "#" tokens are not a plausible
+  // unique/increasing table index, ROW_RE was latching onto years/amounts and
+  // the rows are mis-merged guesses. Zero rows is the safe outcome.
+  if (!isOgeRowSequenceCoherent(rowIndexes)) return [];
   return rows;
+}
+
+/**
+ * A flattened 278-T line runs the next row number into the amount
+ * (`$50 000 126 QUALCOMM`). Drop that trailing row index when the bracket
+ * stays the same without it. Do not peel a real thousand group (`$1 000 001`).
+ */
+function amountPrefixLength(captured: string): number {
+  const full = parseAmountRange(captured);
+  if (full.min === null) return captured.length;
+  let end = captured.length;
+  while (/\s\d{1,5}$/.test(captured.slice(0, end))) {
+    const trimmed = captured.slice(0, end).replace(/\s\d{1,5}$/, '');
+    const again = parseAmountRange(trimmed);
+    if (again.min !== full.min || (again.max ?? null) !== (full.max ?? null)) break;
+    end = trimmed.length;
+  }
+  return end;
 }
 
 function normalizeTicker(value: string | null): string | null {
