@@ -171,6 +171,7 @@ function isObjectStoreAuthError(message: string): boolean {
   return /\bunauthorized\b|\baccessdenied\b|\binvalidaccesskeyid\b|\bsignaturedoesnotmatch\b/i.test(message);
 }
 import { flushIngestionOutbox, requeueFailedIngestionOutbox } from '../ingestion/outbox.ts';
+import { PROVIDER_STUB_DUPLICATE_REJECT_PREFIX } from '../ingestion/providerMissingStubClose.ts';
 import {
   requeueTransientFailedDurableJobs,
   requeueTransientFailedIngestionOutbox,
@@ -4697,12 +4698,33 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       // so the official-side reconcile can still match the raw key).  That is
       // a closed lead, not a failure: leave it out so it neither shows as a
       // prod error nor pushes real filing errors out of the newest 40.
+      // When the official filing lands later, rejectProviderMissingStubAsDuplicate
+      // flips the stub to ingest_status = 'error' but leaves the marker in
+      // place; that closed duplicate is not a failure either.  Only a stub whose
+      // review row carries that duplicate rejection is excluded, so any other
+      // error-status row (including a stub that still has only its marker) shows.
       `SELECT first_seen_at, doc_id, error
          FROM filings
         WHERE error IS NOT NULL AND error != ''
-          AND NOT (ingest_status = 'verified_empty' AND error LIKE 'provider-only:%')
+          AND NOT (
+            error LIKE 'provider-only:%'
+            AND (
+              ingest_status = 'verified_empty'
+              OR (
+                ingest_status = 'error'
+                AND EXISTS (
+                  SELECT 1 FROM review_queue rq
+                   WHERE rq.doc_id = filings.doc_id
+                     AND rq.resolved = 1
+                     AND rq.resolution_kind = 'rejected'
+                     AND substr(rq.resolution_reason, 1, length(?)) = ?
+                )
+              )
+            )
+          )
         ORDER BY first_seen_at DESC
         LIMIT 40`,
+      [PROVIDER_STUB_DUPLICATE_REJECT_PREFIX, PROVIDER_STUB_DUPLICATE_REJECT_PREFIX],
     );
     for (const e of filingErrors) {
       errors.push({ at: e.first_seen_at, area: 'Filing', severity: 'error', subject: e.doc_id, message: e.error });
