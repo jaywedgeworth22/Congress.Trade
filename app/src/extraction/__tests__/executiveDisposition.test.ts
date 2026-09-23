@@ -323,6 +323,45 @@ describe('admin reopen and first-pass closes', () => {
   });
 });
 
+describe('closeUnreadableExecutive guards', () => {
+  it('does not reject a filing an earlier successful read found rows for', async () => {
+    const db = await sqliteDatabase();
+    seedReview(db, TRUMP_UNREADABLE_DOC_ID, 'agreement_cascade_unresolved');
+    db.prepare(
+      `INSERT INTO extraction_runs (doc_id, ok, row_count, result_json) VALUES (?, 1, 12, '[{}]')`,
+    ).run(TRUMP_UNREADABLE_DOC_ID);
+
+    const closed = await closeUnreadableExecutive(envFor(db), TRUMP_UNREADABLE_DOC_ID);
+    expect(closed).toBe(false);
+    const row = db.prepare(
+      `SELECT resolved, reason FROM review_queue WHERE doc_id = ?`,
+    ).get(TRUMP_UNREADABLE_DOC_ID) as { resolved: number; reason: string };
+    expect(row).toEqual({ resolved: 0, reason: 'agreement_cascade_unresolved' });
+  });
+
+  it('does not close over a review row revised after the captured revision', async () => {
+    const db = await sqliteDatabase();
+    seedReview(db, TRUMP_UNREADABLE_DOC_ID, 'agreement_cascade_unresolved');
+    db.prepare(`UPDATE review_queue SET review_revision = 2 WHERE doc_id = ?`).run(TRUMP_UNREADABLE_DOC_ID);
+
+    // The caller parsed against revision 1; the row is now at revision 2.
+    const closed = await closeUnreadableExecutive(envFor(db), TRUMP_UNREADABLE_DOC_ID, {
+      reviewRevision: 1,
+    });
+    expect(closed).toBe(false);
+    const row = db.prepare(
+      `SELECT resolved, review_revision FROM review_queue WHERE doc_id = ?`,
+    ).get(TRUMP_UNREADABLE_DOC_ID) as { resolved: number; review_revision: number };
+    expect(row).toEqual({ resolved: 0, review_revision: 2 });
+
+    // The matching revision still closes.
+    const closedCurrent = await closeUnreadableExecutive(envFor(db), TRUMP_UNREADABLE_DOC_ID, {
+      reviewRevision: 2,
+    });
+    expect(closedCurrent).toBe(true);
+  });
+});
+
 describe('recoverExpiredCappedReviews', () => {
   it('does not rewrite unreadable rows; labels capped empty failures it cannot settle', async () => {
     const db = await sqliteDatabase();
