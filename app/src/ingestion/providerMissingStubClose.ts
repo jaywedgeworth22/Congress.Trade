@@ -6,7 +6,10 @@
  * and not be confirmed as its own filing.
  *
  * Triggered only from routeProviderOnlyObservationsToReview when a live
- * provider observation is processed (no historic backlog sweep).
+ * provider observation is processed (no historic backlog sweep).  This also
+ * overrides a stub the hourly provider-only sweep closed as verified_empty
+ * before the official filing landed, so the later official counterpart still
+ * wins the classification.
  */
 
 import type { Env } from '../shared/types.ts';
@@ -17,6 +20,22 @@ import type { DisclosureProviderRow } from './tradeLatency.ts';
 import { enqueueIngestionOutboxNow, ingestionOutboxInsertForDoc } from './outbox.ts';
 
 const REJECT_PREFIX = 'rejected: duplicate — official filing';
+
+/**
+ * resolution_reason the hourly provider-only sweep (autonomySweeps.ts
+ * sweepProviderOnlyReviewStubs) and the deploy-time migration stamp on a stub
+ * they close as verified_empty.  That close is a placeholder verdict made only
+ * because no official filing existed yet, so a later official counterpart may
+ * still override it with the duplicate rejection below.
+ */
+export const PROVIDER_ONLY_LEAD_CLEARED_REASON = 'provider_only_lead_cleared';
+
+/** review_queue predicate: open, or closed only by the provider-only sweep. */
+const REVIEW_REJECTABLE_SQL = `(resolved = 0 OR (
+               resolved = 1
+               AND resolution_kind = 'verified_empty'
+               AND resolution_reason = '${PROVIDER_ONLY_LEAD_CLEARED_REASON}'
+             ))`;
 const SENATE_PTR_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface ProviderMissingStubCloseResult {
@@ -106,16 +125,27 @@ async function rejectProviderMissingStubAsDuplicate(
     payload: string | null;
     created_at: string;
     resolved: number;
+    resolution_kind: string | null;
+    resolution_reason: string | null;
     review_revision: number | null;
   }>(
     env.DB,
-    `SELECT doc_id, reason, payload, created_at, resolved, review_revision
+    `SELECT doc_id, reason, payload, created_at, resolved, resolution_kind,
+            resolution_reason, review_revision
        FROM review_queue
       WHERE doc_id = ?
       LIMIT 1`,
     [stubDocId],
   );
-  if (!review || review.resolved === 1) return false;
+  if (!review) return false;
+  // A stub the hourly provider-only sweep already closed as verified_empty is
+  // still reclassified here: that verdict only meant "no official filing yet",
+  // and the official counterpart now exists.  Any other resolution (a human
+  // decision, or an earlier duplicate rejection) is final.
+  const sweptAsProviderOnly = review.resolved === 1
+    && review.resolution_kind === 'verified_empty'
+    && review.resolution_reason === PROVIDER_ONLY_LEAD_CLEARED_REASON;
+  if (review.resolved === 1 && !sweptAsProviderOnly) return false;
 
   const rejectionReason = `${REJECT_PREFIX} ${officialDocId} already persisted`;
   const reviewRevision = review.review_revision ?? 1;
@@ -127,7 +157,7 @@ async function rejectProviderMissingStubAsDuplicate(
           AND deprecated_at IS NULL
           AND EXISTS (
             SELECT 1 FROM review_queue
-             WHERE doc_id = ? AND resolved = 0 AND review_revision = ?
+             WHERE doc_id = ? AND ${REVIEW_REJECTABLE_SQL} AND review_revision = ?
           )`,
       [nowIso, rejectionReason, stubDocId, stubDocId, reviewRevision],
     ],
@@ -135,7 +165,7 @@ async function rejectProviderMissingStubAsDuplicate(
       `UPDATE filings SET ingest_status = ?
         WHERE doc_id = ? AND EXISTS (
           SELECT 1 FROM review_queue
-           WHERE doc_id = ? AND resolved = 0 AND review_revision = ?
+           WHERE doc_id = ? AND ${REVIEW_REJECTABLE_SQL} AND review_revision = ?
         )`,
       ['error', stubDocId, stubDocId, reviewRevision],
     ],
@@ -149,7 +179,7 @@ async function rejectProviderMissingStubAsDuplicate(
               resolution_reason = ?,
               resolved_at = ?,
               review_revision = review_revision + 1
-        WHERE doc_id = ? AND resolved = 0 AND review_revision = ?`,
+        WHERE doc_id = ? AND ${REVIEW_REJECTABLE_SQL} AND review_revision = ?`,
       [
         rejectionReason,
         nowIso,
