@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../../shared/types.ts';
 import { maybeRunAgreementAutopublish } from '../agreement.ts';
 import {
@@ -29,6 +29,20 @@ interface SqliteModule {
   DatabaseSync: new (path: string) => SqliteDatabase;
 }
 
+// Capped-recovery tests drive the executive classifier directly; every other
+// test runs the real implementation.
+const classifyOverride = vi.hoisted(() => ({
+  fn: null as null | ((bytes: ArrayBuffer, docId: string) => Promise<unknown>),
+}));
+vi.mock('../ogeText.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../ogeText.ts')>();
+  return {
+    ...actual,
+    classifyExecutivePdfBytes: (bytes: ArrayBuffer, docId: string) =>
+      classifyOverride.fn ? classifyOverride.fn(bytes, docId) : actual.classifyExecutivePdfBytes(bytes, docId),
+  };
+});
+
 let openDatabase: SqliteDatabase | null = null;
 
 async function sqliteDatabase(): Promise<SqliteDatabase> {
@@ -43,7 +57,15 @@ async function sqliteDatabase(): Promise<SqliteDatabase> {
       error TEXT,
       doc_kind TEXT,
       raw_object_key TEXT,
-      extractor TEXT
+      extractor TEXT,
+      filer_id TEXT,
+      filing_type TEXT,
+      filed_date TEXT,
+      source_url TEXT,
+      model_version TEXT,
+      confidence REAL,
+      first_seen_at TEXT,
+      source_updated_at TEXT
     );
     CREATE TABLE review_queue (
       doc_id TEXT PRIMARY KEY,
@@ -157,6 +179,7 @@ function seedReview(
 }
 
 afterEach(() => {
+  classifyOverride.fn = null;
   openDatabase?.close();
   openDatabase = null;
 });
@@ -301,7 +324,7 @@ describe('admin reopen and first-pass closes', () => {
 });
 
 describe('recoverExpiredCappedReviews', () => {
-  it('does not rewrite empty-failure or unreadable rows into agreement_cascade_unresolved', async () => {
+  it('does not rewrite unreadable rows; labels capped empty failures it cannot settle', async () => {
     const db = await sqliteDatabase();
     seedReview(db, 'E-empty', 'extract_empty_failure');
     seedReview(db, 'E-chrome', 'form_chrome_only,extract_empty_failure,no_transactions_extracted');
@@ -313,17 +336,88 @@ describe('recoverExpiredCappedReviews', () => {
     seedReview(db, 'H-2026-empty', 'extract_empty_failure');
     seedReview(db, 'S-2026-empty', 'extract_empty_failure,no_transactions_extracted');
 
-    const out = await maybeRunAgreementAutopublish(envFor(db));
-    expect(out).toMatchObject({ terminalized: 3, attempted: 0 });
+    const out = await maybeRunAgreementAutopublish(
+      { ...envFor(db), AGREEMENT_AUTOPUBLISH_LIMIT: '10' } as unknown as Env,
+    );
+    // No bytes are reachable for the executive empty failures (no raw key, no
+    // source_url), so they cannot be re-classified and take the capped
+    // human-review label instead of stranding.
+    expect(out).toMatchObject({ terminalized: 5, attempted: 0 });
 
     const reason = (docId: string) =>
       (db.prepare(`SELECT reason FROM review_queue WHERE doc_id = ?`).get(docId) as { reason: string }).reason;
-    expect(reason('E-empty')).toBe('extract_empty_failure');
-    expect(reason('E-chrome')).toBe('form_chrome_only,extract_empty_failure,no_transactions_extracted');
+    expect(reason('E-empty')).toBe('agreement_cascade_unresolved');
+    expect(reason('E-chrome')).toBe('agreement_cascade_unresolved');
     expect(reason('E-unread')).toBe('ocr_unusable,oge_text_unreadable');
     expect(reason('E-already')).toBe('agreement_cascade_unresolved');
     expect(reason('E-capped')).toBe('agreement_cascade_unresolved');
     expect(reason('H-2026-empty')).toBe('agreement_cascade_unresolved');
     expect(reason('S-2026-empty')).toBe('agreement_cascade_unresolved');
+  });
+
+  function withBytes(db: SqliteDatabase, get: (key: string) => Promise<unknown>): Env {
+    return { ...envFor(db), RAW_FILES: { get } } as unknown as Env;
+  }
+
+  function reviewRow(db: SqliteDatabase, docId: string) {
+    return db.prepare(
+      `SELECT reason, resolved, resolution_kind, resolution_reason, agreement_claim_token
+         FROM review_queue WHERE doc_id = ?`,
+    ).get(docId) as Record<string, unknown>;
+  }
+
+  it('re-classifies a capped executive empty failure: empty closes, unreadable rejects, unconfirmed goes to human review', async () => {
+    const db = await sqliteDatabase();
+    for (const id of ['E-2026-empty-278e', 'E-2026-refused-278t', 'E-2026-garbled-278e']) {
+      seedReview(db, id, 'extract_empty_failure,no_transactions_extracted');
+      db.prepare(`UPDATE filings SET raw_object_key = ? WHERE doc_id = ?`).run(`raw/${id}.pdf`, id);
+    }
+    const seen: string[] = [];
+    classifyOverride.fn = async (_bytes, docId) => {
+      seen.push(docId);
+      if (docId === 'E-2026-empty-278e') return { disposition: 'empty', rows: [] };
+      if (docId === 'E-2026-refused-278t') return { disposition: 'unreadable', rows: [], reason: 'unreadable_278t' };
+      return { disposition: 'unconfirmed', rows: [] };
+    };
+    const env = withBytes(db, async () => ({ arrayBuffer: async () => new ArrayBuffer(8) }));
+
+    const out = await maybeRunAgreementAutopublish(env);
+    expect(out).toMatchObject({ terminalized: 3, attempted: 0 });
+    expect(seen.sort()).toEqual(['E-2026-empty-278e', 'E-2026-garbled-278e', 'E-2026-refused-278t']);
+
+    expect(reviewRow(db, 'E-2026-empty-278e')).toMatchObject({
+      resolved: 1, resolution_kind: 'verified_empty', agreement_claim_token: null,
+    });
+    expect(reviewRow(db, 'E-2026-refused-278t')).toMatchObject({
+      resolved: 1, resolution_kind: 'rejected', agreement_claim_token: null,
+    });
+    // Blank/garbled/header-only 278e: not auto-closed, but no longer stuck
+    // eligible at the cap - it gets the terminal human-review label.
+    expect(reviewRow(db, 'E-2026-garbled-278e')).toMatchObject({
+      resolved: 0, reason: 'agreement_cascade_unresolved', agreement_claim_token: null,
+    });
+
+    // Idempotent: a second pass has nothing left to do.
+    const again = await maybeRunAgreementAutopublish(env);
+    expect(again).toMatchObject({ terminalized: 0 });
+  });
+
+  it('keeps the lease and the empty-failure reason when storage throws', async () => {
+    const db = await sqliteDatabase();
+    seedReview(db, 'E-2026-blip-278e', 'extract_empty_failure');
+    db.prepare(`UPDATE filings SET raw_object_key = 'raw/blip.pdf' WHERE doc_id = 'E-2026-blip-278e'`).run();
+    classifyOverride.fn = async () => {
+      throw new Error('classifier must not run without bytes');
+    };
+    const env = withBytes(db, async () => {
+      throw new Error('R2 unavailable');
+    });
+
+    const out = await maybeRunAgreementAutopublish(env);
+    expect(out).toMatchObject({ terminalized: 0 });
+    const row = reviewRow(db, 'E-2026-blip-278e');
+    expect(row).toMatchObject({ resolved: 0, reason: 'extract_empty_failure' });
+    // Lease retained; the row retries after the 15-minute expiry.
+    expect(row.agreement_claim_token).toEqual(expect.any(String));
   });
 });
