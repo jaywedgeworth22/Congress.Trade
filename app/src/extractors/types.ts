@@ -149,6 +149,7 @@ export function mergeResults(primary: ExtractorResult, secondary: ExtractorResul
     confidence: docConfidence,
     raw: `primary(${primary.extractor}):\n${primary.raw}\n\n---\nsecondary(${secondary.extractor}) [primaryOnly=${primaryOnly}, secondaryOnly=${secondaryOnly}]:\n${secondary.raw}`,
     extractor: `arbitrating(${primary.extractor},${secondary.extractor})`,
+    arbitrationCounts: { primaryOnly, secondaryOnly },
     modelVersion: primary.modelVersion,
     providerRequestId: primary.providerRequestId,
     usage: primary.usage ? { ...primary.usage } : undefined,
@@ -208,6 +209,10 @@ export interface ExtractorResult {
   usage?: ExtractorUsage;
   /** Every underlying model call when arbitration combines multiple results. */
   modelRuns?: ExtractorModelRun[];
+  /** Present only on arbitrated results: rows each side saw that the other
+   *  missed. The merged row set stays primary-authoritative, so a contested
+   *  doc can have an empty `transactions` array with `secondaryOnly` > 0. */
+  arbitrationCounts?: { primaryOnly: number; secondaryOnly: number };
 }
 
 /** Input handed to an extractor. One of bytes/html is typically present. */
@@ -496,8 +501,17 @@ export class OgePdfExtractor implements Extractor {
       const vision = await this.visionPdf.extract(input);
       if (vision.transactions.length > 0) return vision;
       // A refused text layer must stay unreadable when vision also finds
-      // nothing.  An honest empty text layer stays empty.
-      if (textResult?.parseDisposition === 'unreadable' || textResult?.parseDisposition === 'empty') {
+      // nothing.  An honest empty text layer stays empty.  Under arbitration
+      // the merged row set is primary-authoritative: the secondary vision
+      // read may have found rows (secondaryOnly > 0) that route the doc to
+      // human review.  Restoring the terminal state on the empty merged array
+      // alone would bury that signal, so require that EVERY vision read found
+      // nothing first.
+      const secondarySawRows = (vision.arbitrationCounts?.secondaryOnly ?? 0) > 0;
+      if (
+        !secondarySawRows
+        && (textResult?.parseDisposition === 'unreadable' || textResult?.parseDisposition === 'empty')
+      ) {
         return { ...vision, parseDisposition: textResult.parseDisposition, transactions: [] };
       }
       return vision;
