@@ -156,6 +156,21 @@ describe('parseOgeTransactionRows', () => {
     }
   });
 
+  it('reads OCR spaced and period-thousands brackets, not the next row number', () => {
+    const rows = parseOgeTransactionRows(
+      [
+        '44 TESLA INC (TSLA) Sale 07/17/2026 No $15 001 - $50 000',
+        '126 QUALCOMM INC Sale 07/17/2026 No $15,001 - $50 000',
+        '127 INTUIT INC Sale 07/17/2026 No $1.000.001 - $5.000.000',
+      ].join(' '),
+    );
+    expect(rows.map((r) => [r.ticker ?? r.assetName, r.amountMin, r.amountMax])).toEqual([
+      ['TSLA', 15001, 50000],
+      ['QUALCOMM INC', 15001, 50000],
+      ['INTUIT INC', 1000001, 5000000],
+    ]);
+  });
+
   it('handles an Exchange row and an open-ended top-tier amount', () => {
     const rows = parseOgeTransactionRows(
       '1 Some Bond Fund (XYZ) Exchange 01/02/2026 Yes $50,000,001 +',
