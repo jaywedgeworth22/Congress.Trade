@@ -152,6 +152,10 @@ export interface AgreementDocResult {
   flags?: string[];
   tickers?: string[];
   rows?: Record<string, number | string>;
+  /** On a `skipped` outcome: true when the skip is a transient read failure
+   *  worth retrying later (source fetch timeout/HTTP error), false when no
+   *  bytes exist anywhere and retrying cannot heal it. */
+  retryable?: boolean;
 }
 
 const label = (c: BakeoffCandidate): string => `${c.provider}:${c.model}`;
@@ -592,6 +596,7 @@ export async function loadDocBytes(
         docId,
         outcome: 'skipped',
         reason: rawObjectKey ? 'R2 object missing and no source_url' : 'no raw_object_key and no source_url',
+        retryable: false,
       },
     };
   }
@@ -620,12 +625,13 @@ export async function loadDocBytes(
           docId,
           outcome: 'skipped',
           reason: `source_url fetch HTTP ${res.status}`,
+          retryable: true,
         },
       };
     }
     const buf = await res.arrayBuffer();
     if (buf.byteLength === 0) {
-      return { skip: { docId, outcome: 'skipped', reason: 'source_url empty body' } };
+      return { skip: { docId, outcome: 'skipped', reason: 'source_url empty body', retryable: true } };
     }
     if (buf.byteLength > SOURCE_URL_FALLBACK_MAX_BYTES) {
       return {
@@ -633,6 +639,7 @@ export async function loadDocBytes(
           docId,
           outcome: 'skipped',
           reason: `source_url body exceeds ${SOURCE_URL_FALLBACK_MAX_BYTES} bytes`,
+          retryable: false,
         },
       };
     }
@@ -652,6 +659,7 @@ export async function loadDocBytes(
         docId,
         outcome: 'skipped',
         reason: `source_url fetch failed: ${(err as Error).message?.slice(0, 160) || 'error'}`,
+        retryable: true,
       },
     };
   }
@@ -2742,6 +2750,19 @@ async function recoverExpiredCappedReviews(
         // row retries after expiry instead of being labeled on a blip.
         const filing = await loadFilingRow(env, row.doc_id);
         const loaded = await loadDocBytes(env, row.doc_id, filing?.raw_object_key ?? null);
+        if ('skip' in loaded && loaded.skip.retryable) {
+          // A soft load failure (R2 miss + source timeout, etc.) is a blip,
+          // not a read. Keep the lease so the row retries after expiry;
+          // falling through would stamp the permanent
+          // agreement_cascade_unresolved label, which this recovery's own
+          // selector excludes from later passes.
+          console.warn(
+            'agreement capped-row recovery: doc bytes temporarily unavailable, retry after lease expiry:',
+            row.doc_id,
+            loaded.skip.reason,
+          );
+          continue;
+        }
         const bytes = 'skip' in loaded ? null : loaded.bytes;
         const settled = await maybeSettleExecutiveZeroRead(env, row.doc_id, async () => bytes, token);
         if (settled) {
