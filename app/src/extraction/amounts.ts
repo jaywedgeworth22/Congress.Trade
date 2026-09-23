@@ -232,12 +232,17 @@ function isNum(n: number | null): n is number {
  * A flattened 278-T line puts the next row number (`126`) right after
  * `$50 000`, which is the same shape as a real `$1 000 001`. exactPair
  * keeps the reading that is a STOCK Act bracket, preferring the longer one.
+ *
+ * The shortened reading is only offered when the trailing group is split off
+ * by horizontal whitespace after a digit. A comma or period before the last
+ * group is thousands punctuation, not a row break: `$15,000,999` is a
+ * corrupted amount and must not collapse to `$15,000`.
  */
 function tokenValues(token: string): number[] {
   const values: number[] = [];
   const full = parseDollar(token);
   if (full !== null) values.push(full);
-  const shorter = token.match(/^(.*?)[ \u00A0\u2007\u2009\u202F.,]\d{3}$/);
+  const shorter = token.match(/^(.*?\d)[ \u00A0\u2007\u2009\u202F]+\d{3}$/);
   if (shorter) {
     const trimmed = parseDollar(shorter[1]);
     if (trimmed !== null && trimmed !== full) values.push(trimmed);
