@@ -12,4 +12,4 @@
 # The value was renamed to 'uw-hash-fixture-a' in a follow-up commit, but the
 # introducing commit stays inside the PR base..head range gitleaks scans, so
 # its finding has to be ignored by fingerprint.
-742096ac5e4095a59cf0575e889b1ee002e69b7e:app/src/ingestion/__tests__/providerMissingStubClose.test.ts:generic-api-key:398
+20e2cd408ebe9d17020cc284aafea19a8c506c0c:app/src/ingestion/__tests__/providerMissingStubClose.test.ts:generic-api-key:398
