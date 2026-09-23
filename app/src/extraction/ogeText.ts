@@ -150,7 +150,9 @@ export function executiveDisclosureForm(docId: string): '278e' | '278t' | 'unkno
 export type OgeTextClassification =
   | { disposition: 'rows'; rows: ParsedTx[] }
   | { disposition: 'empty'; rows: ParsedTx[] }
-  | { disposition: 'unreadable'; rows: ParsedTx[]; reason: 'index_incoherent' | 'unreadable_278t' };
+  | { disposition: 'unreadable'; rows: ParsedTx[]; reason: 'index_incoherent' | 'unreadable_278t' }
+  /** Zero rows, but nothing shows Part 7 is empty (blank, garbled, or unsupported layout). */
+  | { disposition: 'unconfirmed'; rows: ParsedTx[] };
 
 /**
  * True when the matched rows' leading "#" tokens look like a real table index:
@@ -192,6 +194,8 @@ export class OgeTextExtractor implements Extractor {
     const { text, pageCount } = await extractPdfText(input.bytes);
     const classified = classifyOgeTransactionText(text, input.filing.docId);
     const rows = classified.rows;
+    // 'unconfirmed' carries no disposition: callers keep the fail-closed path.
+    const parseDisposition = classified.disposition === 'unconfirmed' ? undefined : classified.disposition;
     const confidence =
       rows.length > 0 ? rows.reduce((s, r) => s + r.confidence, 0) / rows.length : 0.3;
     const result = {
@@ -200,7 +204,7 @@ export class OgeTextExtractor implements Extractor {
       raw: text,
       extractor: this.name,
       pageCount,
-      parseDisposition: classified.disposition,
+      parseDisposition,
     };
     return result;
   }
@@ -238,10 +242,12 @@ async function extractPdfText(
  * Parse the merged text and say whether zero rows means "no transactions"
  * or "this read is not usable".
  *
- * `278e` with no table and no matches is empty (Bondi-style Part 7).  A
- * `278t` that matches nothing, or any parse the index/coverage gate
- * refuses, is unreadable — the same zero-row array must not take the empty
- * path.
+ * A zero-row `278e` is empty only with positive evidence: a Part 7
+ * Transactions section that is present, bounded by the next part, and holds
+ * no transaction-looking content (Bondi-style Part 7).  Otherwise it is
+ * `unconfirmed` and stays on the fail-closed path.  A `278t` that matches
+ * nothing, or any parse the index/coverage gate refuses, is unreadable — the
+ * same zero-row array must not take the empty path.
  */
 export function classifyOgeTransactionText(text: string, docId = ''): OgeTextClassification {
   const scanned = scanOgeTransactionRows(text);
@@ -253,7 +259,38 @@ export function classifyOgeTransactionText(text: string, docId = ''): OgeTextCla
   if (form === '278t' || (form !== '278e' && scanned.has278tTable)) {
     return { disposition: 'unreadable', rows: [], reason: 'unreadable_278t' };
   }
-  return { disposition: 'empty', rows: [] };
+  if (ogePart7SectionLooksEmpty(text)) return { disposition: 'empty', rows: [] };
+  return { disposition: 'unconfirmed', rows: [] };
+}
+
+const PART7_HEADING_RE = /(?:^|\s)(?:part\s*7[.:\s]+transactions?|(?<!\d)7[.]\s*transactions?)\b/i;
+const PART7_END_RE = /(?:^|\s)(?:part\s*8\b|(?<!\d)8[.]\s*[a-z]|summary\s+of\s+contents)/i;
+
+/**
+ * Positive evidence that an OGE 278e Part 7 (Transactions) section has no
+ * rows: an explicit None marker, or a Part 7 heading whose body up to the
+ * next part holds no type word, date, or dollar amount.  A blank or garbled
+ * text layer, or a Part 7 we cannot see the end of, is not evidence.
+ */
+export function ogePart7SectionLooksEmpty(text: string | null | undefined): boolean {
+  if (!text) return false;
+  const normalized = text
+    .replace(/\u0000/g, ' ')
+    .replace(/\u00a0/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!normalized) return false;
+  if (looksLikeOgePart7ExplicitNone(normalized)) return true;
+  const heading = PART7_HEADING_RE.exec(normalized);
+  if (!heading) return false;
+  const rest = normalized.slice(heading.index + heading[0].length);
+  const end = PART7_END_RE.exec(rest);
+  if (!end) return false;
+  const body = rest.slice(0, end.index);
+  if (/\b(?:purchase|sale|exchange)\b/i.test(body)) return false;
+  if (/\d{1,2}\/\d{1,2}\/\d{2,4}/.test(body)) return false;
+  if (/\$\s*\d/.test(body)) return false;
+  return true;
 }
 
 /** Parse the merged 278-T text into ParsedTx[]. Pure / unit-testable. */
