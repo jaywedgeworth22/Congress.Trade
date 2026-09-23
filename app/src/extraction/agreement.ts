@@ -2670,16 +2670,21 @@ export async function handleAgreementCheck(
 }
 
 /**
- * Reasons capped-row recovery must leave alone.  Rewriting an executive
- * empty failure or an unreadable/OCR terminal into
- * agreement_cascade_unresolved made those filings health-terminal and
- * ineligible, so they never closed.  House/Senate empty failures are not
- * health-terminal (reviewQueueHealth only treats ocr_unusable etc. as
- * terminal), so they still need the capped-row terminal label.
+ * Reasons capped-row recovery must leave alone: rows already carrying the
+ * capped terminal label, and unreadable/OCR terminals (health-terminal
+ * already; relabeling them would hide why they closed).
+ *
+ * Empty failures are NOT excluded.  They are not health-terminal
+ * (reviewQueueHealth only treats ocr_unusable etc. as terminal), and once
+ * capped the normal selectors reject them, so without this path they sit
+ * eligible/unhealthy forever.  An executive empty failure is first re-run
+ * through the Part 7 classifier (maybeSettleExecutiveZeroRead) so a real
+ * empty 278e or refused 278-T still closes honestly instead of being
+ * relabeled; only a read that stays `unconfirmed` (blank, garbled,
+ * header-only) gets the human-review label.
  */
 export const CAPPED_RECOVERY_REASON_EXCLUDE_SQL = `
   COALESCE(reason, '') <> 'agreement_cascade_unresolved'
-  AND NOT (doc_id LIKE 'E-%' AND COALESCE(reason, '') LIKE '%empty_failure%')
   AND COALESCE(reason, '') NOT LIKE '%oge_text_unreadable%'
   AND COALESCE(reason, '') NOT LIKE '%ocr_unusable%'
 `.trim();
@@ -2689,8 +2694,8 @@ export const CAPPED_RECOVERY_REASON_EXCLUDE_SQL = `
  * terminal human-review flag. A fresh CAS lease makes this safe under
  * concurrent cron ticks; failures retain the lease and are retried after its
  * 15-minute expiry instead of silently stranding the row at the attempt cap.
- * Empty-failure and unreadable rows are already an honest terminal.  Do not
- * relabel them.
+ * Unreadable rows are already an honest terminal; do not relabel them.
+ * Executive empty failures get one more classifier pass before the label.
  */
 async function recoverExpiredCappedReviews(
   env: Env,
@@ -2700,9 +2705,9 @@ async function recoverExpiredCappedReviews(
   const now = new Date();
   const nowIso = now.toISOString();
   const expiredBefore = leaseExpiredBefore(now);
-  const rows = await all<{ doc_id: string; agreement_tier: number | null }>(
+  const rows = await all<{ doc_id: string; agreement_tier: number | null; reason: string | null }>(
     env.DB,
-    `SELECT doc_id, agreement_tier FROM review_queue
+    `SELECT doc_id, agreement_tier, reason FROM review_queue
       WHERE resolved = 0 AND agreement_suppressed_at IS NULL
         AND COALESCE(agreement_attempts, 0) >= ?
         AND ${CAPPED_RECOVERY_REASON_EXCLUDE_SQL}
@@ -2731,6 +2736,20 @@ async function recoverExpiredCappedReviews(
         [token, nowIso, row.doc_id, max, expiredBefore],
       );
       if ((leased.meta?.changes ?? 0) === 0) continue;
+      if (row.doc_id.startsWith('E-') && (row.reason ?? '').includes('empty_failure')) {
+        // Load outside the settle helper (which swallows loader errors) so a
+        // storage throw reaches the catch below: the lease is kept and the
+        // row retries after expiry instead of being labeled on a blip.
+        const filing = await loadFilingRow(env, row.doc_id);
+        const loaded = await loadDocBytes(env, row.doc_id, filing?.raw_object_key ?? null);
+        const bytes = 'skip' in loaded ? null : loaded.bytes;
+        const settled = await maybeSettleExecutiveZeroRead(env, row.doc_id, async () => bytes, token);
+        if (settled) {
+          // The close helper already resolved the row and cleared the lease.
+          terminalized += 1;
+          continue;
+        }
+      }
       const flagged = await leaveInReviewHighPriority(
         env,
         row.doc_id,
