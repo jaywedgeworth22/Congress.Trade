@@ -541,6 +541,7 @@ export async function normalize(
       const closed = await closeUnreadableExecutive(env, filing.docId, {
         nowIso,
         respectSuppression: true,
+        insertIfAbsent: true,
       });
       if (closed) {
         return {
@@ -586,6 +587,7 @@ export async function normalize(
       const closed = await closeVerifiedEmptyExecutive(env, filing.docId, {
         nowIso,
         respectSuppression: true,
+        insertIfAbsent: true,
       });
       if (closed) {
         return {
