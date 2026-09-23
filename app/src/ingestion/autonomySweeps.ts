@@ -404,6 +404,8 @@ export interface AutonomySweepResult {
   ceiling: CeilingSweepResult | null;
   stranded: StrandedSweepResult | null;
   resolvedDesync: ResolvedDesyncSweepResult | null;
+  /** Provider-only placeholder review rows closed to verified_empty. */
+  providerOnlyStubs: ProviderOnlyStubSweepResult | null;
   filedDateBackfill: FiledDateBackfillResult | null;
   ogeUndated: OgeUndatedBackfillResult | null;
   livenessAlarms: LivenessAlarmResult | null;
@@ -849,6 +851,62 @@ export async function sweepLivenessAlarms(
   return result;
 }
 
+export interface ProviderOnlyStubSweepResult {
+  cleared: number;
+}
+
+/**
+ * Provider-only placeholder review rows (tradeLatency.ts
+ * routeProviderOnlyObservationsToReview) are synthetic leads: the filing row
+ * has raw_object_key IS NULL because nothing was ever fetched to extract, so
+ * such a row can never gain a live transaction. The honest terminal state for
+ * one is verified_empty / provider_only_lead_cleared.
+ *
+ * That close used to live ONLY in the deploy-time migration statement list, so
+ * between deploys every new provider-only observation piled up in the admin
+ * review queue (and fired the Publisher review_queue.entered webhook) until
+ * the next ship re-ran migrations. This sweep applies the exact same terminal
+ * state hourly, bounded and idempotent, so the next similar row closes itself.
+ *
+ * The official-counterpart case (an official filing now exists) is left to
+ * providerMissingStubClose.ts, which rejects the stub as a duplicate when the
+ * provider observation is reprocessed — this sweep never invents that verdict.
+ * Rows with stored raw bytes or a live transaction are excluded so a real
+ * filing that happens to carry this reason is never swept.
+ */
+export async function sweepProviderOnlyReviewStubs(
+  env: Env,
+  opts: { limit?: number } = {},
+): Promise<ProviderOnlyStubSweepResult> {
+  const limit = opts.limit ?? 500;
+  const res = await run(
+    env.DB,
+    `UPDATE review_queue
+        SET resolved = 1,
+            resolution_kind = 'verified_empty',
+            resolution_reason = 'provider_only_lead_cleared',
+            resolved_at = CURRENT_TIMESTAMP
+      WHERE resolved = 0
+        AND reason = 'provider_discovered_missing_official'
+        AND doc_id IN (
+          SELECT rq.doc_id
+            FROM review_queue rq
+            LEFT JOIN filings f ON f.doc_id = rq.doc_id
+           WHERE rq.resolved = 0
+             AND rq.reason = 'provider_discovered_missing_official'
+             AND (f.raw_object_key IS NULL OR f.raw_object_key = '')
+             AND NOT EXISTS (
+               SELECT 1 FROM transactions t
+                WHERE t.doc_id = rq.doc_id AND t.deprecated_at IS NULL
+             )
+           ORDER BY rq.created_at ASC
+           LIMIT ?
+        )`,
+    [limit],
+  );
+  return { cleared: res.meta?.changes ?? 0 };
+}
+
 /**
  * Entry point wired hourly from deno/cronLanes.ts. Each sweep is isolated —
  * one failing does not block the others — and every sweep is itself bounded
@@ -873,6 +931,7 @@ export async function runAutonomySweeps(
     ceiling: null,
     stranded: null,
     resolvedDesync: null,
+    providerOnlyStubs: null,
     filedDateBackfill: null,
     ogeUndated: null,
     livenessAlarms: null,
@@ -914,6 +973,16 @@ export async function runAutonomySweeps(
     result.stranded = await sweepStrandedFilings(env, now);
   } catch (err) {
     errors.push(`stranded: ${(err as Error).message}`);
+  }
+
+  // Close provider-only placeholder stubs before the desync reconcile below,
+  // so reconcileResolvedReviewStatus can stamp their synthetic filing's
+  // ingest_status to verified_empty in the same run.
+  try {
+    throwIfAborted();
+    result.providerOnlyStubs = await sweepProviderOnlyReviewStubs(env);
+  } catch (err) {
+    errors.push(`providerOnlyStubs: ${(err as Error).message}`);
   }
 
   try {
