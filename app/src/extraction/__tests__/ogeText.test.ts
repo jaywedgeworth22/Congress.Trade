@@ -365,6 +365,13 @@ describe('classifyOgeTransactionText', () => {
       + '1 Amazon.com, Inc. (AMZN) Sale 06/10/2022 No $1,001 - $15,000';
     expect(ogePart7SectionLooksEmpty(endnotesThenTable)).toBe(false);
     expect(classifyOgeTransactionText(endnotesThenTable, bondi).disposition).not.toBe('empty');
+    // Rows whose header glyphs were lost still count: dates, dollar amounts,
+    // and transaction words after the marker mean rows follow.
+    const markerThenBareRows =
+      'OGE Form 278e Part 7. Transactions Summary of Contents '
+      + '1 Apple Inc. (AAPL) Purchase 01/05/2026 $1,001 - $15,000 Part 8. Liabilities';
+    expect(ogePart7SectionLooksEmpty(markerThenBareRows)).toBe(false);
+    expect(classifyOgeTransactionText(markerThenBareRows, bondi).disposition).not.toBe('empty');
     // A genuinely empty Part 7 whose text ends at the contents page still
     // closes empty: only boilerplate follows the marker, no table.
     const markerThenNothing =
