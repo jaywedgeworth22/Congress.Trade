@@ -636,7 +636,10 @@ export async function loadDocBytes(
     }
     const buf = await res.arrayBuffer();
     if (buf.byteLength === 0) {
-      return { skip: { docId, outcome: 'skipped', reason: 'source_url empty body', retryable: true } };
+      // A 200/204 with no body is the source's answer, not a blip: capped
+      // recovery keeps the lease on retryable skips, so a retryable empty
+      // body loops the row forever instead of reaching human review.
+      return { skip: { docId, outcome: 'skipped', reason: 'source_url empty body', retryable: false } };
     }
     if (buf.byteLength > SOURCE_URL_FALLBACK_MAX_BYTES) {
       return {
