@@ -521,11 +521,14 @@ export class OgePdfExtractor implements Extractor {
       const fallback = textResult ?? emptyOgeTextResult();
       return {
         ...fallback,
-        // Vision never confirmed this read: a terminal disposition from the
-        // refused text layer must not survive the fail-soft, or normalize()
-        // resolves the filing rejected without a successful zero-row vision
-        // read.
-        parseDisposition: undefined,
+        // Vision never confirmed this read: an 'unreadable' disposition from
+        // the refused text layer must not survive the fail-soft, or
+        // normalize() resolves the filing rejected without a successful
+        // zero-row vision read. An 'empty' disposition is positive evidence
+        // from the text layer (a bounded, readable empty Part 7) that needs
+        // no vision confirmation, so it survives.
+        parseDisposition:
+          fallback.parseDisposition === 'unreadable' ? undefined : fallback.parseDisposition,
         raw: `${fallback.raw}\n\n---\nogePdf vision fail-soft: ${reason}`,
       };
     }
