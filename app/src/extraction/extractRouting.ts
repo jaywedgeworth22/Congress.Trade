@@ -229,7 +229,10 @@ export function looksLikeOgePart7ExplicitNone(text: string | null | undefined): 
   // schedule. Scoped to the section tail so form boilerplate cannot veto an
   // honest empty.
   const rest = text.slice(none.index + none[0].length);
-  const end = /(?:^|\s)(?:part\s*8\b|(?<!\d)8[.]\s*[a-z]|summary\s+of\s+contents)/i.exec(rest);
+  // Same row-8 false-end guard as ogeText's PART7_END_RE: the numbered
+  // alternative requires the Liabilities title, so a Part 7 table row 8
+  // cannot shrink the attachment-veto tail.
+  const end = /(?:^|\s)(?:part\s*8\b|(?<!\d)8[.]\s*liabilities\b|summary\s+of\s+contents)/i.exec(rest);
   const tail = end ? rest.slice(0, end.index) : rest.slice(0, 80);
   return !/\battach(?:ed|ments?)\b/i.test(tail);
 }
