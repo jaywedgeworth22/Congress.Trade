@@ -359,6 +359,12 @@ export function ogePart7SectionLooksEmpty(text: string | null | undefined): bool
     if (/\b(?:purchase|sale|exchange)\b/i.test(body)) return false;
     if (/\d{1,2}\/\d{1,2}\/\d{2,4}/.test(body)) return false;
     if (/\$\s*\d/.test(body)) return false;
+    // Leftover alphabetic content — asset names with no digits, #, header
+    // words, "attach", or purchase/sale/exchange ("Apple Inc Microsoft
+    // Corporation") — is a read we could not parse, not positive evidence of
+    // an empty section.  A real empty Part 7 prints nothing between the
+    // headings, so any leftover alphabetic body stays unconfirmed.
+    if (/[a-z]/i.test(body)) return false;
     sawPositivelyEmptySection = true;
   }
   return sawPositivelyEmptySection;
