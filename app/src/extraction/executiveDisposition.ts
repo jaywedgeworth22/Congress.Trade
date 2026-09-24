@@ -189,7 +189,12 @@ async function writeClose(
           AND NOT EXISTS (
             SELECT 1 FROM extraction_runs
              WHERE doc_id = ? AND ok = 1 AND COALESCE(row_count, 0) > 0
-          )`,
+          )
+          -- routeToReview stages low-confidence candidates only in
+          -- payload.transactions: no live transaction and no extraction_runs
+          -- row, so both table guards pass while the review holds real
+          -- candidates. Staged candidates are row evidence too.
+          AND NOT (COALESCE(json_extract(payload, '$.transactionCount'), 0) > 0)`,
       [
         review.reason,
         review.resolutionKind,
