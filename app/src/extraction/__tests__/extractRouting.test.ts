@@ -130,6 +130,8 @@ describe('looksLikeOgePart7ExplicitNone', () => {
   });
 
   it('rejects zero rows without a Part 7 None marker', () => {
+    expect(looksLikeOgePart7ExplicitNone('Part 7. Transactions None. See attachment. 8. Liabilities')).toBe(false);
+    expect(looksLikeOgePart7ExplicitNone('7. Transactions None See Attached Schedule 8. Liabilities')).toBe(false);
     expect(looksLikeOgePart7ExplicitNone(TRUMP_278T_GARBLED_ZERO_ROWS)).toBe(false);
     expect(looksLikeOgePart7ExplicitNone('')).toBe(false);
     expect(looksLikeOgePart7ExplicitNone(null)).toBe(false);
