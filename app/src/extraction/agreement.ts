@@ -2856,10 +2856,24 @@ async function recoverExpiredCappedReviews(
         const bytes = 'skip' in loaded ? null : loaded.bytes;
         const settled = await maybeSettleExecutiveZeroRead(env, row.doc_id, async () => bytes, token);
         if (settled) {
-          // The close helpers clear the lease themselves; a recovered-rows
-          // settlement ran the normalizer instead, so finish the claim here.
-          if (settled.kind === 'rows') {
-            await finishTerminalClaim(env, row.doc_id, token, max);
+          // The close helpers clear the lease themselves.  A recovered-rows
+          // settlement that stays in review ran the normalizer instead, and
+          // routeToReview already cleared agreement_claim_token, so a
+          // token-CAS finishTerminalClaim would match nothing: the row would
+          // keep a non-terminal reason and be re-normalized on every pass.
+          // Terminalize the revision the settlement produced -
+          // leaveInReviewHighPriority re-reads the row, CASes on that
+          // review_revision, and merges the staged candidates into the
+          // terminal-labeled payload, taking the row out of this selector.
+          if (settled.kind === 'rows' && settled.needsReview) {
+            await leaveInReviewHighPriority(
+              env,
+              row.doc_id,
+              row.agreement_tier ?? 1,
+              {},
+              null,
+              'attempt_cap_recovery',
+            );
           }
           terminalized += 1;
           continue;
