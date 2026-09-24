@@ -42,9 +42,10 @@ export const AGREEMENT_VISION_COUNT_AGREE_RATIO = 0.8;
  * True when extraction_runs already holds a successful nonempty read of
  * `doc_id`.  Bind `doc_id` three times: a non-agreement (or null-kind) ok
  * run with rows still blocks; kind=agreement vision blocks only when at
- * least two ok>0 runs exist and every pair has min/max row_count >=
- * AGREEMENT_VISION_COUNT_AGREE_RATIO.  Disputed agreement vision must not
- * block an unreadable or empty close.  A pair is two distinct models
+ * least two ok>0 runs exist in one batch and every pair in that same batch
+ * has min/max row_count >= AGREEMENT_VISION_COUNT_AGREE_RATIO.  Disputed
+ * agreement vision must not block an unreadable or empty close, and a
+ * disputed batch vetoes only itself, never another corroborated batch.  A pair is two distinct models
  * (provider or model differs) in the same agreement batch: retries of one
  * model, or runs from different batches, are not independent agreement.
  */
@@ -54,35 +55,36 @@ export const SUCCESSFUL_NONEMPTY_READ_SQL = `(
      WHERE doc_id = ? AND ok = 1 AND COALESCE(row_count, 0) > 0
        AND COALESCE(kind, '') <> 'agreement'
   )
-  OR (
-    EXISTS (
-      SELECT 1 FROM extraction_runs a
-        JOIN extraction_runs b
-          ON b.doc_id = a.doc_id AND b.rowid > a.rowid
-         AND b.batch_id = a.batch_id
-         AND (b.provider <> a.provider OR b.model <> a.model)
-       WHERE a.doc_id = ?
-         AND a.ok = 1 AND b.ok = 1
-         AND COALESCE(a.kind, '') = 'agreement'
-         AND COALESCE(b.kind, '') = 'agreement'
-         AND COALESCE(a.row_count, 0) > 0
-         AND COALESCE(b.row_count, 0) > 0
-    )
-    AND NOT EXISTS (
-      SELECT 1 FROM extraction_runs a
-        JOIN extraction_runs b
-          ON b.doc_id = a.doc_id AND b.rowid > a.rowid
-         AND b.batch_id = a.batch_id
-         AND (b.provider <> a.provider OR b.model <> a.model)
-       WHERE a.doc_id = ?
-         AND a.ok = 1 AND b.ok = 1
-         AND COALESCE(a.kind, '') = 'agreement'
-         AND COALESCE(b.kind, '') = 'agreement'
-         AND COALESCE(a.row_count, 0) > 0
-         AND COALESCE(b.row_count, 0) > 0
-         AND (MIN(a.row_count, b.row_count) * 1.0 / MAX(a.row_count, b.row_count))
-             < ${AGREEMENT_VISION_COUNT_AGREE_RATIO}
-    )
+  OR EXISTS (
+    SELECT 1 FROM extraction_runs a
+      JOIN extraction_runs b
+        ON b.doc_id = a.doc_id AND b.rowid > a.rowid
+       AND b.batch_id = a.batch_id
+       AND (b.provider <> a.provider OR b.model <> a.model)
+     WHERE a.doc_id = ?
+       AND a.ok = 1 AND b.ok = 1
+       AND COALESCE(a.kind, '') = 'agreement'
+       AND COALESCE(b.kind, '') = 'agreement'
+       AND COALESCE(a.row_count, 0) > 0
+       AND COALESCE(b.row_count, 0) > 0
+       /* The disagreement veto is scoped to this candidate batch: an older
+          disputed batch must not cancel a later corroborated one. */
+       AND NOT EXISTS (
+         SELECT 1 FROM extraction_runs c
+           JOIN extraction_runs d
+             ON d.doc_id = c.doc_id AND d.rowid > c.rowid
+            AND d.batch_id = c.batch_id
+            AND (d.provider <> c.provider OR d.model <> c.model)
+          WHERE c.doc_id = ?
+            AND c.batch_id = a.batch_id
+            AND c.ok = 1 AND d.ok = 1
+            AND COALESCE(c.kind, '') = 'agreement'
+            AND COALESCE(d.kind, '') = 'agreement'
+            AND COALESCE(c.row_count, 0) > 0
+            AND COALESCE(d.row_count, 0) > 0
+            AND (MIN(c.row_count, d.row_count) * 1.0 / MAX(c.row_count, d.row_count))
+                < ${AGREEMENT_VISION_COUNT_AGREE_RATIO}
+       )
   )
 )`;
 
