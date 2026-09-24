@@ -417,6 +417,8 @@ export interface AutonomySweepResult {
   providerOnlyStubs: ProviderOnlyStubSweepResult | null;
   /** Open or sweep-closed provider-only stubs rejected because the official filing has since persisted. */
   providerStubOfficialReconcile: ProviderMissingStubReconcileResult | null;
+  /** Open review rows closed as already-published (orphaned review rows). */
+  alreadyPublished: AlreadyPublishedReviewSweepResult | null;
   filedDateBackfill: FiledDateBackfillResult | null;
   ogeUndated: OgeUndatedBackfillResult | null;
   livenessAlarms: LivenessAlarmResult | null;
@@ -978,6 +980,109 @@ export async function sweepProviderOnlyReviewStubs(
   };
 }
 
+export interface AlreadyPublishedReviewSweepResult {
+  cleared: number;
+  /** Filings stamped to persisted alongside their review close. */
+  filingsUpdated: number;
+}
+
+/** Terminal reason written when an open review row is closed as already published. */
+export const ALREADY_PUBLISHED_REVIEW_REASON = 'reconciled_published';
+
+/** Transaction sources that count as a live published read. */
+const LIVE_PUBLISHED_TX_SOURCES_SQL = `('primary','manual','local_mac','server_cpu')`;
+
+/** Ingestion-decision actions that prove the doc already published. */
+const PUBLISH_DECISION_ACTIONS_SQL = `('auto_published','confirmed','manual','agreement_published')`;
+
+/**
+ * A review row can outlive the publish it was created for: the publish path
+ * records an `auto_published` decision and inserts live transactions, but its
+ * `UPDATE review_queue ... WHERE ... review_revision = ?` no-ops when the
+ * revision drifted between the read and the write (observed 2026-09-24:
+ * H-2026-9116292 auto_published tx:11 on 2026-08-18 yet still pending at
+ * review_revision 4; 15 `form_chrome_only,ocr_unusable` scanned_pdf rows total).
+ *
+ * Such a row can never be honestly re-decided through the admin API: `reject`
+ * deprecates the live published transactions, and `confirm` needs edits the
+ * empty review payload does not have. This sweep closes it the only honest way
+ * — as already published — but ONLY when both independent pieces of evidence
+ * exist: a live non-deprecated transaction AND a recorded publish decision for
+ * the same doc. A row with no live transaction, an explicit `unpublished:`
+ * reopen, an agreement-cascade dispute, or a provider-only placeholder is left
+ * untouched, so this never bulk-resolves real work.
+ *
+ * Bounded, idempotent, safe to run hourly/concurrently; the review_revision
+ * bump makes a concurrent admin decision that read the pre-sweep revision
+ * no-op cleanly.
+ */
+export async function sweepAlreadyPublishedReviewRows(
+  env: Env,
+  opts: { limit?: number } = {},
+): Promise<AlreadyPublishedReviewSweepResult> {
+  const limit = opts.limit ?? 500;
+  const statusPlaceholders = DESYNCED_INGEST_STATUSES.map(() => '?').join(',');
+  const results = await batch(env.DB, [
+    [
+      `UPDATE review_queue
+          SET resolved = 1,
+              resolution_kind = 'published',
+              resolution_reason = ?,
+              resolved_at = CURRENT_TIMESTAMP,
+              review_revision = review_revision + 1
+        WHERE resolved = 0
+          AND doc_id IN (
+            SELECT rq.doc_id
+              FROM review_queue rq
+             WHERE rq.resolved = 0
+               AND COALESCE(rq.reason, '') NOT LIKE '%unpublished%'
+               AND COALESCE(rq.reason, '') NOT LIKE '%agreement_cascade%'
+               AND COALESCE(rq.reason, '') NOT LIKE '%provider_discovered_missing_official%'
+               AND EXISTS (
+                 SELECT 1 FROM transactions t
+                  WHERE t.doc_id = rq.doc_id
+                    AND t.deprecated_at IS NULL
+                    AND t.source IN ${LIVE_PUBLISHED_TX_SOURCES_SQL}
+               )
+               AND EXISTS (
+                 SELECT 1 FROM ingestion_decisions d
+                  WHERE d.doc_id = rq.doc_id
+                    AND d.action IN ${PUBLISH_DECISION_ACTIONS_SQL}
+               )
+             ORDER BY rq.created_at ASC
+             LIMIT ?
+          )`,
+      [ALREADY_PUBLISHED_REVIEW_REASON, limit],
+    ],
+    [
+      `UPDATE filings
+          SET ingest_status = 'persisted',
+              error = NULL
+        WHERE doc_id IN (
+          SELECT f.doc_id
+            FROM filings f
+            JOIN review_queue rq ON rq.doc_id = f.doc_id
+           WHERE rq.resolved = 1
+             AND rq.resolution_kind = 'published'
+             AND rq.resolution_reason = ?
+             AND f.ingest_status IN (${statusPlaceholders})
+             AND EXISTS (
+               SELECT 1 FROM transactions t
+                WHERE t.doc_id = f.doc_id
+                  AND t.deprecated_at IS NULL
+                  AND t.source IN ${LIVE_PUBLISHED_TX_SOURCES_SQL}
+             )
+           LIMIT ?
+        )`,
+      [ALREADY_PUBLISHED_REVIEW_REASON, ...DESYNCED_INGEST_STATUSES, limit],
+    ],
+  ]);
+  return {
+    cleared: results[0]?.meta?.changes ?? 0,
+    filingsUpdated: results[1]?.meta?.changes ?? 0,
+  };
+}
+
 /**
  * Entry point wired hourly from deno/cronLanes.ts. Each sweep is isolated —
  * one failing does not block the others — and every sweep is itself bounded
@@ -1004,6 +1109,7 @@ export async function runAutonomySweeps(
     resolvedDesync: null,
     providerOnlyStubs: null,
     providerStubOfficialReconcile: null,
+    alreadyPublished: null,
     filedDateBackfill: null,
     ogeUndated: null,
     livenessAlarms: null,
@@ -1066,6 +1172,16 @@ export async function runAutonomySweeps(
     result.providerOnlyStubs = await sweepProviderOnlyReviewStubs(env);
   } catch (err) {
     errors.push(`providerOnlyStubs: ${(err as Error).message}`);
+  }
+
+  // Close review rows that outlived the publish they were opened for (the
+  // publish path's review UPDATE no-ops when review_revision drifted), before
+  // the desync reconcile runs. Evidence-gated: live tx + a publish decision.
+  try {
+    throwIfAborted();
+    result.alreadyPublished = await sweepAlreadyPublishedReviewRows(env);
+  } catch (err) {
+    errors.push(`alreadyPublished: ${(err as Error).message}`);
   }
 
   try {

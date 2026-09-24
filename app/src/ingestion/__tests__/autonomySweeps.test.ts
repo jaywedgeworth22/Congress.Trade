@@ -30,6 +30,7 @@ import {
   sweepExtractionPendingLocalCeiling,
   sweepStrandedFilings,
   sweepProviderOnlyReviewStubs,
+  sweepAlreadyPublishedReviewRows,
   sweepFiledDateBackfill,
   sweepOgeUndatedFilingDates,
   extractPrintedDateFromText,
@@ -299,6 +300,106 @@ describe('autonomySweeps', () => {
       expect(result.cleared).toBe(0);
       const row = await d1.prepare(`SELECT resolved FROM review_queue WHERE doc_id = ?`).bind('doc-lowconf').first<{ resolved: number }>();
       expect(row?.resolved).toBe(0);
+    });
+  });
+
+  describe('sweepAlreadyPublishedReviewRows', () => {
+    const ORPHAN_REASON = 'form_chrome_only,ocr_unusable,extract_empty_failure,no_transactions_extracted';
+
+    async function insertOpenReview(docId: string, reason = ORPHAN_REASON) {
+      await d1.prepare(
+        `INSERT INTO review_queue (doc_id, reason, payload, created_at, resolved, review_revision)
+         VALUES (?, ?, '{}', ?, 0, 4)`,
+      ).bind(docId, reason, new Date().toISOString()).run();
+    }
+
+    async function insertLiveTx(docId: string, source = 'primary') {
+      await d1.prepare(
+        `INSERT INTO transactions (id, doc_id, source, created_at) VALUES (?, ?, ?, ?)`,
+      ).bind(`tx-${docId}`, docId, source, new Date().toISOString()).run();
+    }
+
+    async function insertPublishDecision(docId: string, action = 'auto_published') {
+      await d1.prepare(
+        `INSERT INTO ingestion_decisions (id, doc_id, action, source, actor, reason, payload, transaction_ids, created_at)
+         VALUES (?, ?, ?, 'pipeline', NULL, 'passed_normalization', '{}', '[]', ?)`,
+      ).bind(`decision:${action}:${docId}`, docId, action, new Date().toISOString()).run();
+    }
+
+    it('closes an orphaned published review row and stamps its filing', async () => {
+      const env = makeEnv();
+      const docId = 'H-2026-9116292';
+      await insertFiling({ doc_id: docId, ingest_status: 'extraction_pending_local', doc_kind: 'scanned_pdf', first_seen_at: new Date().toISOString() });
+      await insertOpenReview(docId);
+      await insertLiveTx(docId);
+      await insertPublishDecision(docId);
+
+      const result = await sweepAlreadyPublishedReviewRows(env);
+      expect(result.cleared).toBe(1);
+      expect(result.filingsUpdated).toBe(1);
+      const row = await d1.prepare(
+        `SELECT resolved, resolution_kind, resolution_reason, review_revision FROM review_queue WHERE doc_id = ?`,
+      ).bind(docId).first<{ resolved: number; resolution_kind: string; resolution_reason: string; review_revision: number }>();
+      expect(row?.resolved).toBe(1);
+      expect(row?.resolution_kind).toBe('published');
+      expect(row?.resolution_reason).toBe('reconciled_published');
+      expect(row?.review_revision).toBe(5);
+      const filing = await d1.prepare(`SELECT ingest_status FROM filings WHERE doc_id = ?`)
+        .bind(docId).first<{ ingest_status: string }>();
+      expect(filing?.ingest_status).toBe('persisted');
+
+      const again = await sweepAlreadyPublishedReviewRows(env);
+      expect(again).toEqual({ cleared: 0, filingsUpdated: 0 });
+    });
+
+    it('leaves a row with no live transaction alone', async () => {
+      const env = makeEnv();
+      const docId = 'H-2025-no-live-tx';
+      await insertFiling({ doc_id: docId, ingest_status: 'needs_review', doc_kind: 'scanned_pdf', first_seen_at: new Date().toISOString() });
+      await insertOpenReview(docId);
+      await insertPublishDecision(docId);
+
+      const result = await sweepAlreadyPublishedReviewRows(env);
+      expect(result.cleared).toBe(0);
+      const row = await d1.prepare(`SELECT resolved FROM review_queue WHERE doc_id = ?`).bind(docId).first<{ resolved: number }>();
+      expect(row?.resolved).toBe(0);
+    });
+
+    it('leaves a row with live tx but no publish decision alone', async () => {
+      const env = makeEnv();
+      const docId = 'H-2025-no-decision';
+      await insertFiling({ doc_id: docId, ingest_status: 'needs_review', doc_kind: 'scanned_pdf', first_seen_at: new Date().toISOString() });
+      await insertOpenReview(docId);
+      await insertLiveTx(docId);
+
+      const result = await sweepAlreadyPublishedReviewRows(env);
+      expect(result.cleared).toBe(0);
+      const row = await d1.prepare(`SELECT resolved FROM review_queue WHERE doc_id = ?`).bind(docId).first<{ resolved: number }>();
+      expect(row?.resolved).toBe(0);
+    });
+
+    it('leaves an explicit unpublished reopen alone even with live tx', async () => {
+      const env = makeEnv();
+      const docId = 'H-2025-reopened';
+      await insertFiling({ doc_id: docId, ingest_status: 'needs_review', doc_kind: 'scanned_pdf', first_seen_at: new Date().toISOString() });
+      await insertOpenReview(docId, 'unpublished: reopen: OCR harden');
+      await insertLiveTx(docId);
+      await insertPublishDecision(docId);
+
+      const result = await sweepAlreadyPublishedReviewRows(env);
+      expect(result.cleared).toBe(0);
+    });
+
+    it('leaves an agreement-cascade dispute alone even with live tx', async () => {
+      const env = makeEnv();
+      const docId = 'H-2025-8220844';
+      await insertFiling({ doc_id: docId, ingest_status: 'error', doc_kind: 'scanned_pdf', first_seen_at: new Date().toISOString() });
+      await insertOpenReview(docId, 'agreement_cascade_unresolved');
+      await insertLiveTx(docId);
+      await insertPublishDecision(docId);
+
+      const result = await sweepAlreadyPublishedReviewRows(env);
+      expect(result.cleared).toBe(0);
     });
   });
 
