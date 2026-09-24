@@ -84,13 +84,16 @@ export async function otherSuccessfulReadHasRows(env: Env, docId: string): Promi
 function reviewWhere(opts: ExecutiveCloseOptions): { sql: string; params: SqlParam[] } {
   const respect = opts.respectSuppression ? 1 : 0;
   const revision = opts.reviewRevision ?? null;
+  // A supplied claim token must match EXACTLY. The previous predicate also
+  // passed when the row's token was NULL, so a worker whose lease a
+  // concurrent normalize() had just cleared could still close the row.
   const token = opts.claimToken ?? null;
   return {
     sql: `doc_id = ?
       AND resolved = 0
       AND (? = 0 OR agreement_suppressed_at IS NULL)
       AND (? IS NULL OR review_revision = ?)
-      AND (? IS NULL OR agreement_claim_token IS NULL OR agreement_claim_token = ?)`,
+      AND (? IS NULL OR agreement_claim_token = ?)`,
     params: [respect, revision, revision, token, token],
   };
 }
@@ -148,8 +151,29 @@ async function writeClose(
               resolution_reason = ?,
               resolved_at = ?,
               review_revision = review_revision + 1
-        WHERE ${where.sql}`,
-      [review.reason, review.resolutionKind, review.resolutionReason, nowIso, docId, ...where.params],
+        WHERE ${where.sql}
+          -- Repeat the emptiness guards INSIDE the close: the outer
+          -- hasLiveTransactions / otherSuccessfulReadHasRows checks run
+          -- before the batch, so a live row or a nonempty extraction_run
+          -- persisted in between would otherwise be closed over without
+          -- even a review_revision bump.
+          AND NOT EXISTS (
+            SELECT 1 FROM transactions WHERE doc_id = ? AND deprecated_at IS NULL
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM extraction_runs
+             WHERE doc_id = ? AND ok = 1 AND COALESCE(row_count, 0) > 0
+          )`,
+      [
+        review.reason,
+        review.resolutionKind,
+        review.resolutionReason,
+        nowIso,
+        docId,
+        ...where.params,
+        docId,
+        docId,
+      ],
     ],
     [
       `UPDATE filings
