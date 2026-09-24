@@ -51,6 +51,7 @@ function makeEnv(
       payload?: string | null;
     };
     refuseClose?: boolean;
+    liveTxMatch?: boolean;
   } = {},
 ) {
   const cap: Captured = {
@@ -87,6 +88,9 @@ function makeEnv(
       async first<T>() {
         if (/SELECT resolved, review_revision, agreement_suppressed_at/i.test(sql)) {
           return (opts.resolvedReview ?? null) as T | null;
+        }
+        if (opts.liveTxMatch && /SELECT id FROM transactions/i.test(sql)) {
+          return { id: 'live-tx-1' } as T | null;
         }
         return null as T | null;
       },
@@ -961,9 +965,42 @@ describe('normalize', () => {
     expect(result.needsReview).toBe(false);
     expect(result.published).toBe(false);
     expect(result.reviewReason).toBe('deleted_rows_applied');
+    expect(result.settled).toBe(true);
     expect(cap.reviewRows[0]).toEqual(expect.arrayContaining(['verified_empty', 'deleted_rows_applied']));
     expect(cap.filingUpdates[0][0]).toBe('verified_empty');
     expect(cap.reviewSql.some((sql) => /resolution_kind = 'published'/.test(sql))).toBe(false);
+  });
+
+  it('marks an amendment whose rows already live on a predecessor as settled (not a CAS loss)', async () => {
+    // Every row matches a live predecessor transaction: the publish path
+    // resolves the review with nothing new to persist.  That success is
+    // needsReview:false / published:false - the same shape as a lost CAS -
+    // so it must carry the explicit settled flag.
+    const { env, cap } = makeEnv(
+      [{ ticker: 'VSNT', name: 'Versant Media Group, Inc.', aliases: '[]' }],
+      { liveTxMatch: true },
+    );
+    const result = await normalize(
+      env,
+      filing({ filerId: 'house-ok01-kevin-hern', filingType: 'Amendment' }),
+      [
+        tx({
+          ticker: 'VSNT',
+          assetName: 'Versant Media Group, Inc. Class A',
+          txType: 'S',
+          txDate: '2026-08-05',
+          amountMin: 1001,
+          amountMax: 15000,
+          owner: 'joint',
+          confidence: 0.97,
+        }),
+      ],
+    );
+    expect(result.needsReview).toBe(false);
+    expect(result.published).toBe(false);
+    expect(result.settled).toBe(true);
+    expect(result.reviewReason).toBe('amendment_already_persisted');
+    expect(cap.insertedTx).toHaveLength(0);
   });
 
   it('parks a form-sample-only extract for review instead of verified_empty', async () => {
