@@ -266,7 +266,10 @@ describe('parseOgeTransactionRows', () => {
 describe('classifyOgeTransactionText', () => {
   it('treats a 278e Part 7 with no table and no rows as empty, including a 278term id', () => {
     expect(executiveDisclosureForm('E-undated-pam-bondi-2026-278term')).toBe('278e');
+    expect(executiveDisclosureForm('E-2026-jane-doe-278-term')).toBe('278e');
+    expect(executiveDisclosureForm('E-2026-jane-doe-278 term')).toBe('278e');
     expect(executiveDisclosureForm('E-2026-donald-j-trump-09-8-2026-278t')).toBe('278t');
+    expect(executiveDisclosureForm('E-2026-donald-j-trump-09-8-2026-278-t')).toBe('278t');
     const text = 'OGE Form 278e Termination Report 7. Transactions 8. Liabilities';
     expect(classifyOgeTransactionText(text, 'E-undated-pam-bondi-2026-278term')).toEqual({
       disposition: 'empty',
