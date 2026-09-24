@@ -107,6 +107,9 @@ async function sqliteDatabase(): Promise<SqliteDatabase> {
     );
     CREATE TABLE extraction_runs (
       doc_id TEXT,
+      batch_id TEXT,
+      provider TEXT,
+      model TEXT,
       ok INTEGER,
       row_count INTEGER,
       kind TEXT,
@@ -303,11 +306,12 @@ describe('sweepKnownParkedExecutiveTerminals', () => {
     const db = await sqliteDatabase();
     seedReview(db, TRUMP_UNREADABLE_DOC_ID, 'agreement_cascade_unresolved');
     const insert = db.prepare(
-      `INSERT INTO extraction_runs (doc_id, ok, row_count, kind, result_json) VALUES (?, 1, ?, 'agreement', '[]')`,
+      `INSERT INTO extraction_runs (doc_id, batch_id, provider, model, ok, row_count, kind, result_json)
+       VALUES (?, 'batch-1', ?, ?, 1, ?, 'agreement', '[]')`,
     );
-    insert.run(TRUMP_UNREADABLE_DOC_ID, 33);
-    insert.run(TRUMP_UNREADABLE_DOC_ID, 66);
-    insert.run(TRUMP_UNREADABLE_DOC_ID, 472);
+    insert.run(TRUMP_UNREADABLE_DOC_ID, 'gemini', 'gemini-a', 33);
+    insert.run(TRUMP_UNREADABLE_DOC_ID, 'openai', 'gpt-a', 66);
+    insert.run(TRUMP_UNREADABLE_DOC_ID, 'anthropic', 'claude-a', 472);
 
     const result = await sweepKnownParkedExecutiveTerminals(envFor(db));
     expect(result).toEqual({ verifiedEmpty: 0, unreadable: 1 });
@@ -326,16 +330,42 @@ describe('sweepKnownParkedExecutiveTerminals', () => {
     const db = await sqliteDatabase();
     seedReview(db, TRUMP_UNREADABLE_DOC_ID, 'agreement_cascade_unresolved');
     const insert = db.prepare(
-      `INSERT INTO extraction_runs (doc_id, ok, row_count, kind, result_json) VALUES (?, 1, ?, 'agreement', '[]')`,
+      `INSERT INTO extraction_runs (doc_id, batch_id, provider, model, ok, row_count, kind, result_json)
+       VALUES (?, 'batch-1', ?, ?, 1, ?, 'agreement', '[]')`,
     );
-    insert.run(TRUMP_UNREADABLE_DOC_ID, 1150);
-    insert.run(TRUMP_UNREADABLE_DOC_ID, 1160);
+    insert.run(TRUMP_UNREADABLE_DOC_ID, 'gemini', 'gemini-a', 1150);
+    insert.run(TRUMP_UNREADABLE_DOC_ID, 'openai', 'gpt-a', 1160);
 
     const result = await sweepKnownParkedExecutiveTerminals(envFor(db));
     expect(result).toEqual({ verifiedEmpty: 0, unreadable: 0 });
     const trump = db.prepare(`SELECT resolved FROM review_queue WHERE doc_id = ?`)
       .get(TRUMP_UNREADABLE_DOC_ID) as { resolved: number };
     expect(trump.resolved).toBe(0);
+  });
+
+  it('does not count same-model retries or cross-batch runs as agreement', async () => {
+    const db = await sqliteDatabase();
+    seedReview(db, TRUMP_UNREADABLE_DOC_ID, 'agreement_cascade_unresolved');
+    const insert = db.prepare(
+      `INSERT INTO extraction_runs (doc_id, batch_id, provider, model, ok, row_count, kind, result_json)
+       VALUES (?, ?, ?, ?, 1, ?, 'agreement', '[]')`,
+    );
+    // Two retries of one model in one batch agree on count: not agreement.
+    insert.run(TRUMP_UNREADABLE_DOC_ID, 'batch-1', 'gemini', 'gemini-a', 1150);
+    insert.run(TRUMP_UNREADABLE_DOC_ID, 'batch-1', 'gemini', 'gemini-a', 1160);
+    // A different model agrees, but in another batch: not a pair either.
+    insert.run(TRUMP_UNREADABLE_DOC_ID, 'batch-2', 'openai', 'gpt-a', 1155);
+
+    const result = await sweepKnownParkedExecutiveTerminals(envFor(db));
+    expect(result).toEqual({ verifiedEmpty: 0, unreadable: 1 });
+    const trump = db.prepare(
+      `SELECT resolved, resolution_kind, resolution_reason FROM review_queue WHERE doc_id = ?`,
+    ).get(TRUMP_UNREADABLE_DOC_ID) as Record<string, unknown>;
+    expect(trump).toMatchObject({
+      resolved: 1,
+      resolution_kind: 'rejected',
+      resolution_reason: 'oge_text_unreadable',
+    });
   });
 
   it('still verified_empties when the only successful reads are zero-row', async () => {
