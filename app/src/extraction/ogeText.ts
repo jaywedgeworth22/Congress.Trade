@@ -301,6 +301,13 @@ const PART7_SECTION_BODY_RE = /(?:^|\s)(?:none|n\/a|no\s+transactions?(?:\s+to\s
  * headings never have part entries on BOTH sides within this window.
  */
 const PART7_TOC_ENTRY_WINDOW = 120;
+/**
+ * How much text may sit between the previous contents entry and a heading
+ * for the heading to still count as packed inside the contents run.  TOC
+ * lines sit right next to each other (a few characters, or a page number);
+ * a real Part 7 heading follows the whole earlier body.
+ */
+const PART7_TOC_PACKED_GAP = 40;
 
 /**
  * Positive evidence that an OGE 278e Part 7 (Transactions) section has no
@@ -363,12 +370,35 @@ export function ogePart7SectionLooksEmpty(text: string | null | undefined): bool
     // short-but-real Part 7 must not be filtered out as a contents entry.
     const entriesBefore = [...before.matchAll(PART7_TOC_ENTRY_GLOBAL_RE)];
     const entryAfter = PART7_TOC_ENTRY_RE.exec(after);
-    if (entriesBefore.length > 0 && entryAfter) {
-      const lastBefore = entriesBefore[entriesBefore.length - 1];
-      const betweenBefore = before.slice(lastBefore.index + lastBefore[0].length);
-      const betweenAfter = after.slice(0, entryAfter.index);
-      if (!PART7_SECTION_BODY_RE.test(betweenBefore) && !PART7_SECTION_BODY_RE.test(betweenAfter)) {
-        continue;
+    // A contents prefix can also be TRUNCATED at the boundary: the text ends
+    // at "8. Liabilities", so the Part 7 contents line has entries before it
+    // but none after, the both-sides filter does not fire, and the empty
+    // prefix reads as a positively empty section - closing the 278e without
+    // the real Part 7 ever being read.  With part entries before it and no
+    // text at all after the boundary, the line is a contents stub either
+    // way: skip it and keep scanning for the real heading.
+    if (entriesBefore.length > 0) {
+      if (!entryAfter) {
+        // `part 8` ends the boundary match before its title, so a truncated
+        // prefix can leave ". Liabilities" dangling after the boundary.
+        const tail = after.replace(/^[.:]?\s*liabilities\b/i, '').trim();
+        // Nothing readable follows the boundary.  Skip the heading only
+        // when it is still packed against the previous contents entry: a
+        // real Part 7 that is positively empty up to a truncated Part 8
+        // boundary follows the whole earlier body, not a contents run, and
+        // must still close.
+        if (tail === '') {
+          const lastBefore = entriesBefore[entriesBefore.length - 1];
+          const betweenBefore = before.slice(lastBefore.index + lastBefore[0].length);
+          if (betweenBefore.trim().length <= PART7_TOC_PACKED_GAP) continue;
+        }
+      } else {
+        const lastBefore = entriesBefore[entriesBefore.length - 1];
+        const betweenBefore = before.slice(lastBefore.index + lastBefore[0].length);
+        const betweenAfter = after.slice(0, entryAfter.index);
+        if (!PART7_SECTION_BODY_RE.test(betweenBefore) && !PART7_SECTION_BODY_RE.test(betweenAfter)) {
+          continue;
+        }
       }
     }
     const body = rest.slice(0, end.index);
