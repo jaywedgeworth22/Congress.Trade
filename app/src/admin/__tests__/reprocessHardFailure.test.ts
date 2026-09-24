@@ -136,6 +136,66 @@ describe('admin /reprocess hard failures', () => {
     expect(mocks.normalize).not.toHaveBeenCalled();
   });
 
+  it('routes an executive zero-row read with a parse disposition through normalize', async () => {
+    mocks.extractParsed.mockResolvedValue({
+      filing: {
+        ...filing(),
+        docId: 'E-2026-empty-278e',
+        chamber: 'executive',
+        docKind: 'text_pdf',
+        extractor: 'ogeText',
+      },
+      transactions: [],
+      extractor: 'ogeText',
+      modelVersion: null,
+      raw: 'OGE Form 278e 7. Transactions 8. Liabilities',
+      parseDisposition: 'empty',
+    });
+
+    const res = await app.request(
+      '/reprocess',
+      {
+        method: 'POST',
+        headers: { Authorization: 'Bearer admin-secret', 'content-type': 'application/json' },
+        body: JSON.stringify({ chamber: 'executive', limit: 1 }),
+      },
+      { ADMIN_TOKEN: 'admin-secret', DB: fakeDb() } as unknown as Env,
+    );
+
+    expect(res.status).toBe(200);
+    expect(mocks.normalize).toHaveBeenCalledTimes(1);
+    const [, normalizeFiling, normalizeRows, normalizeMeta] = mocks.normalize.mock.calls[0] as unknown[];
+    expect(normalizeFiling).toMatchObject({ docId: 'E-2026-empty-278e', chamber: 'executive' });
+    expect(normalizeRows).toEqual([]);
+    expect(normalizeMeta).toMatchObject({
+      extractor: 'ogeText',
+      parseDisposition: 'empty',
+      sourceText: 'OGE Form 278e 7. Transactions 8. Liabilities',
+    });
+  });
+
+  it('does not normalize a zero-row read without a parse disposition (or on dryRun)', async () => {
+    mocks.extractParsed.mockResolvedValue({
+      filing: filing(),
+      transactions: [],
+      extractor: 'visionLlm',
+      modelVersion: 'test-model',
+      raw: '',
+    });
+
+    const res = await app.request(
+      '/reprocess',
+      {
+        method: 'POST',
+        headers: { Authorization: 'Bearer admin-secret', 'content-type': 'application/json' },
+        body: JSON.stringify({ chamber: 'house', limit: 1 }),
+      },
+      { ADMIN_TOKEN: 'admin-secret', DB: fakeDb() } as unknown as Env,
+    );
+    expect(res.status).toBe(200);
+    expect(mocks.normalize).not.toHaveBeenCalled();
+  });
+
   it('refreshes est_value when reprocessing an existing transaction in place', async () => {
     mocks.extractParsed.mockResolvedValue({
       filing: filing(),
