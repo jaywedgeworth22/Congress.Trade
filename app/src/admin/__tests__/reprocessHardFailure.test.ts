@@ -63,7 +63,8 @@ function parsedTx(): ParsedTx {
   };
 }
 
-function fakeDb() {
+function fakeDb(opts: { reviewResolved?: number | null } = {}) {
+  const { reviewResolved = null } = opts;
   return {
     prepare(sql: string) {
       return {
@@ -82,6 +83,9 @@ function fakeDb() {
           return { results: [] as T[] };
         },
         async first<T>() {
+          if (/SELECT resolved FROM review_queue/i.test(sql)) {
+            return (reviewResolved === null ? null : { resolved: reviewResolved }) as T | null;
+          }
           return null as T | null;
         },
         async run() {
@@ -163,7 +167,7 @@ describe('admin /reprocess hard failures', () => {
         headers: { Authorization: 'Bearer admin-secret', 'content-type': 'application/json' },
         body: JSON.stringify({ chamber: 'executive', limit: 1 }),
       },
-      { ADMIN_TOKEN: 'admin-secret', DB: fakeDb() } as unknown as Env,
+      { ADMIN_TOKEN: 'admin-secret', DB: fakeDb({ reviewResolved: 1 }) } as unknown as Env,
     );
 
     expect(res.status).toBe(200);
@@ -219,6 +223,46 @@ describe('admin /reprocess hard failures', () => {
     expect(res.status).toBe(200);
     const body = await res.json() as Record<string, unknown>;
     expect(body.ok).toBe(true);
+    expect(body.settledZeroRow).toBe(0);
+    expect(body.filingsStillInReview).toBe(1);
+    expect(body.skippedNoExtract).toBe(0);
+    expect(body.errors).toEqual([]);
+  });
+
+  it('counts a both-CAS-lost zero-row read as still in review, not settled', async () => {
+    mocks.extractParsed.mockResolvedValue({
+      filing: {
+        ...filing(),
+        docId: 'E-2026-raced-278e',
+        chamber: 'executive',
+        docKind: 'text_pdf',
+        extractor: 'ogeText',
+      },
+      transactions: [],
+      extractor: 'ogeText',
+      modelVersion: null,
+      raw: 'OGE Form 278e 7. Transactions 8. Liabilities',
+      parseDisposition: 'empty',
+    });
+    // A concurrent revision made BOTH the close and the routeToReview CAS
+    // lose: normalize() returns needsReview:false without settling anything.
+    mocks.normalize.mockResolvedValue({
+      transactions: [], minConfidence: 0, needsReview: false, published: false,
+    });
+
+    const res = await app.request(
+      '/reprocess',
+      {
+        method: 'POST',
+        headers: { Authorization: 'Bearer admin-secret', 'content-type': 'application/json' },
+        body: JSON.stringify({ chamber: 'executive', limit: 1 }),
+      },
+      { ADMIN_TOKEN: 'admin-secret', DB: fakeDb({ reviewResolved: 0 }) } as unknown as Env,
+    );
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as Record<string, unknown>;
+    // The resolution re-read shows the row is still open: not settled.
     expect(body.settledZeroRow).toBe(0);
     expect(body.filingsStillInReview).toBe(1);
     expect(body.skippedNoExtract).toBe(0);
