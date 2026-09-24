@@ -283,6 +283,13 @@ const PART7_TABLE_EVIDENCE_RE = /#|\b(?:description|type|date|amount|notificatio
 const PART7_TAIL_ROW_EVIDENCE_RE = /\d{1,2}\/\d{1,2}\/\d{2,4}|\$\s*\d|\b(?:purchase|sale|exchange)\b/i;
 /** One short table-of-contents entry: "6. Agreements" / "Part 6 Agreements". */
 const PART7_TOC_ENTRY_RE = /(?:part\s*\d{1,2}\b|(?<!\d)\d{1,2}[.])\s*[A-Za-z]/i;
+const PART7_TOC_ENTRY_GLOBAL_RE = new RegExp(PART7_TOC_ENTRY_RE.source, 'gi');
+/**
+ * A none-marker between two part entries is a real (empty) section body, not
+ * contents-run packing.  Mirrors the explicit-none vocabulary in
+ * looksLikeOgePart7ExplicitNone.
+ */
+const PART7_SECTION_BODY_RE = /(?:^|\s)(?:none|n\/a|no\s+transactions?(?:\s+to\s+report)?)\b/i;
 /**
  * How far around a Part 7 heading to look for neighbouring contents entries.
  * TOC lines sit right next to each other; a real Part 7 heading follows the
@@ -345,7 +352,21 @@ export function ogePart7SectionLooksEmpty(text: string | null | undefined): bool
       end.index + end[0].length,
       end.index + end[0].length + PART7_TOC_ENTRY_WINDOW,
     );
-    if (PART7_TOC_ENTRY_RE.test(before) && PART7_TOC_ENTRY_RE.test(after)) continue;
+    // Skip headings inside a contents run: another part entry just before
+    // AND just after, with no section body between the entries.  A
+    // none-marker between entries is a real empty body ("Part 6. Agreements
+    // None Part 7. Transactions Part 8. Liabilities None ..."), so a
+    // short-but-real Part 7 must not be filtered out as a contents entry.
+    const entriesBefore = [...before.matchAll(PART7_TOC_ENTRY_GLOBAL_RE)];
+    const entryAfter = PART7_TOC_ENTRY_RE.exec(after);
+    if (entriesBefore.length > 0 && entryAfter) {
+      const lastBefore = entriesBefore[entriesBefore.length - 1];
+      const betweenBefore = before.slice(lastBefore.index + lastBefore[0].length);
+      const betweenAfter = after.slice(0, entryAfter.index);
+      if (!PART7_SECTION_BODY_RE.test(betweenBefore) && !PART7_SECTION_BODY_RE.test(betweenAfter)) {
+        continue;
+      }
+    }
     const body = rest.slice(0, end.index);
     // A table header (or its `#` row-number column) with no rows under it is a
     // read that lost the row glyphs, not an empty section.  Real empty 278e
