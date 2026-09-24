@@ -79,4 +79,34 @@ describe('loadDocBytes', () => {
       expect(res.skip.reason).toMatch(/source_url fetch HTTP 403/);
     }
   });
+
+  it('marks permanent 4xx skips non-retryable so capped recovery reaches review', async () => {
+    // Capped recovery keeps the lease and retries a retryable skip after
+    // expiry: a permanent 404 marked retryable loops forever instead of
+    // reaching human review.
+    for (const status of [400, 401, 403, 404, 410]) {
+      vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status, arrayBuffer: async () => new ArrayBuffer(0) })));
+      const env = makeEnv({ get: async () => null });
+      const res = await loadDocBytes(env, 'S-1', 'raw/S-1.pdf');
+      expect('skip' in res).toBe(true);
+      if ('skip' in res) {
+        expect(res.skip.reason).toMatch(new RegExp(`source_url fetch HTTP ${status}`));
+        expect(res.skip.retryable).toBe(false);
+      }
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('keeps transient statuses retryable', async () => {
+    for (const status of [408, 429, 500, 502, 503]) {
+      vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status, arrayBuffer: async () => new ArrayBuffer(0) })));
+      const env = makeEnv({ get: async () => null });
+      const res = await loadDocBytes(env, 'S-1', 'raw/S-1.pdf');
+      expect('skip' in res).toBe(true);
+      if ('skip' in res) {
+        expect(res.skip.retryable).toBe(true);
+      }
+      vi.unstubAllGlobals();
+    }
+  });
 });
