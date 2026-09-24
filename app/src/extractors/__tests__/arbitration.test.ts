@@ -596,6 +596,31 @@ describe('OgePdfExtractor', () => {
     expect(out.raw).toContain('ogePdf vision fail-soft');
   });
 
+  it('keeps a positively-read empty disposition through vision fail-soft', async () => {
+    // 'empty' is the text layer's own positive evidence (a bounded, readable
+    // empty Part 7); unlike 'unreadable' it needs no vision confirmation, so
+    // the fail-soft must not wipe it.
+    const ogeText = extractor('ogeText', result([], {
+      extractor: 'ogeText',
+      parseDisposition: 'empty',
+      raw: 'OGE Form 278e Part 7. Transactions Part 8. Liabilities',
+    }));
+    const vision = {
+      name: 'vision',
+      canHandle: () => true,
+      extract: async () => {
+        throw new Error('OPENROUTER_API_KEY is not configured');
+      },
+    };
+    const ogePdf = new OgePdfExtractor(ogeText, vision);
+
+    const out = await ogePdf.extract({ filing: execScan() });
+
+    expect(out.parseDisposition).toBe('empty');
+    expect(out.transactions).toHaveLength(0);
+    expect(out.raw).toContain('ogePdf vision fail-soft');
+  });
+
   it('rethrows budget/rate-limit IngestRetryError so the queue can back off', async () => {
     const ogeText = extractor('ogeText', result([], { extractor: 'ogeText' }));
     const retry = new IngestRetryError('openrouter key budget circuit open', 3600);
