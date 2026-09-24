@@ -1723,7 +1723,7 @@ export async function markExtractEmptyFailure(
  */
 type ZeroReadSettlement =
   | { kind: 'empty' | 'unreadable' }
-  | { kind: 'rows'; needsReview: boolean; rowCount: number };
+  | { kind: 'rows'; needsReview: boolean; published: boolean; rowCount: number };
 
 /**
  * Executive zero-row agreement.  House and Senate stay on
@@ -1770,6 +1770,7 @@ async function maybeSettleExecutiveZeroRead(
       return {
         kind: 'rows',
         needsReview: norm.needsReview,
+        published: norm.published,
         rowCount: norm.transactions.length,
       };
     } catch (err) {
@@ -1789,12 +1790,26 @@ async function maybeSettleExecutiveZeroRead(
   return closed ? { kind: 'empty' } : null;
 }
 
-function settledZeroReadResult(
+export function settledZeroReadResult(
   docId: string,
   tier: number,
   settled: ZeroReadSettlement,
 ): AgreementDocResult {
   if (settled.kind === 'rows') {
+    if (!settled.needsReview && !settled.published) {
+      // normalize() lost the persist/stage CAS (a concurrent revision, or a
+      // resolved-decision guard): the recovered rows were neither persisted
+      // nor staged, so reporting 'published' would finish the caller as a
+      // success over nothing.  Leave the doc to its next pass.
+      return {
+        docId,
+        outcome: 'skipped',
+        tier,
+        rowCount: settled.rowCount,
+        flags: ['deterministic_rows_recovered'],
+        reason: 'review_resolved_or_claim_lost',
+      };
+    }
     return {
       docId,
       outcome: settled.needsReview ? 'review_flagged' : 'published',
@@ -2865,15 +2880,23 @@ async function recoverExpiredCappedReviews(
           // leaveInReviewHighPriority re-reads the row, CASes on that
           // review_revision, and merges the staged candidates into the
           // terminal-labeled payload, taking the row out of this selector.
-          if (settled.kind === 'rows' && settled.needsReview) {
-            await leaveInReviewHighPriority(
-              env,
-              row.doc_id,
-              row.agreement_tier ?? 1,
-              {},
-              null,
-              'attempt_cap_recovery',
-            );
+          if (settled.kind === 'rows') {
+            if (settled.needsReview) {
+              await leaveInReviewHighPriority(
+                env,
+                row.doc_id,
+                row.agreement_tier ?? 1,
+                {},
+                null,
+                'attempt_cap_recovery',
+              );
+            }
+            // A staged (needsReview) or persisted (published) settlement is
+            // terminal here.  A lost persist CAS (neither) persisted or
+            // staged nothing: do not count it - the row stays eligible for
+            // the next pass.
+            if (settled.needsReview || settled.published) terminalized += 1;
+            continue;
           }
           terminalized += 1;
           continue;
