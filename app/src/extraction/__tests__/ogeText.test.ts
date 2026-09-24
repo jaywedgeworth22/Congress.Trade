@@ -309,6 +309,17 @@ describe('classifyOgeTransactionText', () => {
       .toEqual({ disposition: 'empty', rows: [] });
   });
 
+  it('keeps a short real Part 7 out of the TOC filter (None-bodied neighbors)', () => {
+    const bondi = 'E-undated-pam-bondi-2026-278term';
+    // A real empty 278e whose neighboring parts are also short: "Part 6."
+    // sits in the before-window and "9." in the after-window, but the None
+    // bodies between the entries are real section bodies, not a contents
+    // run.  The heading must still count as positive empty evidence.
+    const text = 'Part 6. Agreements None Part 7. Transactions Part 8. Liabilities None Part 9. Gifts None';
+    expect(ogePart7SectionLooksEmpty(text)).toBe(true);
+    expect(classifyOgeTransactionText(text, bondi)).toEqual({ disposition: 'empty', rows: [] });
+  });
+
   it('keeps a description-only Part 7 body unconfirmed (asset names, no digits)', () => {
     const bondi = 'E-undated-pam-bondi-2026-278term';
     // Asset names with no digits, #, header words, "attach", or transaction
