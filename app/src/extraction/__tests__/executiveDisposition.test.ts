@@ -446,6 +446,30 @@ describe('closeUnreadableExecutive guards', () => {
     expect(closedLive).toBe(true);
   });
 
+  it('does not let a tokenless close cross a live agreement lease', async () => {
+    const db = await sqliteDatabase();
+    seedReview(db, BONDI_EMPTY_DOC_ID, 'extract_empty_failure');
+    // A worker holds a live lease; acquiring it did not bump review_revision,
+    // so only the lease predicate can protect the row.
+    db.prepare(
+      `UPDATE review_queue SET agreement_claim_token = 'worker-token', agreement_claimed_at = ? WHERE doc_id = ?`,
+    ).run(new Date().toISOString(), BONDI_EMPTY_DOC_ID);
+
+    const closed = await closeVerifiedEmptyExecutive(envFor(db), BONDI_EMPTY_DOC_ID);
+    expect(closed).toBe(false);
+    const held = db.prepare(
+      `SELECT resolved, agreement_claim_token FROM review_queue WHERE doc_id = ?`,
+    ).get(BONDI_EMPTY_DOC_ID) as { resolved: number; agreement_claim_token: string };
+    expect(held).toEqual({ resolved: 0, agreement_claim_token: 'worker-token' });
+
+    // Once the lease has expired, the tokenless close proceeds.
+    db.prepare(
+      `UPDATE review_queue SET agreement_claimed_at = ? WHERE doc_id = ?`,
+    ).run(new Date(Date.now() - 20 * 60 * 1000).toISOString(), BONDI_EMPTY_DOC_ID);
+    const closedAfter = await closeVerifiedEmptyExecutive(envFor(db), BONDI_EMPTY_DOC_ID);
+    expect(closedAfter).toBe(true);
+  });
+
   it('does not close when a nonempty extraction_run lands between the guard and the close', async () => {
     const db = await sqliteDatabase();
     seedReview(db, BONDI_EMPTY_DOC_ID, 'extract_empty_failure');
@@ -504,6 +528,39 @@ describe('recoverExpiredCappedReviews', () => {
     expect(reason('E-capped')).toBe('agreement_cascade_unresolved');
     expect(reason('H-2026-empty')).toBe('agreement_cascade_unresolved');
     expect(reason('S-2026-empty')).toBe('agreement_cascade_unresolved');
+  });
+
+  it('does not lease a capped row whose review_revision moved after selection', async () => {
+    const db = await sqliteDatabase();
+    seedReview(db, 'E-2026-racy-278e', 'extract_empty_failure');
+    db.prepare(
+      `UPDATE filings SET raw_object_key = 'raw/racy.pdf' WHERE doc_id = 'E-2026-racy-278e'`,
+    ).run();
+    classifyOverride.fn = async () => {
+      throw new Error('classifier must not run: the lease CAS must fail on the stale revision');
+    };
+    const env = withBytes(db, async () => ({ arrayBuffer: async () => new ArrayBuffer(8) }));
+    // A concurrent normalize() bumps review_revision after the recovery pass
+    // selects the row but before its lease UPDATE executes.
+    const realPrepare = env.DB.prepare.bind(env.DB);
+    let bumped = false;
+    (env.DB as { prepare: (sql: string) => unknown }).prepare = (sql: string) => {
+      if (!bumped && /UPDATE\s+review_queue\s+SET\s+agreement_claim_token/i.test(sql)) {
+        bumped = true;
+        db.prepare(
+          `UPDATE review_queue SET review_revision = review_revision + 1 WHERE doc_id = 'E-2026-racy-278e'`,
+        ).run();
+      }
+      return realPrepare(sql);
+    };
+
+    const out = await maybeRunAgreementAutopublish(env);
+    expect(bumped).toBe(true);
+    expect(out).toMatchObject({ terminalized: 0 });
+    const row = reviewRow(db, 'E-2026-racy-278e');
+    // Not leased, not relabeled: the stale pass drops the row for a later one.
+    expect(row).toMatchObject({ resolved: 0, reason: 'extract_empty_failure' });
+    expect(row.agreement_claim_token).toBeNull();
   });
 
   function withBytes(db: SqliteDatabase, get: (key: string) => Promise<unknown>): Env {
