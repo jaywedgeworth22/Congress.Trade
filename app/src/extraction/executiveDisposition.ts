@@ -296,17 +296,27 @@ export async function sweepKnownParkedExecutiveTerminals(
   let verifiedEmpty = 0;
   let unreadable = 0;
   for (const target of targets) {
-    const open = await get<{ doc_id: string }>(
+    // Bind the close to the revision this SELECT observed: a normalize()
+    // revision landing between the two would otherwise be closed over.
+    const open = await get<{ doc_id: string; review_revision: number }>(
       env.DB,
-      `SELECT doc_id FROM review_queue
+      `SELECT doc_id, review_revision FROM review_queue
         WHERE doc_id = ? AND resolved = 0 AND agreement_suppressed_at IS NULL
         LIMIT 1`,
       [target.docId],
     ).catch(() => null);
     if (!open) continue;
     const closed = target.kind === 'empty'
-      ? await closeVerifiedEmptyExecutive(env, target.docId, { nowIso, respectSuppression: true })
-      : await closeUnreadableExecutive(env, target.docId, { nowIso, respectSuppression: true });
+      ? await closeVerifiedEmptyExecutive(env, target.docId, {
+          nowIso,
+          respectSuppression: true,
+          reviewRevision: open.review_revision,
+        })
+      : await closeUnreadableExecutive(env, target.docId, {
+          nowIso,
+          respectSuppression: true,
+          reviewRevision: open.review_revision,
+        });
     if (!closed) continue;
     if (target.kind === 'empty') verifiedEmpty += 1;
     else unreadable += 1;
