@@ -163,6 +163,13 @@ describe('admin /reprocess hard failures', () => {
     );
 
     expect(res.status).toBe(200);
+    // A settled zero-row read is a success: not counted skippedNoExtract, no
+    // "no extract" error, and ok reflects the clean pass.
+    const body = await res.json() as Record<string, unknown>;
+    expect(body.ok).toBe(true);
+    expect(body.settledZeroRow).toBe(1);
+    expect(body.skippedNoExtract).toBe(0);
+    expect(body.errors).toEqual([]);
     expect(mocks.normalize).toHaveBeenCalledTimes(1);
     const [, normalizeFiling, normalizeRows, normalizeMeta] = mocks.normalize.mock.calls[0] as unknown[];
     expect(normalizeFiling).toMatchObject({ docId: 'E-2026-empty-278e', chamber: 'executive' });
