@@ -269,6 +269,33 @@ describe('sweepKnownParkedExecutiveTerminals', () => {
     const closed = await closeVerifiedEmptyExecutive(envFor(db), BONDI_EMPTY_DOC_ID);
     expect(closed).toBe(true);
   });
+
+  it('does not close a parked row whose revision moved between the sweep SELECT and the close', async () => {
+    const db = await sqliteDatabase();
+    seedReview(db, BONDI_EMPTY_DOC_ID, 'extract_empty_failure');
+    const env = envFor(db);
+    // Simulate a concurrent normalize(): it bumps review_revision after the
+    // sweep's SELECT but before the close batch runs.
+    const realPrepare = env.DB.prepare.bind(env.DB);
+    let bumped = false;
+    (env.DB as { prepare: (sql: string) => unknown }).prepare = (sql: string) => {
+      if (!bumped && /UPDATE\s+review_queue/i.test(sql)) {
+        bumped = true;
+        db.prepare(
+          `UPDATE review_queue SET review_revision = review_revision + 1 WHERE doc_id = ?`,
+        ).run(BONDI_EMPTY_DOC_ID);
+      }
+      return realPrepare(sql);
+    };
+
+    const result = await sweepKnownParkedExecutiveTerminals(env);
+    expect(bumped).toBe(true);
+    expect(result).toEqual({ verifiedEmpty: 0, unreadable: 0 });
+    const row = db.prepare(
+      `SELECT resolved, review_revision FROM review_queue WHERE doc_id = ?`,
+    ).get(BONDI_EMPTY_DOC_ID) as { resolved: number; review_revision: number };
+    expect(row).toEqual({ resolved: 0, review_revision: 2 });
+  });
 });
 
 describe('admin reopen and first-pass closes', () => {
