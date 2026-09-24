@@ -202,6 +202,11 @@ export interface NormalizeResult {
   published: boolean;
   /** Review-queue reason when needsReview is true (agreement hard-stop input). */
   reviewReason?: string;
+  /** True when this invocation resolved the filing's review state with
+   *  nothing new to persist (a terminal no-op success, e.g.
+   *  amendment_already_persisted / deleted_rows_applied).  Distinct from a
+   *  lost CAS, which is also needsReview:false / published:false. */
+  settled?: boolean;
 }
 
 interface ReviewSnapshot {
@@ -623,6 +628,7 @@ export async function normalize(
           needsReview: false,
           published: false,
           reviewReason: 'deleted_rows_applied',
+          settled: true,
         };
       }
     }
@@ -717,6 +723,7 @@ export async function normalize(
       needsReview: !closed,
       published: false,
       reviewReason: deletedFlagged.length > 0 ? 'deleted_rows_applied' : 'amendment_already_persisted',
+      settled: closed,
     };
   }
 
