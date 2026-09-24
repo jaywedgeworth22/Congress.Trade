@@ -16,6 +16,7 @@
 
 import type { Env } from '../shared/types.ts';
 import { batch, get, type SqlParam } from '../shared/db.ts';
+import { AGREEMENT_CLAIM_LEASE_MS } from './agreement.ts';
 import { recordIngestionDecision } from '../shared/ingestionDecisions.ts';
 
 export const EXECUTIVE_EMPTY_RESOLUTION_REASON = 'executive_278e_no_transactions';
@@ -84,17 +85,34 @@ export async function otherSuccessfulReadHasRows(env: Env, docId: string): Promi
 function reviewWhere(opts: ExecutiveCloseOptions): { sql: string; params: SqlParam[] } {
   const respect = opts.respectSuppression ? 1 : 0;
   const revision = opts.reviewRevision ?? null;
-  // A supplied claim token must match EXACTLY. The previous predicate also
-  // passed when the row's token was NULL, so a worker whose lease a
-  // concurrent normalize() had just cleared could still close the row.
+  // A supplied claim token must match EXACTLY: a worker whose lease a
+  // concurrent normalize() had just cleared must not close the row.
   const token = opts.claimToken ?? null;
+  const base = `doc_id = ?
+    AND resolved = 0
+    AND (? = 0 OR agreement_suppressed_at IS NULL)
+    AND (? IS NULL OR review_revision = ?)`;
+  if (token) {
+    return {
+      sql: `${base}
+      AND agreement_claim_token = ?`,
+      params: [respect, revision, revision, token],
+    };
+  }
+  // Tokenless callers (normalize(), the sweep) must not close over a live
+  // agreement lease: acquiring a lease does not bump review_revision, so the
+  // revision guard cannot see it. Close only when no lease is held or the
+  // held lease has expired.
+  const expiredBefore = new Date(
+    Date.parse(opts.nowIso ?? new Date().toISOString()) - AGREEMENT_CLAIM_LEASE_MS,
+  ).toISOString();
   return {
-    sql: `doc_id = ?
-      AND resolved = 0
-      AND (? = 0 OR agreement_suppressed_at IS NULL)
-      AND (? IS NULL OR review_revision = ?)
-      AND (? IS NULL OR agreement_claim_token = ?)`,
-    params: [respect, revision, revision, token, token],
+    sql: `${base}
+      AND (
+        agreement_claim_token IS NULL OR agreement_claimed_at IS NULL
+        OR agreement_claimed_at <= ?
+      )`,
+    params: [respect, revision, revision, expiredBefore],
   };
 }
 
