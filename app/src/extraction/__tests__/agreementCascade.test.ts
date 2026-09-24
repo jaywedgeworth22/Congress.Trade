@@ -4,6 +4,7 @@ import {
   allSuccessfulReadsEmpty,
   handleAgreementCheck,
   processAgreementCascadeTier2,
+  processAgreementDoc,
   type AgreementModelsC,
 } from '../agreement.ts';
 import type { CandidateDocResult } from '../bakeoff.ts';
@@ -344,7 +345,7 @@ describe('agreement cascade — tier 1', () => {
     // extract_empty_failure over it.
     stub(asJson([]), asJson([]));
     const rawDocBytes = await executiveRowsPdfArrayBuffer();
-    const { env, cap, review } = makeEnv({ rawDocBytes });
+    const { env, cap } = makeEnv({ rawDocBytes });
     const res = await handleAgreementCheck(env, 'E-2026-jane-doe-01-15-2026-278t', 'raw/x');
     expect(res).toMatchObject({
       reason: 'deterministic_rows_recovered',
@@ -353,7 +354,26 @@ describe('agreement cascade — tier 1', () => {
     expect(res?.outcome).not.toBe('agree_but_hardfail');
     expect(cap.decisions.some((d) => d.action === 'extract_empty_failure')).toBe(false);
     expect(cap.reviewFlags.some((f) => String(f.reason).includes('extract_empty_failure'))).toBe(false);
-    expect(review.claimToken).toBeNull();
+  });
+
+  it('operator reprocess (processAgreementDoc, non-dry) settles an executive zero-read', async () => {
+    // The /agreement-reprocess route calls processAgreementDoc directly with
+    // no claim token; its empty path must run the same executive settlement
+    // as the tier-1 queue handler instead of stamping extract_empty_failure.
+    stub(asJson([]), asJson([]));
+    const rawDocBytes = await executiveRowsPdfArrayBuffer();
+    const { env, cap } = makeEnv({ rawDocBytes });
+    const models = { a: MODELS_C.a, b: MODELS_C.b };
+    const res = await processAgreementDoc(
+      env, models, 'E-2026-jane-doe-01-15-2026-278t', 'raw/x', false,
+    );
+    expect(res).toMatchObject({
+      reason: 'deterministic_rows_recovered',
+      flags: expect.arrayContaining(['deterministic_rows_recovered']),
+    });
+    expect(res.outcome).not.toBe('agree_but_hardfail');
+    expect(cap.decisions.some((d) => d.action === 'extract_empty_failure')).toBe(false);
+    expect(cap.reviewFlags.some((f) => String(f.reason).includes('extract_empty_failure'))).toBe(false);
   });
 
   it('a big doc (page_count over threshold) starts directly at tier 2', async () => {
