@@ -1723,7 +1723,16 @@ export async function markExtractEmptyFailure(
  */
 type ZeroReadSettlement =
   | { kind: 'empty' | 'unreadable' }
-  | { kind: 'rows'; needsReview: boolean; published: boolean; rowCount: number };
+  | {
+      kind: 'rows';
+      needsReview: boolean;
+      published: boolean;
+      /** normalize() resolved the review with nothing new to persist. */
+      settled: boolean;
+      rowCount: number;
+      /** normalize()'s resolution reason (e.g. amendment_already_persisted). */
+      reason?: string;
+    };
 
 /**
  * Executive zero-row agreement.  House and Senate stay on
@@ -1771,7 +1780,9 @@ async function maybeSettleExecutiveZeroRead(
         kind: 'rows',
         needsReview: norm.needsReview,
         published: norm.published,
+        settled: norm.settled === true,
         rowCount: norm.transactions.length,
+        reason: norm.reviewReason,
       };
     } catch (err) {
       console.warn(
@@ -1796,6 +1807,19 @@ export function settledZeroReadResult(
   settled: ZeroReadSettlement,
 ): AgreementDocResult {
   if (settled.kind === 'rows') {
+    if (settled.settled) {
+      // The recovered rows already lived on a predecessor (or only deletions
+      // remained): normalize() resolved the review with nothing new to
+      // persist.  A successful terminal no-op, not a CAS loss.
+      return {
+        docId,
+        outcome: 'published',
+        tier,
+        rowCount: settled.rowCount,
+        flags: ['deterministic_rows_recovered'],
+        reason: settled.reason ?? 'deterministic_rows_recovered',
+      };
+    }
     if (!settled.needsReview && !settled.published) {
       // normalize() lost the persist/stage CAS (a concurrent revision, or a
       // resolved-decision guard): the recovered rows were neither persisted
@@ -2895,7 +2919,7 @@ async function recoverExpiredCappedReviews(
             // terminal here.  A lost persist CAS (neither) persisted or
             // staged nothing: do not count it - the row stays eligible for
             // the next pass.
-            if (settled.needsReview || settled.published) terminalized += 1;
+            if (settled.needsReview || settled.published || settled.settled) terminalized += 1;
             continue;
           }
           terminalized += 1;
