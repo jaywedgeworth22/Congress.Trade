@@ -309,6 +309,20 @@ describe('classifyOgeTransactionText', () => {
       .toEqual({ disposition: 'empty', rows: [] });
   });
 
+  it('keeps a description-only Part 7 body unconfirmed (asset names, no digits)', () => {
+    const bondi = 'E-undated-pam-bondi-2026-278term';
+    // Asset names with no digits, #, header words, "attach", or transaction
+    // words pass every content guard; they are a read the row parser could
+    // not handle, not positive evidence of an empty section, so the filing
+    // must not close verified_empty.
+    const namesOnly = 'OGE Form 278e 7. Transactions Apple Inc Microsoft Corporation 8. Liabilities';
+    expect(ogePart7SectionLooksEmpty(namesOnly)).toBe(false);
+    expect(classifyOgeTransactionText(namesOnly, bondi))
+      .toEqual({ disposition: 'unconfirmed', rows: [] });
+    // The whitespace-only body (real empty Part 7) still closes.
+    expect(ogePart7SectionLooksEmpty('OGE Form 278e 7. Transactions 8. Liabilities')).toBe(true);
+  });
+
   it('does not let a table-of-contents Part 7 entry hide the real Part 7 further down', () => {
     const bondi = 'E-undated-pam-bondi-2026-278term';
     // TOC stub first, then the real Part 7 with a traded row: verified_empty
