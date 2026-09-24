@@ -92,6 +92,7 @@ import {
   HARD_FAILURE_FLAGS,
   MAX_PUBLISH_TRANSACTIONS_PER_FILING,
   loadResolver,
+  normalize,
   resolveVerifiedEmpty,
 } from './normalizer.ts';
 import { classifyExecutivePdfBytes, pdfBytesLookLikeOgePart7ExplicitNone } from './ogeText.ts';
@@ -698,6 +699,7 @@ interface AgreementReviewState {
   agreement_suppressed_at: string | null;
   agreement_suppression_reason: string | null;
   review_revision: number;
+  payload: string | null;
 }
 
 export const AGREEMENT_CLAIM_LEASE_MS = 15 * 60 * 1000;
@@ -707,7 +709,7 @@ async function loadReviewState(env: Env, docId: string): Promise<AgreementReview
     env.DB,
     `SELECT resolved, agreement_attempts, agreement_tier, agreement_next_attempt_at,
             agreement_claim_token, agreement_claimed_at, agreement_suppressed_at,
-            agreement_suppression_reason, review_revision
+            agreement_suppression_reason, review_revision, payload
        FROM review_queue WHERE doc_id = ?`,
     [docId],
   );
@@ -1550,6 +1552,7 @@ async function closeOgePart7ExplicitNone(
             resolved: review.resolved,
             review_revision: review.review_revision,
             agreement_suppressed_at: review.agreement_suppressed_at,
+            payload: review.payload,
           }
         : null,
       'oge_part7_explicit_none',
@@ -1697,6 +1700,14 @@ export async function markExtractEmptyFailure(
 }
 
 /**
+ * Result of a deterministic executive zero-read settlement: a terminal close,
+ * or rows the deterministic parser recovered and routed through normalization.
+ */
+type ZeroReadSettlement =
+  | { kind: 'empty' | 'unreadable' }
+  | { kind: 'rows'; needsReview: boolean; rowCount: number };
+
+/**
  * Executive zero-row agreement.  House and Senate stay on
  * markExtractEmptyFailure.  Returns null when this doc is not an executive
  * filing the deterministic parser can close, so the caller keeps the
@@ -1707,7 +1718,7 @@ async function maybeSettleExecutiveZeroRead(
   docId: string,
   loadBytes: () => Promise<ArrayBuffer | null>,
   claimToken?: string,
-): Promise<'empty' | 'unreadable' | null> {
+): Promise<ZeroReadSettlement | null> {
   const filing = await loadFilingRow(env, docId);
   if (!filing || filing.chamber !== 'executive') return null;
   let bytes: ArrayBuffer | null = null;
@@ -1727,21 +1738,55 @@ async function maybeSettleExecutiveZeroRead(
   }
   // 'unconfirmed': zero rows but no positive evidence Part 7 is empty.
   // Keep the fail-closed extract_empty_failure path.
-  if (classified.disposition === 'rows' || classified.disposition === 'unconfirmed') return null;
+  if (classified.disposition === 'unconfirmed') return null;
+  if (classified.disposition === 'rows') {
+    // The deterministic parser found rows where the agreement reads came back
+    // empty.  Route them through normalization (persisted or staged into
+    // review) instead of letting the caller stamp extract_empty_failure over
+    // real rows that were never normalized or staged.
+    try {
+      const norm = await normalize(env, mapFiling(filing), classified.rows, {
+        extractor: 'ogeText',
+        parseDisposition: 'rows',
+      });
+      return {
+        kind: 'rows',
+        needsReview: norm.needsReview,
+        rowCount: norm.transactions.length,
+      };
+    } catch (err) {
+      console.warn(
+        'executive zero-read: recovered rows failed normalization:',
+        docId,
+        (err as Error).message,
+      );
+      return null;
+    }
+  }
   if (classified.disposition === 'unreadable') {
     const closed = await closeUnreadableExecutive(env, docId, { respectSuppression: true, claimToken });
-    return closed ? 'unreadable' : null;
+    return closed ? { kind: 'unreadable' } : null;
   }
   const closed = await closeVerifiedEmptyExecutive(env, docId, { respectSuppression: true, claimToken });
-  return closed ? 'empty' : null;
+  return closed ? { kind: 'empty' } : null;
 }
 
 function settledZeroReadResult(
   docId: string,
   tier: number,
-  settled: 'empty' | 'unreadable',
+  settled: ZeroReadSettlement,
 ): AgreementDocResult {
-  const reason = settled === 'empty' ? 'auto_resolved_empty' : 'oge_text_unreadable';
+  if (settled.kind === 'rows') {
+    return {
+      docId,
+      outcome: settled.needsReview ? 'review_flagged' : 'published',
+      tier,
+      rowCount: settled.rowCount,
+      flags: ['deterministic_rows_recovered'],
+      reason: 'deterministic_rows_recovered',
+    };
+  }
+  const reason = settled.kind === 'empty' ? 'auto_resolved_empty' : 'oge_text_unreadable';
   return {
     docId,
     outcome: 'agree_but_hardfail',
@@ -2640,7 +2685,7 @@ export async function handleAgreementCheck(
         }, claimed.token);
         if (settled) {
           await finishTerminalClaim(env, docId, claimed.token, max);
-          console.log(`agreement.check ${docId} tier1: executive ${settled}`);
+          console.log(`agreement.check ${docId} tier1: executive ${settled.kind}`);
           return settledZeroReadResult(docId, 1, settled);
         }
         await markExtractEmptyFailure(
@@ -2789,7 +2834,11 @@ async function recoverExpiredCappedReviews(
         const bytes = 'skip' in loaded ? null : loaded.bytes;
         const settled = await maybeSettleExecutiveZeroRead(env, row.doc_id, async () => bytes, token);
         if (settled) {
-          // The close helper already resolved the row and cleared the lease.
+          // The close helpers clear the lease themselves; a recovered-rows
+          // settlement ran the normalizer instead, so finish the claim here.
+          if (settled.kind === 'rows') {
+            await finishTerminalClaim(env, row.doc_id, token, max);
+          }
           terminalized += 1;
           continue;
         }
