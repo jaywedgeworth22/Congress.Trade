@@ -113,6 +113,7 @@ import {
   evaluateExtractQuality,
 } from './extractRouting.ts';
 import { notifyReviewQueuePublisher } from '../ingestion/reviewQueueNotify.ts';
+import { shouldRetryFetchStatus } from '../ingestion/fetcher.ts';
 import { isUsdMeteredExtractionProvider, LLM_DOC_BUDGET_ERROR_MARKER } from '../shared/llmSpend.ts';
 import {
   closeUnreadableExecutive,
@@ -620,11 +621,12 @@ export async function loadDocBytes(
       { envOverride: env },
     );
     if (!res.ok) {
-      // A permanent 4xx (400/401/403/404/410, ...) is the source's answer, not
-      // a blip: capped recovery keeps the lease on retryable skips, so marking
-      // one retryable loops the row forever instead of reaching human review.
-      const retryable =
-        res.status === 408 || res.status === 429 || res.status >= 500;
+      // Use the ingestion fetcher's established transient classification:
+      // beyond 408/425/429/5xx it retries WAF 403 bursts and 404s on filings
+      // fresh enough to not be published yet, while a permanent 4xx (400,
+      // 401, 410, an old filing's 404) is terminal so capped recovery
+      // reaches human review instead of looping on the lease forever.
+      const retryable = shouldRetryFetchStatus(res.status, filing?.first_seen_at, new Date());
       return {
         skip: {
           docId,
@@ -2721,9 +2723,14 @@ async function recoverExpiredCappedReviews(
   const now = new Date();
   const nowIso = now.toISOString();
   const expiredBefore = leaseExpiredBefore(now);
-  const rows = await all<{ doc_id: string; agreement_tier: number | null; reason: string | null }>(
+  const rows = await all<{
+    doc_id: string;
+    agreement_tier: number | null;
+    reason: string | null;
+    review_revision: number | null;
+  }>(
     env.DB,
-    `SELECT doc_id, agreement_tier, reason FROM review_queue
+    `SELECT doc_id, agreement_tier, reason, review_revision FROM review_queue
       WHERE resolved = 0 AND agreement_suppressed_at IS NULL
         AND COALESCE(agreement_attempts, 0) >= ?
         AND ${CAPPED_RECOVERY_REASON_EXCLUDE_SQL}
@@ -2738,6 +2745,10 @@ async function recoverExpiredCappedReviews(
   for (const row of rows) {
     const token = uuid();
     try {
+      // CAS on the review_revision this pass selected: a concurrent update
+      // (e.g. normalize() revising the row, changing its reason) bumps the
+      // revision, the lease fails, and we skip rather than branch on stale
+      // state like row.reason.
       const leased = await run(
         env.DB,
         `UPDATE review_queue
@@ -2745,11 +2756,12 @@ async function recoverExpiredCappedReviews(
           WHERE doc_id = ? AND resolved = 0 AND agreement_suppressed_at IS NULL
             AND COALESCE(agreement_attempts, 0) >= ?
             AND ${CAPPED_RECOVERY_REASON_EXCLUDE_SQL}
+            AND review_revision = ?
             AND (
               agreement_claim_token IS NULL OR agreement_claimed_at IS NULL
               OR agreement_claimed_at <= ?
             )`,
-        [token, nowIso, row.doc_id, max, expiredBefore],
+        [token, nowIso, row.doc_id, max, row.review_revision, expiredBefore],
       );
       if ((leased.meta?.changes ?? 0) === 0) continue;
       if (row.doc_id.startsWith('E-') && (row.reason ?? '').includes('empty_failure')) {
