@@ -6373,6 +6373,26 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         continue;
       }
       if (!extracted || extracted.transactions.length === 0) {
+        // An executive zero-row read carrying a parse disposition is a
+        // terminal signal, not "no extract": normalize() closes the filing
+        // verified_empty / ocr_unusable (or stages recovered rows) instead of
+        // leaving the row parked for the next reprocess pass.
+        if (
+          !dryRun
+          && extracted?.filing.chamber === 'executive'
+          && extracted.parseDisposition
+        ) {
+          try {
+            await normalize(c.env, extracted.filing, [], {
+              extractor: extracted.extractor,
+              modelVersion: extracted.modelVersion,
+              sourceText: extracted.raw || null,
+              parseDisposition: extracted.parseDisposition,
+            });
+          } catch (err) {
+            summary.errors.push(`${doc_id}: zero-row normalize failed: ${(err as Error).message}`);
+          }
+        }
         summary.skippedNoExtract += 1; summary.errors.push(`${doc_id}: no extract, extractor=${extracted?.extractor}, txCount=${extracted?.transactions?.length}`);
         continue;
       }
