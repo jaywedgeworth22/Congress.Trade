@@ -341,6 +341,37 @@ describe('classifyOgeTransactionText', () => {
       .toEqual({ disposition: 'unconfirmed', rows: [] });
   });
 
+  it('does not end Part 7 at a Summary of Contents marker when a table follows it', () => {
+    const bondi = 'E-undated-pam-bondi-2026-278term';
+    // Flattened extraction can drop the boilerplate BETWEEN the Part 7
+    // heading and its table: ending the section at the marker makes the gap
+    // read as a positively empty section while rows follow.
+    const markerThenTable =
+      'OGE Form 278e Part 7. Transactions Summary of Contents '
+      + '# DESCRIPTION TYPE DATE AMOUNT 1 Apple Inc. (AAPL) Purchase 01/05/2026 $1,001 - $15,000 '
+      + 'Part 8. Liabilities';
+    expect(ogePart7SectionLooksEmpty(markerThenTable)).toBe(false);
+    expect(classifyOgeTransactionText(markerThenTable, bondi).disposition).not.toBe('empty');
+    // The real production 278-T fixture shape: "Endnotes Summary of Contents"
+    // and a long boilerplate paragraph sit between the label and the table.
+    const endnotesThenTable =
+      'OGE Form 278e Part 7. Transactions Page 2 Endnotes Summary of Contents '
+      + 'The 278-T discloses purchases, sales, or exchanges of securities in excess of $1,000. '
+      + 'Privacy Act Statement Title I of the Ethics in Government Act of 1978 '
+      + '# DESCRIPTION TYPE DATE NOTIFICATION RECEIVED OVER 30 DAYS AGO AMOUNT '
+      + '1 Amazon.com, Inc. (AMZN) Sale 06/10/2022 No $1,001 - $15,000';
+    expect(ogePart7SectionLooksEmpty(endnotesThenTable)).toBe(false);
+    expect(classifyOgeTransactionText(endnotesThenTable, bondi).disposition).not.toBe('empty');
+    // A genuinely empty Part 7 whose text ends at the contents page still
+    // closes empty: only boilerplate follows the marker, no table.
+    const markerThenNothing =
+      'OGE Form 278e Part 7. Transactions Summary of Contents '
+      + '5. Other Income 6. Agreements 7. Transactions 8. Liabilities 9. Gifts';
+    expect(ogePart7SectionLooksEmpty(markerThenNothing)).toBe(true);
+    expect(classifyOgeTransactionText(markerThenNothing, bondi))
+      .toEqual({ disposition: 'empty', rows: [] });
+  });
+
   it('does not call a Part 7 that points at an attachment empty', () => {
     const bondi = 'E-undated-pam-bondi-2026-278term';
     // Rows live on the attached schedule; verified_empty would bury them.
