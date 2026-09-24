@@ -44,7 +44,13 @@ function makeEnv(
   securities: Array<{ ticker: string; name: string | null; aliases: string | null }>,
   opts: {
     failAudit?: boolean;
-    resolvedReview?: { resolved: number; review_revision: number; agreement_suppressed_at: string | null };
+    resolvedReview?: {
+      resolved: number;
+      review_revision: number;
+      agreement_suppressed_at: string | null;
+      payload?: string | null;
+    };
+    refuseClose?: boolean;
   } = {},
 ) {
   const cap: Captured = {
@@ -86,7 +92,9 @@ function makeEnv(
       },
       async run() {
         let changes = 1;
-        if (/INSERT(?: OR IGNORE)? INTO transactions/i.test(sql) && /json_each/i.test(sql)) {
+        if (opts.refuseClose && (/INSERT OR IGNORE INTO review_queue\s*\(\s*doc_id, reason, payload, created_at, resolved,/i.test(sql) || /UPDATE review_queue\s+SET resolved = 1/i.test(sql))) {
+          changes = 0;
+        } else if (/INSERT(?: OR IGNORE)? INTO transactions/i.test(sql) && /json_each/i.test(sql)) {
           const rows = JSON.parse(String(this._params[0])) as Array<Record<string, unknown>>;
           changes = 0;
           for (const row of rows) {
@@ -806,6 +814,75 @@ describe('normalize', () => {
       cap.batches[closeIdx].findIndex((sql) => /UPDATE review_queue\s+SET resolved = 1/i.test(sql))
     ];
     expect(closeParams).toContain(7);
+  });
+
+  it('preserves staged payload candidates when a zero-row executive close is refused', async () => {
+    // The terminal close is refused because the review payload stages
+    // candidates; routeToReview must not then rewrite that payload with an
+    // empty candidate list, or a later zero-row pass would close the filing
+    // verified-empty and lose them.
+    const stagedPayload = JSON.stringify({
+      transactionCount: 2,
+      transactions: [{ ticker: 'AAPL' }, { ticker: 'MSFT' }],
+    });
+    const { env, cap } = makeEnv([], {
+      resolvedReview: {
+        resolved: 0,
+        review_revision: 3,
+        agreement_suppressed_at: null,
+        payload: stagedPayload,
+      },
+      refuseClose: true,
+    });
+    const result = await normalize(
+      env,
+      filing({
+        docId: 'E-2026-pam-bondi-08-20-2026-278t',
+        chamber: 'executive',
+        docKind: 'text_pdf',
+        extractor: 'ogeText',
+      }),
+      [],
+      { extractor: 'ogeText', parseDisposition: 'empty' },
+    );
+    expect(result.needsReview).toBe(true);
+    // The close was refused; no INSERT (insert-if-absent) or UPDATE
+    // (routeToReview) against review_queue may have run.
+    expect(cap.reviewRows).toHaveLength(0);
+    expect(
+      cap.batches.flat().some((sql) => /UPDATE review_queue\s+SET reason/i.test(sql)),
+    ).toBe(false);
+  });
+
+  it('still rewrites the review when the existing payload holds no candidates', async () => {
+    const { env, cap } = makeEnv([], {
+      resolvedReview: {
+        resolved: 0,
+        review_revision: 3,
+        agreement_suppressed_at: null,
+        payload: JSON.stringify({ transactionCount: 0, transactions: [] }),
+      },
+      refuseClose: true,
+    });
+    const result = await normalize(
+      env,
+      filing({
+        docId: 'E-2026-pam-bondi-08-20-2026-278t',
+        chamber: 'executive',
+        docKind: 'text_pdf',
+        extractor: 'ogeText',
+      }),
+      [],
+      { extractor: 'ogeText', parseDisposition: 'empty' },
+    );
+    expect(result.needsReview).toBe(true);
+    // With nothing staged, the zero-row pass rewrites the review row with the
+    // empty payload as before.
+    expect(cap.reviewRows.length).toBeGreaterThan(0);
+    const updateParams = cap.reviewRows[cap.reviewRows.length - 1];
+    expect(String(updateParams[0])).toContain('extract_empty');
+    const payload = JSON.parse(String(updateParams[1])) as { transactionCount: number };
+    expect(payload.transactionCount).toBe(0);
   });
 
   it('closes a handwritten PTR sample / nothing-to-report extract as verified empty', async () => {
