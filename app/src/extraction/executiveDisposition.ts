@@ -124,6 +124,13 @@ async function writeClose(
                )
                AND NOT EXISTS (
                  SELECT 1 FROM transactions WHERE doc_id = ? AND deprecated_at IS NULL
+               )
+               -- Same atomic guard as the UPDATE close below: a nonempty
+               -- extraction_run persisted between the outer guard and this
+               -- batch must not be closed over on a first pass either.
+               AND NOT EXISTS (
+                 SELECT 1 FROM extraction_runs
+                  WHERE doc_id = ? AND ok = 1 AND COALESCE(row_count, 0) > 0
                )`,
         [
           docId,
@@ -132,6 +139,7 @@ async function writeClose(
           review.resolutionKind,
           review.resolutionReason,
           nowIso,
+          docId,
           docId,
           docId,
           docId,
