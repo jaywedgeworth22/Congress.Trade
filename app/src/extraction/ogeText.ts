@@ -266,6 +266,10 @@ export function classifyOgeTransactionText(text: string, docId = ''): OgeTextCla
 const PART7_HEADING_RE = /(?:^|\s)(?:part\s*7[.:\s]+transactions?|(?<!\d)7[.]\s*transactions?)\b/i;
 const PART7_HEADING_GLOBAL_RE = new RegExp(PART7_HEADING_RE.source, 'gi');
 const PART7_END_RE = /(?:^|\s)(?:part\s*8\b|(?<!\d)8[.]\s*[a-z]|summary\s+of\s+contents)/i;
+/** The real section boundary: the Part 8 heading, not front/back-matter boilerplate. */
+const PART7_REAL_END_RE = /(?:^|\s)(?:part\s*8\b|(?<!\d)8[.]\s*[a-z])/i;
+/** Table evidence used both for the empty-section body guard and the boilerplate-end guard. */
+const PART7_TABLE_EVIDENCE_RE = /#|\b(?:description|type|date|amount|notification)\b/i;
 /** One short table-of-contents entry: "6. Agreements" / "Part 6 Agreements". */
 const PART7_TOC_ENTRY_RE = /(?:part\s*\d{1,2}\b|(?<!\d)\d{1,2}[.])\s*[A-Za-z]/i;
 /**
@@ -309,6 +313,19 @@ export function ogePart7SectionLooksEmpty(text: string | null | undefined): bool
     // A Part 7 whose end we cannot see is not evidence; a later heading may
     // still be readable.
     if (!end) continue;
+    // "Summary of Contents" is boilerplate that flattened extraction can drop
+    // BETWEEN the Part 7 heading and its table (the production 278-T fixture
+    // reads "... Endnotes Summary of Contents The 278-T ... # DESCRIPTION ...
+    // 1 Amazon ..."). Ending the section there makes the heading-to-marker
+    // gap look like a positively empty section while rows follow. When table
+    // evidence sits between the marker and the real Part 8 boundary, the
+    // marker is not the section end: treat the end as unseen and move on.
+    if (/summary\s+of\s+contents/i.test(end[0])) {
+      const tail = rest.slice(end.index + end[0].length);
+      const realEnd = PART7_REAL_END_RE.exec(tail);
+      const window = realEnd ? tail.slice(0, realEnd.index) : tail;
+      if (PART7_TABLE_EVIDENCE_RE.test(window)) continue;
+    }
     const before = normalized.slice(
       Math.max(0, heading.index - PART7_TOC_ENTRY_WINDOW),
       heading.index,
