@@ -309,6 +309,19 @@ describe('classifyOgeTransactionText', () => {
       .toEqual({ disposition: 'empty', rows: [] });
   });
 
+  it('does not treat row 8 of a Part 7 table as the section end', () => {
+    const bondi = 'E-undated-pam-bondi-2026-278term';
+    // "8. Apple Inc ..." is row 8 of the table, but the bare "8. <word>"
+    // end alternative used to take it as the Part 8 boundary: the empty
+    // "body" before it then closed the filing verified_empty over a trade.
+    const text = 'OGE Form 278e Part 7. Transactions 8. Apple Inc Purchase 01/05/2026 $1,001 - $15,000 Part 8. Liabilities';
+    expect(ogePart7SectionLooksEmpty(text)).toBe(false);
+    expect(classifyOgeTransactionText(text, bondi)).toEqual({ disposition: 'unconfirmed', rows: [] });
+    // The titled forms still bound the section.
+    expect(ogePart7SectionLooksEmpty('OGE Form 278e 7. Transactions 8. Liabilities')).toBe(true);
+    expect(ogePart7SectionLooksEmpty('OGE Form 278e 7. Transactions Part 8. Liabilities')).toBe(true);
+  });
+
   it('keeps a short real Part 7 out of the TOC filter (None-bodied neighbors)', () => {
     const bondi = 'E-undated-pam-bondi-2026-278term';
     // A real empty 278e whose neighboring parts are also short: "Part 6."
