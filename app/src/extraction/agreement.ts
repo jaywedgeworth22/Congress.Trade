@@ -2723,11 +2723,13 @@ async function recoverExpiredCappedReviews(
   const now = new Date();
   const nowIso = now.toISOString();
   const expiredBefore = leaseExpiredBefore(now);
+  // review_revision is NOT NULL DEFAULT 1 (migration 0037_review_revision),
+  // so the lease CAS below can compare it with = directly.
   const rows = await all<{
     doc_id: string;
     agreement_tier: number | null;
     reason: string | null;
-    review_revision: number | null;
+    review_revision: number;
   }>(
     env.DB,
     `SELECT doc_id, agreement_tier, reason, review_revision FROM review_queue
