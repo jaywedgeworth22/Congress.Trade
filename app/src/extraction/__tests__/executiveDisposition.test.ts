@@ -343,6 +343,27 @@ describe('sweepKnownParkedExecutiveTerminals', () => {
     expect(trump.resolved).toBe(0);
   });
 
+  it('does not let an older disputed batch veto a later corroborated batch', async () => {
+    const db = await sqliteDatabase();
+    seedReview(db, TRUMP_UNREADABLE_DOC_ID, 'agreement_cascade_unresolved');
+    const insert = db.prepare(
+      `INSERT INTO extraction_runs (doc_id, batch_id, provider, model, ok, row_count, kind, result_json)
+       VALUES (?, ?, ?, ?, 1, ?, 'agreement', '[]')`,
+    );
+    // batch-1: two models disagree (33 vs 472).
+    insert.run(TRUMP_UNREADABLE_DOC_ID, 'batch-1', 'gemini', 'gemini-a', 33);
+    insert.run(TRUMP_UNREADABLE_DOC_ID, 'batch-1', 'openai', 'gpt-a', 472);
+    // batch-2: two models agree (1150 vs 1160) — a real read of the filing.
+    insert.run(TRUMP_UNREADABLE_DOC_ID, 'batch-2', 'gemini', 'gemini-a', 1150);
+    insert.run(TRUMP_UNREADABLE_DOC_ID, 'batch-2', 'openai', 'gpt-a', 1160);
+
+    const result = await sweepKnownParkedExecutiveTerminals(envFor(db));
+    expect(result).toEqual({ verifiedEmpty: 0, unreadable: 0 });
+    const trump = db.prepare(`SELECT resolved FROM review_queue WHERE doc_id = ?`)
+      .get(TRUMP_UNREADABLE_DOC_ID) as { resolved: number };
+    expect(trump.resolved).toBe(0);
+  });
+
   it('does not count same-model retries or cross-batch runs as agreement', async () => {
     const db = await sqliteDatabase();
     seedReview(db, TRUMP_UNREADABLE_DOC_ID, 'agreement_cascade_unresolved');
