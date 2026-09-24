@@ -470,6 +470,29 @@ describe('closeUnreadableExecutive guards', () => {
     expect(closedAfter).toBe(true);
   });
 
+  it('does not close a review that holds staged candidate transactions only in its payload', async () => {
+    const db = await sqliteDatabase();
+    seedReview(db, BONDI_EMPTY_DOC_ID, 'extract_empty_failure');
+    // routeToReview stages low-confidence candidates only in the payload:
+    // no live transaction, no extraction_runs row, so both table guards pass.
+    db.prepare(`UPDATE review_queue SET payload = ? WHERE doc_id = ?`).run(
+      JSON.stringify({ transactionCount: 2, transactions: [{}, {}] }),
+      BONDI_EMPTY_DOC_ID,
+    );
+
+    const closed = await closeVerifiedEmptyExecutive(envFor(db), BONDI_EMPTY_DOC_ID);
+    expect(closed).toBe(false);
+    const row = db.prepare(
+      `SELECT resolved, review_revision FROM review_queue WHERE doc_id = ?`,
+    ).get(BONDI_EMPTY_DOC_ID) as { resolved: number; review_revision: number };
+    expect(row).toEqual({ resolved: 0, review_revision: 1 });
+
+    // A payload with no staged candidates still closes.
+    db.prepare(`UPDATE review_queue SET payload = '{}' WHERE doc_id = ?`).run(BONDI_EMPTY_DOC_ID);
+    const closedEmpty = await closeVerifiedEmptyExecutive(envFor(db), BONDI_EMPTY_DOC_ID);
+    expect(closedEmpty).toBe(true);
+  });
+
   it('does not close when a nonempty extraction_run lands between the guard and the close', async () => {
     const db = await sqliteDatabase();
     seedReview(db, BONDI_EMPTY_DOC_ID, 'extract_empty_failure');
