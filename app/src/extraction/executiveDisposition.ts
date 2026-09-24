@@ -320,11 +320,16 @@ export async function sweepKnownParkedExecutiveTerminals(
   let unreadable = 0;
   for (const target of targets) {
     // Bind the close to the revision this SELECT observed: a normalize()
-    // revision landing between the two would otherwise be closed over.
+    // revision landing between the two would otherwise be closed over.  Only
+    // correct a row still carrying the legacy parked reason: an operator
+    // retry-auto rewrites it to auto_retry_requested and clears suppression,
+    // and this sweep must not re-apply the hard-coded close without
+    // re-reading the PDF.
     const open = await get<{ doc_id: string; review_revision: number }>(
       env.DB,
       `SELECT doc_id, review_revision FROM review_queue
         WHERE doc_id = ? AND resolved = 0 AND agreement_suppressed_at IS NULL
+          AND (reason LIKE 'extract_empty_failure%' OR reason LIKE 'agreement_cascade_unresolved%')
         LIMIT 1`,
       [target.docId],
     ).catch(() => null);
