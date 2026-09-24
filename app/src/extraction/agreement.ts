@@ -620,12 +620,17 @@ export async function loadDocBytes(
       { envOverride: env },
     );
     if (!res.ok) {
+      // A permanent 4xx (400/401/403/404/410, ...) is the source's answer, not
+      // a blip: capped recovery keeps the lease on retryable skips, so marking
+      // one retryable loops the row forever instead of reaching human review.
+      const retryable =
+        res.status === 408 || res.status === 429 || res.status >= 500;
       return {
         skip: {
           docId,
           outcome: 'skipped',
           reason: `source_url fetch HTTP ${res.status}`,
-          retryable: true,
+          retryable,
         },
       };
     }
