@@ -6358,6 +6358,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       filingsPromoted: 0, //    review -> feed (now clears the bar)
       rowsPromoted: 0,
       filingsStillInReview: 0,
+      settledZeroRow: 0, //      zero-row reads normalize() settled (empty/unreadable)
       skippedNoExtract: 0,
       skippedCountMismatch: 0,
       errors: [] as string[],
@@ -6389,6 +6390,11 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
               sourceText: extracted.raw || null,
               parseDisposition: extracted.parseDisposition,
             });
+            // A settled zero-row read is a success, not a skip: counting it
+            // skippedNoExtract and pushing a "no extract" error would report
+            // ok:false for a pass that closed the filing.
+            summary.settledZeroRow += 1;
+            continue;
           } catch (err) {
             summary.errors.push(`${doc_id}: zero-row normalize failed: ${(err as Error).message}`);
           }
