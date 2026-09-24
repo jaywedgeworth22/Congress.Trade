@@ -114,6 +114,7 @@ import {
 } from './extractRouting.ts';
 import { notifyReviewQueuePublisher } from '../ingestion/reviewQueueNotify.ts';
 import { shouldRetryFetchStatus } from '../ingestion/fetcher.ts';
+import { TERMINAL_REVIEW_REASON_EXCLUDE_SQL_UNALIASED } from './reviewQueueHealth.ts';
 import { isUsdMeteredExtractionProvider, LLM_DOC_BUDGET_ERROR_MARKER } from '../shared/llmSpend.ts';
 import {
   closeUnreadableExecutive,
@@ -2704,7 +2705,7 @@ export async function handleAgreementCheck(
 export const CAPPED_RECOVERY_REASON_EXCLUDE_SQL = `
   COALESCE(reason, '') <> 'agreement_cascade_unresolved'
   AND COALESCE(reason, '') NOT LIKE '%oge_text_unreadable%'
-  AND COALESCE(reason, '') NOT LIKE '%ocr_unusable%'
+  AND ${TERMINAL_REVIEW_REASON_EXCLUDE_SQL_UNALIASED}
 `.trim();
 
 /**
