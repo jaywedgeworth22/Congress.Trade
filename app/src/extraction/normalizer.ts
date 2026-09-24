@@ -208,6 +208,7 @@ interface ReviewSnapshot {
   resolved: number;
   review_revision: number;
   agreement_suppressed_at: string | null;
+  payload: string | null;
 }
 
 export interface FlaggedTx {
@@ -468,7 +469,7 @@ export async function normalize(
   // a human decision that lands first wins without partial transaction rows.
   const reviewSnapshot = await get<ReviewSnapshot>(
     env.DB,
-    `SELECT resolved, review_revision, agreement_suppressed_at
+    `SELECT resolved, review_revision, agreement_suppressed_at, payload
        FROM review_queue WHERE doc_id = ?`,
     [filing.docId],
   );
@@ -1681,6 +1682,25 @@ async function routeToReview(
   review: ReviewSnapshot | null,
 ): Promise<boolean> {
   const reason = meta.reasonOverride ?? reviewReason(flagged, minConfidence);
+  // A zero-row pass has nothing new to stage. When the existing review holds
+  // staged candidates only in its payload (a terminal close was refused for
+  // exactly that reason), rewriting the payload with an empty candidate list
+  // would let a later zero-row pass close the filing verified-empty and lose
+  // them. Leave the row untouched instead.
+  if (flagged.length === 0 && review && review.resolved !== 1) {
+    try {
+      const staged = JSON.parse(review.payload ?? '{}') as { transactionCount?: unknown };
+      if (typeof staged.transactionCount === 'number' && staged.transactionCount > 0) {
+        console.warn(
+          'routeToReview: zero-row pass preserves staged payload candidates:',
+          filing.docId,
+        );
+        return true;
+      }
+    } catch {
+      // Unparseable payload: fall through and rewrite as usual.
+    }
+  }
   const truncated = flagged.length > MAX_PUBLISH_TRANSACTIONS_PER_FILING;
   const payload = JSON.stringify({
     minConfidence,
