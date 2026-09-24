@@ -95,6 +95,11 @@ async function sqliteDatabase(): Promise<SqliteDatabase> {
       row_count INTEGER,
       result_json TEXT
     );
+    CREATE TABLE securities_master (
+      ticker TEXT,
+      name TEXT,
+      aliases TEXT
+    );
     CREATE TABLE ingestion_decisions (
       id TEXT PRIMARY KEY,
       doc_id TEXT,
@@ -237,6 +242,22 @@ describe('sweepKnownParkedExecutiveTerminals', () => {
     const second = await sweepKnownParkedExecutiveTerminals(env);
     expect(second).toEqual({ verifiedEmpty: 0, unreadable: 0 });
     expect(db.prepare(`SELECT COUNT(*) AS n FROM ingestion_decisions`).get()).toEqual({ n: 2 });
+  });
+
+  it('leaves an operator retry-auto row alone (no re-close without re-reading the PDF)', async () => {
+    const db = await sqliteDatabase();
+    // retry-auto rewrites the reason and clears suppression; the corrective
+    // sweep must only correct rows still carrying the legacy parked reason.
+    seedReview(db, BONDI_EMPTY_DOC_ID, 'auto_retry_requested: extract_empty_failure');
+    seedReview(db, TRUMP_UNREADABLE_DOC_ID, 'auto_retry_requested: extract_empty_failure');
+
+    const result = await sweepKnownParkedExecutiveTerminals(envFor(db));
+    expect(result).toEqual({ verifiedEmpty: 0, unreadable: 0 });
+    const rows = db.prepare(`SELECT resolved, reason FROM review_queue ORDER BY doc_id`)
+      .all() as Array<{ resolved: number; reason: string }>;
+    expect(rows.every((row) => row.resolved === 0)).toBe(true);
+    expect(rows.every((row) => row.reason.startsWith('auto_retry_requested'))).toBe(true);
+    expect(db.prepare(`SELECT COUNT(*) AS n FROM ingestion_decisions`).get()).toEqual({ n: 0 });
   });
 
   it('does not verified_empty a doc that already has a successful non-empty read or live rows', async () => {
@@ -657,6 +678,48 @@ describe('recoverExpiredCappedReviews', () => {
     });
 
     // Idempotent: a second pass has nothing left to do.
+    const again = await maybeRunAgreementAutopublish(env);
+    expect(again).toMatchObject({ terminalized: 0 });
+  });
+
+  it('terminalizes a recovered-rows settlement that stays in review (no re-normalization every pass)', async () => {
+    const db = await sqliteDatabase();
+    seedReview(db, 'E-2026-rows-278t', 'extract_empty_failure');
+    db.prepare(`UPDATE filings SET raw_object_key = 'raw/rows.pdf' WHERE doc_id = 'E-2026-rows-278t'`).run();
+    classifyOverride.fn = async () => ({
+      disposition: 'rows',
+      rows: [{
+        txDate: '2026-06-19', owner: null, assetName: 'Apple Inc.', ticker: 'AAPL',
+        assetType: null, assetTypeName: null, txType: 'B', amountMin: 1001, amountMax: 15000,
+        isOption: false, capGainsOver200: false,
+        rawText: '1 Apple Inc. Purchase 06/19/2026 No $1,001 - $15,000',
+        confidence: 0.3,
+      }],
+    });
+    const env = withBytes(db, async () => ({ arrayBuffer: async () => new ArrayBuffer(8) }));
+
+    const out = await maybeRunAgreementAutopublish(env);
+    expect(out).toMatchObject({ terminalized: 1 });
+
+    // routeToReview cleared the claim, so a token-CAS finish matches nothing;
+    // the recovery must terminalize the settlement's new review_revision
+    // instead: terminal label on, staged candidates preserved in the payload.
+    const row = db.prepare(
+      `SELECT reason, resolved, agreement_claim_token, payload FROM review_queue WHERE doc_id = ?`,
+    ).get('E-2026-rows-278t') as {
+      reason: string; resolved: number; agreement_claim_token: string | null; payload: string;
+    };
+    expect(row.resolved).toBe(0);
+    expect(row.reason).toBe('agreement_cascade_unresolved');
+    expect(row.agreement_claim_token).toBeNull();
+    const payload = JSON.parse(row.payload) as { transactionCount?: number; transactions?: unknown[] };
+    expect(payload.transactionCount).toBe(1);
+    expect(payload.transactions).toHaveLength(1);
+
+    // A second pass leaves the terminalized row alone.
+    classifyOverride.fn = async () => {
+      throw new Error('must not re-classify a terminalized row');
+    };
     const again = await maybeRunAgreementAutopublish(env);
     expect(again).toMatchObject({ terminalized: 0 });
   });
