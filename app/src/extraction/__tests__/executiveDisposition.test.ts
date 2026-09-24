@@ -360,6 +360,58 @@ describe('closeUnreadableExecutive guards', () => {
     });
     expect(closedCurrent).toBe(true);
   });
+
+  it('does not close on a stale claim token after a concurrent clear of the lease', async () => {
+    const db = await sqliteDatabase();
+    seedReview(db, TRUMP_UNREADABLE_DOC_ID, 'agreement_cascade_unresolved');
+    // The row's token is NULL (a concurrent normalize() cleared the lease),
+    // but the worker still presents its stale token. A NULL-permissive
+    // predicate would let the stale worker close the newer review.
+    const closed = await closeUnreadableExecutive(envFor(db), TRUMP_UNREADABLE_DOC_ID, {
+      claimToken: 'stale-token',
+    });
+    expect(closed).toBe(false);
+    const row = db.prepare(
+      `SELECT resolved, review_revision FROM review_queue WHERE doc_id = ?`,
+    ).get(TRUMP_UNREADABLE_DOC_ID) as { resolved: number; review_revision: number };
+    expect(row).toEqual({ resolved: 0, review_revision: 1 });
+
+    // The live token still closes, and the close clears the lease columns.
+    db.prepare(
+      `UPDATE review_queue SET agreement_claim_token = 'live-token' WHERE doc_id = ?`,
+    ).run(TRUMP_UNREADABLE_DOC_ID);
+    const closedLive = await closeUnreadableExecutive(envFor(db), TRUMP_UNREADABLE_DOC_ID, {
+      claimToken: 'live-token',
+    });
+    expect(closedLive).toBe(true);
+  });
+
+  it('does not close when a nonempty extraction_run lands between the guard and the close', async () => {
+    const db = await sqliteDatabase();
+    seedReview(db, BONDI_EMPTY_DOC_ID, 'extract_empty_failure');
+    const env = envFor(db);
+    // Simulate the race: the outer emptiness guards pass, then a concurrent
+    // worker persists a nonempty extraction_run before the close batch runs.
+    const realPrepare = env.DB.prepare.bind(env.DB);
+    let injected = false;
+    (env.DB as { prepare: (sql: string) => unknown }).prepare = (sql: string) => {
+      if (!injected && /UPDATE\s+review_queue/i.test(sql)) {
+        injected = true;
+        db.prepare(
+          `INSERT INTO extraction_runs (doc_id, ok, row_count, result_json) VALUES (?, 1, 7, '[{}]')`,
+        ).run(BONDI_EMPTY_DOC_ID);
+      }
+      return realPrepare(sql);
+    };
+
+    const closed = await closeVerifiedEmptyExecutive(env, BONDI_EMPTY_DOC_ID);
+    expect(injected).toBe(true);
+    expect(closed).toBe(false);
+    const row = db.prepare(
+      `SELECT resolved, review_revision FROM review_queue WHERE doc_id = ?`,
+    ).get(BONDI_EMPTY_DOC_ID) as { resolved: number; review_revision: number };
+    expect(row).toEqual({ resolved: 0, review_revision: 1 });
+  });
 });
 
 describe('recoverExpiredCappedReviews', () => {
