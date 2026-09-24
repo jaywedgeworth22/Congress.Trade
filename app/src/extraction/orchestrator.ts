@@ -19,6 +19,7 @@ import { get, run } from '../shared/db.ts';
 import {
   buildExtractorPipeline,
   type ExtractorModelRun,
+  type ExtractorParseDisposition,
   type ExtractorResult,
   type ExtractorUsage,
 } from '../extractors/types.ts';
@@ -190,6 +191,7 @@ export async function extractAndNormalize(
     extractor: extracted.extractor,
     modelVersion: extracted.modelVersion ?? null,
     sourceText: extracted.raw,
+    parseDisposition: extracted.parseDisposition,
   });
 
   // Fast path: a doc that just landed in review gets a cross-vendor agreement
@@ -230,6 +232,7 @@ export interface ExtractedFiling {
   /** Extractor raw text. Part 7 "None" is visible here when the parser yields 0 rows. */
   raw: string;
   modelRuns?: ExtractorModelRun[];
+  parseDisposition?: ExtractorParseDisposition;
 }
 
 /**
@@ -441,5 +444,6 @@ export async function extractParsed(
     modelVersion: result.modelVersion ?? null,
     raw: result.raw ?? '',
     modelRuns: result.modelRuns,
+    parseDisposition: result.parseDisposition,
   };
 }

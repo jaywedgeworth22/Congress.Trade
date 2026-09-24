@@ -28,6 +28,13 @@ import {
   looksLikePtrFormSampleRow,
   looksLikeSeeAttachmentPointer,
 } from './extractRouting.ts';
+import type { ExtractorParseDisposition } from '../extractors/types.ts';
+import {
+  closeUnreadableExecutive,
+  closeVerifiedEmptyExecutive,
+  EXECUTIVE_EMPTY_RESOLUTION_REASON,
+  OGE_TEXT_UNREADABLE_REASON,
+} from './executiveDisposition.ts';
 import { all, batch, fromBool, get, parseJson, run } from '../shared/db.ts';
 import { isValidBracket, matchBracket, nearestBracket } from '../shared/brackets.ts';
 import { canonicalizeAssetType, inferHouseAssetTypeCode, HOUSE_ASSET_TYPE_NAMES } from '../shared/assetTypes.ts';
@@ -195,12 +202,18 @@ export interface NormalizeResult {
   published: boolean;
   /** Review-queue reason when needsReview is true (agreement hard-stop input). */
   reviewReason?: string;
+  /** True when this invocation resolved the filing's review state with
+   *  nothing new to persist (a terminal no-op success, e.g.
+   *  amendment_already_persisted / deleted_rows_applied).  Distinct from a
+   *  lost CAS, which is also needsReview:false / published:false. */
+  settled?: boolean;
 }
 
 interface ReviewSnapshot {
   resolved: number;
   review_revision: number;
   agreement_suppressed_at: string | null;
+  payload: string | null;
 }
 
 export interface FlaggedTx {
@@ -347,8 +360,10 @@ export async function normalize(
     extractor?: string;
     modelVersion?: string | null;
     source?: TxSource;
-    /** Full document text. Zero parsed rows still need this to see Part 7 "None". */
+    /** Full document text.  Zero parsed rows still need this to see Part 7 "None". */
     sourceText?: string | null;
+    /** Set by ogeText.  `empty` and `unreadable` are different zero-row outcomes. */
+    parseDisposition?: ExtractorParseDisposition;
   },
 ): Promise<NormalizeResult> {
   const nowIso = new Date().toISOString();
@@ -459,7 +474,7 @@ export async function normalize(
   // a human decision that lands first wins without partial transaction rows.
   const reviewSnapshot = await get<ReviewSnapshot>(
     env.DB,
-    `SELECT resolved, review_revision, agreement_suppressed_at
+    `SELECT resolved, review_revision, agreement_suppressed_at, payload
        FROM review_queue WHERE doc_id = ?`,
     [filing.docId],
   );
@@ -521,6 +536,32 @@ export async function normalize(
   }
 
   if (needsReview) {
+    // A refused 278-T is not an empty filing.  docClassifier calls every
+    // text_pdf `typed`, so this is the close the empty doc-class path misses.
+    if (
+      filing.chamber === 'executive'
+      && flagged.length === 0
+      && reviewSnapshot?.resolved !== 1
+      && meta?.parseDisposition === 'unreadable'
+    ) {
+      const closed = await closeUnreadableExecutive(env, filing.docId, {
+        nowIso,
+        respectSuppression: true,
+        insertIfAbsent: true,
+        // Close only the review version we read: a human revision that lands
+        // after the snapshot must win over this stale zero-row parse.
+        reviewRevision: reviewSnapshot?.review_revision ?? null,
+      });
+      if (closed) {
+        return {
+          transactions: [],
+          minConfidence: 0,
+          needsReview: false,
+          published: false,
+          reviewReason: OGE_TEXT_UNREADABLE_REASON,
+        };
+      }
+    }
     // Form-sample chrome alone is not NTR.  Example Mega Corp is printed on
     // every House PTR; OCR often reads it and misses the real trades.
     if (flagged.length === 0 && sawNothingToReport) {
@@ -544,6 +585,33 @@ export async function normalize(
         };
       }
     }
+    // 278e with no 278-T table and no rows, including a Part 7 that does not
+    // literally say None.  A successful read that already found rows blocks this.
+    if (
+      filing.chamber === 'executive'
+      && flagged.length === 0
+      && reviewSnapshot?.resolved !== 1
+      && meta?.parseDisposition === 'empty'
+    ) {
+      const closed = await closeVerifiedEmptyExecutive(env, filing.docId, {
+        nowIso,
+        respectSuppression: true,
+        insertIfAbsent: true,
+        // Close only the review version we read: a retry-auto that bumps the
+        // revision must not let a stale empty parse close the freshly
+        // released row (same guard as the unreadable branch above).
+        reviewRevision: reviewSnapshot?.review_revision ?? null,
+      });
+      if (closed) {
+        return {
+          transactions: [],
+          minConfidence: 0,
+          needsReview: false,
+          published: false,
+          reviewReason: EXECUTIVE_EMPTY_RESOLUTION_REASON,
+        };
+      }
+    }
     if (flagged.length === 0 && deletedFlagged.length > 0) {
       await deprecateDeletedMatches(env, filing, deletedFlagged, nowIso);
       const closed = await resolveProcessedNoNewRows(
@@ -560,12 +628,19 @@ export async function normalize(
           needsReview: false,
           published: false,
           reviewReason: 'deleted_rows_applied',
+          settled: true,
         };
       }
     }
     let reason = exceedsPublishLimit
       ? classifyRowLimitReason(flagged)
       : reviewReason(flagged, minConfidence, confThreshold);
+    // A refused text layer that could not be closed still must not be labeled
+    // as an empty extract.  ocr_unusable is already a health terminal and an
+    // agreement hard-stop.
+    if (filing.chamber === 'executive' && meta?.parseDisposition === 'unreadable' && flagged.length === 0) {
+      reason = OGE_TEXT_UNREADABLE_REASON;
+    }
     // When every extracted row was form chrome (or empty after drop), tag the
     // park reason so ops/dashboard can tell OCR letterhead floods from real
     // low-confidence trades — and agreement can skip burning budget on them.
@@ -578,7 +653,7 @@ export async function normalize(
     // hundreds of fake rows for humans/agreement — empty extract_empty class
     // so local-vision pending can re-claim the stored raw copy.
     let reviewFlagged = flagged;
-    if (ocrUnusable && !exceedsPublishLimit) {
+    if (ocrUnusable && !exceedsPublishLimit && meta?.parseDisposition !== 'unreadable') {
       // Keep dated, non-chrome rows (amendment letters with one real Treasury
       // line). Only wipe when nothing recoverable remains.
       const keepable = flagged.filter((f) =>
@@ -610,6 +685,7 @@ export async function normalize(
           exceedsPublishLimit
           || (flagged.length === 0 && droppedFormChrome > 0)
           || ocrUnusable
+          || (filing.chamber === 'executive' && meta?.parseDisposition === 'unreadable')
             ? reason
             : undefined,
       },
@@ -647,6 +723,7 @@ export async function normalize(
       needsReview: !closed,
       published: false,
       reviewReason: deletedFlagged.length > 0 ? 'deleted_rows_applied' : 'amendment_already_persisted',
+      settled: closed,
     };
   }
 
@@ -1616,6 +1693,25 @@ async function routeToReview(
   review: ReviewSnapshot | null,
 ): Promise<boolean> {
   const reason = meta.reasonOverride ?? reviewReason(flagged, minConfidence);
+  // A zero-row pass has nothing new to stage. When the existing review holds
+  // staged candidates only in its payload (a terminal close was refused for
+  // exactly that reason), rewriting the payload with an empty candidate list
+  // would let a later zero-row pass close the filing verified-empty and lose
+  // them. Leave the row untouched instead.
+  if (flagged.length === 0 && review && review.resolved !== 1) {
+    try {
+      const staged = JSON.parse(review.payload ?? '{}') as { transactionCount?: unknown };
+      if (typeof staged.transactionCount === 'number' && staged.transactionCount > 0) {
+        console.warn(
+          'routeToReview: zero-row pass preserves staged payload candidates:',
+          filing.docId,
+        );
+        return true;
+      }
+    } catch {
+      // Unparseable payload: fall through and rewrite as usual.
+    }
+  }
   const truncated = flagged.length > MAX_PUBLISH_TRANSACTIONS_PER_FILING;
   const payload = JSON.stringify({
     minConfidence,

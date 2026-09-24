@@ -1,9 +1,10 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { PDFDocument } from 'pdf-lib';
+import { PDFDocument, StandardFonts } from 'pdf-lib';
 import {
   allSuccessfulReadsEmpty,
   handleAgreementCheck,
   processAgreementCascadeTier2,
+  processAgreementDoc,
   type AgreementModelsC,
 } from '../agreement.ts';
 import type { CandidateDocResult } from '../bakeoff.ts';
@@ -13,6 +14,21 @@ import type { CandidateDocResult } from '../bakeoff.ts';
 async function validPdfArrayBuffer(): Promise<ArrayBuffer> {
   const pdf = await PDFDocument.create();
   pdf.addPage([200, 200]);
+  const bytes = await pdf.save();
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
+/** A 278-T PDF whose text layer holds one real transaction row: the
+ *  deterministic ogeText parser must recover it from a zero-read settlement. */
+async function executiveRowsPdfArrayBuffer(): Promise<ArrayBuffer> {
+  const pdf = await PDFDocument.create();
+  const page = pdf.addPage([612, 792]);
+  const font = await pdf.embedFont(StandardFonts.Helvetica);
+  const lines = [
+    '# DESCRIPTION TYPE DATE NOTIFICATION RECEIVED OVER 30 DAYS AGO AMOUNT',
+    '1 Apple Inc. (AAPL) Purchase 01/05/2026 No $1,001 - $15,000',
+  ];
+  lines.forEach((line, i) => page.drawText(line, { x: 36, y: 740 - i * 14, size: 10, font }));
   const bytes = await pdf.save();
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
 }
@@ -76,7 +92,7 @@ interface Captured {
   decisions: Array<{ action: unknown; source: unknown; reason: unknown; payload: Record<string, unknown> | null }>;
 }
 
-function makeEnv(opts: { pageCount?: number | null; rawBytes?: number | null; priorAttempts?: number; maxAttempts?: string; env?: Record<string, unknown> } = {}) {
+function makeEnv(opts: { pageCount?: number | null; rawBytes?: number | null; priorAttempts?: number; maxAttempts?: string; env?: Record<string, unknown>; rawDocBytes?: ArrayBuffer } = {}) {
   const cap: Captured = { inserted: [], resolved: [], sent: [], reviewFlags: [], decisions: [] };
   const review = {
     resolved: 0,
@@ -94,7 +110,9 @@ function makeEnv(opts: { pageCount?: number | null; rawBytes?: number | null; pr
         bind(...p: unknown[]) { this.params = p; return this; },
         async first<T>() {
           if (/SELECT doc_id, chamber, filer_id/i.test(sql)) {
-            return { doc_id: this.params[0], chamber: 'house', filer_id: 'P1', filing_type: 'P', filed_date: '2026-06-20', source_url: 'u', raw_object_key: 'raw/x', ingest_status: 'needs_review', doc_kind: 'scanned_pdf', extractor: null, model_version: null, confidence: null, first_seen_at: '2026-06-20', source_updated_at: null, error: null } as T;
+            const docId = String(this.params[0]);
+            const executive = docId.startsWith('E-');
+            return { doc_id: docId, chamber: executive ? 'executive' : 'house', filer_id: 'P1', filing_type: 'P', filed_date: '2026-06-20', source_url: 'u', raw_object_key: 'raw/x', ingest_status: 'needs_review', doc_kind: executive ? 'text_pdf' : 'scanned_pdf', extractor: executive ? 'ogeText' : null, model_version: null, confidence: null, first_seen_at: '2026-06-20', source_updated_at: null, error: null } as T;
           }
           if (/SELECT page_count, raw_bytes FROM filings/i.test(sql)) {
             return { page_count: opts.pageCount ?? null, raw_bytes: opts.rawBytes ?? null } as T;
@@ -110,6 +128,7 @@ function makeEnv(opts: { pageCount?: number | null; rawBytes?: number | null; pr
               agreement_suppressed_at: null,
               agreement_suppression_reason: null,
               review_revision: review.revision,
+              payload: null,
             } as T;
           }
           if (/SELECT payload, review_revision FROM review_queue/i.test(sql)) {
@@ -215,6 +234,9 @@ function makeEnv(opts: { pageCount?: number | null; rawBytes?: number | null; pr
         },
       };
     },
+    async batch(statements: Array<{ run(): Promise<unknown> }>) {
+      return Promise.all(statements.map((statement) => statement.run()));
+    },
   } as unknown as D1Database;
 
   const env = {
@@ -225,7 +247,11 @@ function makeEnv(opts: { pageCount?: number | null; rawBytes?: number | null; pr
     AGREEMENT_MAX_ATTEMPTS: opts.maxAttempts,
     OPENAI_API_KEY: 'k', ANTHROPIC_API_KEY: 'k', MISTRAL_API_KEY: 'k',
     DB: db,
-    RAW_FILES: { get: async () => ({ arrayBuffer: validPdfArrayBuffer }) },
+    RAW_FILES: {
+      get: async () => ({
+        arrayBuffer: opts.rawDocBytes ? async () => opts.rawDocBytes : validPdfArrayBuffer,
+      }),
+    },
     INGEST_QUEUE: { send: async (m: unknown) => { cap.sent.push(m); } },
     DELIVERY_QUEUE: { send: async () => {}, sendBatch: async () => {} },
     ...(opts.env ?? {}),
@@ -310,6 +336,44 @@ describe('agreement cascade — tier 1', () => {
     expect(review.claimToken).toBeNull();
     expect(review.attempts).toBeGreaterThanOrEqual(3);
     expect(cap.reviewFlags.some((f) => f.reason === 'extract_empty_failure')).toBe(true);
+  });
+
+  it('executive zero-read settlement routes deterministic rows through normalization', async () => {
+    // Both agreement reads come back empty, but the deterministic parser
+    // finds a real 278-T row in the stored PDF.  The settlement must route
+    // that row through normalization instead of stamping
+    // extract_empty_failure over it.
+    stub(asJson([]), asJson([]));
+    const rawDocBytes = await executiveRowsPdfArrayBuffer();
+    const { env, cap } = makeEnv({ rawDocBytes });
+    const res = await handleAgreementCheck(env, 'E-2026-jane-doe-01-15-2026-278t', 'raw/x');
+    expect(res).toMatchObject({
+      reason: 'deterministic_rows_recovered',
+      flags: expect.arrayContaining(['deterministic_rows_recovered']),
+    });
+    expect(res?.outcome).not.toBe('agree_but_hardfail');
+    expect(cap.decisions.some((d) => d.action === 'extract_empty_failure')).toBe(false);
+    expect(cap.reviewFlags.some((f) => String(f.reason).includes('extract_empty_failure'))).toBe(false);
+  });
+
+  it('operator reprocess (processAgreementDoc, non-dry) settles an executive zero-read', async () => {
+    // The /agreement-reprocess route calls processAgreementDoc directly with
+    // no claim token; its empty path must run the same executive settlement
+    // as the tier-1 queue handler instead of stamping extract_empty_failure.
+    stub(asJson([]), asJson([]));
+    const rawDocBytes = await executiveRowsPdfArrayBuffer();
+    const { env, cap } = makeEnv({ rawDocBytes });
+    const models = { a: MODELS_C.a, b: MODELS_C.b };
+    const res = await processAgreementDoc(
+      env, models, 'E-2026-jane-doe-01-15-2026-278t', 'raw/x', false,
+    );
+    expect(res).toMatchObject({
+      reason: 'deterministic_rows_recovered',
+      flags: expect.arrayContaining(['deterministic_rows_recovered']),
+    });
+    expect(res.outcome).not.toBe('agree_but_hardfail');
+    expect(cap.decisions.some((d) => d.action === 'extract_empty_failure')).toBe(false);
+    expect(cap.reviewFlags.some((f) => String(f.reason).includes('extract_empty_failure'))).toBe(false);
   });
 
   it('a big doc (page_count over threshold) starts directly at tier 2', async () => {

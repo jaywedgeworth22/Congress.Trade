@@ -126,6 +126,14 @@ describe('mergeResults', () => {
     expect(merged.raw).toContain('secondaryOnly=1');
   });
 
+  it('exposes the per-side only counts so downstream empty checks see a contested empty', () => {
+    const merged = mergeResults(result([]), result([tx({ ticker: 'TSLA' })]));
+    expect(merged.transactions).toHaveLength(0);
+    expect(merged.arbitrationCounts).toEqual({ primaryOnly: 0, secondaryOnly: 1 });
+    const agreed = mergeResults(result([]), result([]));
+    expect(agreed.arbitrationCounts).toEqual({ primaryOnly: 0, secondaryOnly: 0 });
+  });
+
   it('retains usage and provider request identity for every arbitrated model call', () => {
     const primary = result([tx()], {
       extractor: 'vision-primary',
@@ -450,6 +458,102 @@ describe('OgePdfExtractor', () => {
     expect(visionExtract).not.toHaveBeenCalled();
   });
 
+  it('keeps a refused typed executive PDF on the unreadable disposition and does not spend vision', async () => {
+    const ogeText = extractor('ogeText', result([], {
+      extractor: 'ogeText',
+      parseDisposition: 'unreadable',
+    }));
+    const vision = {
+      name: 'vision',
+      canHandle: () => true,
+      extract: async () => {
+        throw new Error('vision must not run for a refused typed 278-T');
+      },
+    };
+    const ogePdf = new OgePdfExtractor(ogeText, vision);
+    const out = await ogePdf.extract({ filing: execText() });
+    expect(out.parseDisposition).toBe('unreadable');
+    expect(out.transactions).toHaveLength(0);
+  });
+
+  it('keeps a refused scan unreadable when vision also returns nothing', async () => {
+    const ogeText = extractor('ogeText', result([], {
+      extractor: 'ogeText',
+      parseDisposition: 'unreadable',
+    }));
+    const vision = extractor('vision', result([], { extractor: 'vision' }));
+    const ogePdf = new OgePdfExtractor(ogeText, vision);
+    const out = await ogePdf.extract({ filing: execScan() });
+    expect(out.parseDisposition).toBe('unreadable');
+    expect(out.transactions).toHaveLength(0);
+  });
+
+  it('does not restore the empty/unreadable terminal when the arbitrated secondary vision read saw rows', async () => {
+    const ogeText = extractor('ogeText', result([], {
+      extractor: 'ogeText',
+      parseDisposition: 'unreadable',
+    }));
+    // Primary vision finds nothing; the arbitration secondary finds a row.
+    // mergeResults keeps the merged array empty (primary-authoritative) but
+    // marks the doc contested for human review.
+    const primary = extractor('vision-primary', result([], { extractor: 'vision-primary' }));
+    const secondary = extractor('vision-secondary', result([tx({ ticker: 'XOM' })], { extractor: 'vision-secondary' }));
+    const arbitrating = new ArbitratingExtractor(
+      primary,
+      { ARBITRATION_ENABLED: 'true' } as unknown as Env,
+      secondary,
+    );
+    const ogePdf = new OgePdfExtractor(ogeText, arbitrating);
+
+    const out = await ogePdf.extract({ filing: execScan() });
+
+    // The terminal unreadable label must not bury the contested doc.
+    expect(out.parseDisposition).toBeUndefined();
+    expect(out.transactions).toHaveLength(0);
+    expect(out.raw).toContain('secondaryOnly=1');
+  });
+
+  it('restores the terminal state when every arbitrated vision read found nothing', async () => {
+    const ogeText = extractor('ogeText', result([], {
+      extractor: 'ogeText',
+      parseDisposition: 'unreadable',
+    }));
+    const primary = extractor('vision-primary', result([], { extractor: 'vision-primary' }));
+    const secondary = extractor('vision-secondary', result([], { extractor: 'vision-secondary' }));
+    const arbitrating = new ArbitratingExtractor(
+      primary,
+      { ARBITRATION_ENABLED: 'true' } as unknown as Env,
+      secondary,
+    );
+    const ogePdf = new OgePdfExtractor(ogeText, arbitrating);
+
+    const out = await ogePdf.extract({ filing: execScan() });
+
+    expect(out.parseDisposition).toBe('unreadable');
+    expect(out.transactions).toHaveLength(0);
+    expect(out.arbitrationCounts).toEqual({ primaryOnly: 0, secondaryOnly: 0 });
+  });
+
+  it('does not restore the empty terminal on an honest-empty 278e when the arbitrated secondary saw rows', async () => {
+    const ogeText = extractor('ogeText', result([], {
+      extractor: 'ogeText',
+      parseDisposition: 'empty',
+    }));
+    const primary = extractor('vision-primary', result([], { extractor: 'vision-primary' }));
+    const secondary = extractor('vision-secondary', result([tx({ ticker: 'MSFT' })], { extractor: 'vision-secondary' }));
+    const arbitrating = new ArbitratingExtractor(
+      primary,
+      { ARBITRATION_ENABLED: 'true' } as unknown as Env,
+      secondary,
+    );
+    const ogePdf = new OgePdfExtractor(ogeText, arbitrating);
+
+    const out = await ogePdf.extract({ filing: execScan() });
+
+    expect(out.parseDisposition).toBeUndefined();
+    expect(out.raw).toContain('secondaryOnly=1');
+  });
+
   it('does not charge vision for typed executive PDFs that parse to zero rows', async () => {
     const ogeText = extractor('ogeText', result([], { extractor: 'ogeText', raw: 'none' }));
     const vision = {
@@ -465,6 +569,56 @@ describe('OgePdfExtractor', () => {
 
     expect(out.extractor).toBe('ogeText');
     expect(out.transactions).toHaveLength(0);
+  });
+
+  it('strips the terminal disposition when vision never confirmed the read (fail-soft)', async () => {
+    // A garbled scan whose vision fallback throws must not reach normalize()
+    // carrying 'unreadable': rejection requires a successful zero-row vision
+    // read, and this one never happened.
+    const ogeText = extractor('ogeText', result([], {
+      extractor: 'ogeText',
+      parseDisposition: 'unreadable',
+      raw: 'garbled scan text',
+    }));
+    const vision = {
+      name: 'vision',
+      canHandle: () => true,
+      extract: async () => {
+        throw new Error('OPENROUTER_API_KEY is not configured');
+      },
+    };
+    const ogePdf = new OgePdfExtractor(ogeText, vision);
+
+    const out = await ogePdf.extract({ filing: execScan() });
+
+    expect(out.parseDisposition).toBeUndefined();
+    expect(out.transactions).toHaveLength(0);
+    expect(out.raw).toContain('ogePdf vision fail-soft');
+  });
+
+  it('keeps a positively-read empty disposition through vision fail-soft', async () => {
+    // 'empty' is the text layer's own positive evidence (a bounded, readable
+    // empty Part 7); unlike 'unreadable' it needs no vision confirmation, so
+    // the fail-soft must not wipe it.
+    const ogeText = extractor('ogeText', result([], {
+      extractor: 'ogeText',
+      parseDisposition: 'empty',
+      raw: 'OGE Form 278e Part 7. Transactions Part 8. Liabilities',
+    }));
+    const vision = {
+      name: 'vision',
+      canHandle: () => true,
+      extract: async () => {
+        throw new Error('OPENROUTER_API_KEY is not configured');
+      },
+    };
+    const ogePdf = new OgePdfExtractor(ogeText, vision);
+
+    const out = await ogePdf.extract({ filing: execScan() });
+
+    expect(out.parseDisposition).toBe('empty');
+    expect(out.transactions).toHaveLength(0);
+    expect(out.raw).toContain('ogePdf vision fail-soft');
   });
 
   it('rethrows budget/rate-limit IngestRetryError so the queue can back off', async () => {

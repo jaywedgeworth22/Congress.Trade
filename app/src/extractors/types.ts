@@ -149,6 +149,7 @@ export function mergeResults(primary: ExtractorResult, secondary: ExtractorResul
     confidence: docConfidence,
     raw: `primary(${primary.extractor}):\n${primary.raw}\n\n---\nsecondary(${secondary.extractor}) [primaryOnly=${primaryOnly}, secondaryOnly=${secondaryOnly}]:\n${secondary.raw}`,
     extractor: `arbitrating(${primary.extractor},${secondary.extractor})`,
+    arbitrationCounts: { primaryOnly, secondaryOnly },
     modelVersion: primary.modelVersion,
     providerRequestId: primary.providerRequestId,
     usage: primary.usage ? { ...primary.usage } : undefined,
@@ -181,10 +182,19 @@ export interface ExtractorModelRun {
   usage?: ExtractorUsage;
 }
 
+/**
+ * What a zero-row deterministic parse means.  `empty` is a real miss.
+ * `unreadable` is a refusal (garbled index / a 278-T the parser would not
+ * trust).  Absent on extractors that do not make this distinction.
+ */
+export type ExtractorParseDisposition = 'rows' | 'empty' | 'unreadable';
+
 /** Result of running an extractor over one filing. */
 export interface ExtractorResult {
   /** Parsed (pre-normalization) transactions. */
   transactions: ParsedTx[];
+  /** Deterministic empty-vs-refusal signal.  See ExtractorParseDisposition. */
+  parseDisposition?: ExtractorParseDisposition;
   /** Document-level confidence in [0,1]. */
   confidence: number;
   /** Raw extracted text/markup retained for audit + review. */
@@ -199,6 +209,10 @@ export interface ExtractorResult {
   usage?: ExtractorUsage;
   /** Every underlying model call when arbitration combines multiple results. */
   modelRuns?: ExtractorModelRun[];
+  /** Present only on arbitrated results: rows each side saw that the other
+   *  missed. The merged row set stays primary-authoritative, so a contested
+   *  doc can have an empty `transactions` array with `secondaryOnly` > 0. */
+  arbitrationCounts?: { primaryOnly: number; secondaryOnly: number };
 }
 
 /** Input handed to an extractor. One of bytes/html is typically present. */
@@ -484,13 +498,37 @@ export class OgePdfExtractor implements Extractor {
     }
 
     try {
-      return await this.visionPdf.extract(input);
+      const vision = await this.visionPdf.extract(input);
+      if (vision.transactions.length > 0) return vision;
+      // A refused text layer must stay unreadable when vision also finds
+      // nothing.  An honest empty text layer stays empty.  Under arbitration
+      // the merged row set is primary-authoritative: the secondary vision
+      // read may have found rows (secondaryOnly > 0) that route the doc to
+      // human review.  Restoring the terminal state on the empty merged array
+      // alone would bury that signal, so require that EVERY vision read found
+      // nothing first.
+      const secondarySawRows = (vision.arbitrationCounts?.secondaryOnly ?? 0) > 0;
+      if (
+        !secondarySawRows
+        && (textResult?.parseDisposition === 'unreadable' || textResult?.parseDisposition === 'empty')
+      ) {
+        return { ...vision, parseDisposition: textResult.parseDisposition, transactions: [] };
+      }
+      return vision;
     } catch (error) {
       if (error instanceof IngestRetryError) throw error;
       const reason = error instanceof Error ? error.message : String(error);
       const fallback = textResult ?? emptyOgeTextResult();
       return {
         ...fallback,
+        // Vision never confirmed this read: an 'unreadable' disposition from
+        // the refused text layer must not survive the fail-soft, or
+        // normalize() resolves the filing rejected without a successful
+        // zero-row vision read. An 'empty' disposition is positive evidence
+        // from the text layer (a bounded, readable empty Part 7) that needs
+        // no vision confirmation, so it survives.
+        parseDisposition:
+          fallback.parseDisposition === 'unreadable' ? undefined : fallback.parseDisposition,
         raw: `${fallback.raw}\n\n---\nogePdf vision fail-soft: ${reason}`,
       };
     }

@@ -23,7 +23,11 @@
  * agreement read returns zero rows, that is total extraction failure
  * (`extract_empty_failure`). We mark the filing `error`, keep review
  * unresolved with reason `extract_empty_failure`, and do NOT escalate tiers
- * (escalating burns budget on a dead extract).
+ * (escalating burns budget on a dead extract).  An executive 278e whose
+ * deterministic read also found no 278-T table closes as verified_empty
+ * instead.  A deterministic refusal (garbled 278-T) closes as unreadable.
+ * Capped-row recovery must not relabel either outcome as
+ * agreement_cascade_unresolved.
  *
  * When a doc trips cheap complexity signals (page_count / raw_bytes over their
  * thresholds) the cascade starts directly at tier 2 (AGREEMENT_BIG_DOC_START_TIER2,
@@ -88,9 +92,10 @@ import {
   HARD_FAILURE_FLAGS,
   MAX_PUBLISH_TRANSACTIONS_PER_FILING,
   loadResolver,
+  normalize,
   resolveVerifiedEmpty,
 } from './normalizer.ts';
-import { pdfBytesLookLikeOgePart7ExplicitNone } from './ogeText.ts';
+import { classifyExecutivePdfBytes, pdfBytesLookLikeOgePart7ExplicitNone } from './ogeText.ts';
 import { cleanAssetString } from './nameNormalizer.ts';
 import { prepareExtractedTx } from './prepareTx.ts';
 import { mapFiling, type FilingRow } from '../delivery/rows.ts';
@@ -109,7 +114,13 @@ import {
   evaluateExtractQuality,
 } from './extractRouting.ts';
 import { notifyReviewQueuePublisher } from '../ingestion/reviewQueueNotify.ts';
+import { shouldRetryFetchStatus } from '../ingestion/fetcher.ts';
+import { TERMINAL_REVIEW_REASON_EXCLUDE_SQL_UNALIASED } from './reviewQueueHealth.ts';
 import { isUsdMeteredExtractionProvider, LLM_DOC_BUDGET_ERROR_MARKER } from '../shared/llmSpend.ts';
+import {
+  closeUnreadableExecutive,
+  closeVerifiedEmptyExecutive,
+} from './executiveDisposition.ts';
 
 export interface AgreementModels {
   a: BakeoffCandidate;
@@ -144,6 +155,10 @@ export interface AgreementDocResult {
   flags?: string[];
   tickers?: string[];
   rows?: Record<string, number | string>;
+  /** On a `skipped` outcome: true when the skip is a transient read failure
+   *  worth retrying later (source fetch timeout/HTTP error), false when no
+   *  bytes exist anywhere and retrying cannot heal it. */
+  retryable?: boolean;
 }
 
 const label = (c: BakeoffCandidate): string => `${c.provider}:${c.model}`;
@@ -584,6 +599,7 @@ export async function loadDocBytes(
         docId,
         outcome: 'skipped',
         reason: rawObjectKey ? 'R2 object missing and no source_url' : 'no raw_object_key and no source_url',
+        retryable: false,
       },
     };
   }
@@ -607,17 +623,27 @@ export async function loadDocBytes(
       { envOverride: env },
     );
     if (!res.ok) {
+      // Use the ingestion fetcher's established transient classification:
+      // beyond 408/425/429/5xx it retries WAF 403 bursts and 404s on filings
+      // fresh enough to not be published yet, while a permanent 4xx (400,
+      // 401, 410, an old filing's 404) is terminal so capped recovery
+      // reaches human review instead of looping on the lease forever.
+      const retryable = shouldRetryFetchStatus(res.status, filing?.first_seen_at, new Date());
       return {
         skip: {
           docId,
           outcome: 'skipped',
           reason: `source_url fetch HTTP ${res.status}`,
+          retryable,
         },
       };
     }
     const buf = await res.arrayBuffer();
     if (buf.byteLength === 0) {
-      return { skip: { docId, outcome: 'skipped', reason: 'source_url empty body' } };
+      // A 200/204 with no body is the source's answer, not a blip: capped
+      // recovery keeps the lease on retryable skips, so a retryable empty
+      // body loops the row forever instead of reaching human review.
+      return { skip: { docId, outcome: 'skipped', reason: 'source_url empty body', retryable: false } };
     }
     if (buf.byteLength > SOURCE_URL_FALLBACK_MAX_BYTES) {
       return {
@@ -625,6 +651,7 @@ export async function loadDocBytes(
           docId,
           outcome: 'skipped',
           reason: `source_url body exceeds ${SOURCE_URL_FALLBACK_MAX_BYTES} bytes`,
+          retryable: false,
         },
       };
     }
@@ -644,6 +671,7 @@ export async function loadDocBytes(
         docId,
         outcome: 'skipped',
         reason: `source_url fetch failed: ${(err as Error).message?.slice(0, 160) || 'error'}`,
+        retryable: true,
       },
     };
   }
@@ -671,6 +699,7 @@ interface AgreementReviewState {
   agreement_suppressed_at: string | null;
   agreement_suppression_reason: string | null;
   review_revision: number;
+  payload: string | null;
 }
 
 export const AGREEMENT_CLAIM_LEASE_MS = 15 * 60 * 1000;
@@ -680,7 +709,7 @@ async function loadReviewState(env: Env, docId: string): Promise<AgreementReview
     env.DB,
     `SELECT resolved, agreement_attempts, agreement_tier, agreement_next_attempt_at,
             agreement_claim_token, agreement_claimed_at, agreement_suppressed_at,
-            agreement_suppression_reason, review_revision
+            agreement_suppression_reason, review_revision, payload
        FROM review_queue WHERE doc_id = ?`,
     [docId],
   );
@@ -1223,6 +1252,24 @@ export async function processAgreementDoc(
       dryRun,
     );
     if (part7) return { ...part7, rows: lineupRows() };
+    // Every non-dry caller — handleAgreementCheck's tier-1 claim AND the
+    // operator /agreement-reprocess route — settles an executive zero-read
+    // here before extract_empty_failure: a real 278e empty / unreadable 278-T
+    // closes itself, and deterministic rows are routed through normalization.
+    if (!dryRun) {
+      const settled = await maybeSettleExecutiveZeroRead(
+        env,
+        docId,
+        async () => (part7Bytes ? part7Bytes.slice(0) : null),
+        audit?.claimToken,
+      );
+      if (settled) {
+        return {
+          ...settledZeroReadResult(docId, audit?.tier ?? (models.c ? 2 : 1), settled),
+          rows: lineupRows(),
+        };
+      }
+    }
     return {
       docId,
       outcome: 'agree_but_hardfail',
@@ -1523,6 +1570,7 @@ async function closeOgePart7ExplicitNone(
             resolved: review.resolved,
             review_revision: review.review_revision,
             agreement_suppressed_at: review.agreement_suppressed_at,
+            payload: review.payload,
           }
         : null,
       'oge_part7_explicit_none',
@@ -1670,6 +1718,143 @@ export async function markExtractEmptyFailure(
 }
 
 /**
+ * Result of a deterministic executive zero-read settlement: a terminal close,
+ * or rows the deterministic parser recovered and routed through normalization.
+ */
+type ZeroReadSettlement =
+  | { kind: 'empty' | 'unreadable' }
+  | {
+      kind: 'rows';
+      needsReview: boolean;
+      published: boolean;
+      /** normalize() resolved the review with nothing new to persist. */
+      settled: boolean;
+      rowCount: number;
+      /** normalize()'s resolution reason (e.g. amendment_already_persisted). */
+      reason?: string;
+    };
+
+/**
+ * Executive zero-row agreement.  House and Senate stay on
+ * markExtractEmptyFailure.  Returns null when this doc is not an executive
+ * filing the deterministic parser can close, so the caller keeps the
+ * existing empty-failure path.
+ */
+async function maybeSettleExecutiveZeroRead(
+  env: Env,
+  docId: string,
+  loadBytes: () => Promise<ArrayBuffer | null>,
+  claimToken?: string,
+): Promise<ZeroReadSettlement | null> {
+  const filing = await loadFilingRow(env, docId);
+  if (!filing || filing.chamber !== 'executive') return null;
+  let bytes: ArrayBuffer | null = null;
+  try {
+    bytes = await loadBytes();
+  } catch (err) {
+    console.warn('executive zero-read: bytes unavailable', docId, (err as Error).message);
+    return null;
+  }
+  if (!bytes) return null;
+  let classified;
+  try {
+    classified = await classifyExecutivePdfBytes(bytes, docId);
+  } catch (err) {
+    console.warn('executive zero-read: classify failed', docId, (err as Error).message);
+    return null;
+  }
+  // 'unconfirmed': zero rows but no positive evidence Part 7 is empty.
+  // Keep the fail-closed extract_empty_failure path.
+  if (classified.disposition === 'unconfirmed') return null;
+  if (classified.disposition === 'rows') {
+    // The deterministic parser found rows where the agreement reads came back
+    // empty.  Route them through normalization (persisted or staged into
+    // review) instead of letting the caller stamp extract_empty_failure over
+    // real rows that were never normalized or staged.
+    try {
+      const norm = await normalize(env, mapFiling(filing), classified.rows, {
+        extractor: 'ogeText',
+        parseDisposition: 'rows',
+      });
+      return {
+        kind: 'rows',
+        needsReview: norm.needsReview,
+        published: norm.published,
+        settled: norm.settled === true,
+        rowCount: norm.transactions.length,
+        reason: norm.reviewReason,
+      };
+    } catch (err) {
+      console.warn(
+        'executive zero-read: recovered rows failed normalization:',
+        docId,
+        (err as Error).message,
+      );
+      return null;
+    }
+  }
+  if (classified.disposition === 'unreadable') {
+    const closed = await closeUnreadableExecutive(env, docId, { respectSuppression: true, claimToken });
+    return closed ? { kind: 'unreadable' } : null;
+  }
+  const closed = await closeVerifiedEmptyExecutive(env, docId, { respectSuppression: true, claimToken });
+  return closed ? { kind: 'empty' } : null;
+}
+
+export function settledZeroReadResult(
+  docId: string,
+  tier: number,
+  settled: ZeroReadSettlement,
+): AgreementDocResult {
+  if (settled.kind === 'rows') {
+    if (settled.settled) {
+      // The recovered rows already lived on a predecessor (or only deletions
+      // remained): normalize() resolved the review with nothing new to
+      // persist.  A successful terminal no-op, not a CAS loss.
+      return {
+        docId,
+        outcome: 'published',
+        tier,
+        rowCount: settled.rowCount,
+        flags: ['deterministic_rows_recovered'],
+        reason: settled.reason ?? 'deterministic_rows_recovered',
+      };
+    }
+    if (!settled.needsReview && !settled.published) {
+      // normalize() lost the persist/stage CAS (a concurrent revision, or a
+      // resolved-decision guard): the recovered rows were neither persisted
+      // nor staged, so reporting 'published' would finish the caller as a
+      // success over nothing.  Leave the doc to its next pass.
+      return {
+        docId,
+        outcome: 'skipped',
+        tier,
+        rowCount: settled.rowCount,
+        flags: ['deterministic_rows_recovered'],
+        reason: 'review_resolved_or_claim_lost',
+      };
+    }
+    return {
+      docId,
+      outcome: settled.needsReview ? 'review_flagged' : 'published',
+      tier,
+      rowCount: settled.rowCount,
+      flags: ['deterministic_rows_recovered'],
+      reason: 'deterministic_rows_recovered',
+    };
+  }
+  const reason = settled.kind === 'empty' ? 'auto_resolved_empty' : 'oge_text_unreadable';
+  return {
+    docId,
+    outcome: 'agree_but_hardfail',
+    tier,
+    rowCount: 0,
+    flags: [reason],
+    reason,
+  };
+}
+
+/**
  * Leave a doc in human review, flagged high-priority, when the cascade could not
  * resolve it. Records the distinguishing ingestion_decisions audit row and
  * annotates the review_queue reason/payload with the cascade context.
@@ -1768,6 +1953,9 @@ export async function processAgreementCascadeTier2(
     ? await loadDocBytes(env, docId, rawObjectKey, signal)
     : await loadDocBytes(env, docId, rawObjectKey);
   if ('skip' in loaded) return loaded.skip;
+  // Copy before model reads: pdf.js detaches the buffer it is handed, so
+  // loaded.bytes is not safe to reuse after readAndPersist.  The Part 7 None
+  // check and the executive zero-read settle both read from this copy.
   const part7Bytes = docId.startsWith('E-') ? loaded.bytes.slice(0) : null;
 
   // Live-toggleable text-field agreement normalization (default on) — see the
@@ -1830,6 +2018,10 @@ export async function processAgreementCascadeTier2(
         reason: 'extract_empty_failure',
       };
     }
+    const settled = await maybeSettleExecutiveZeroRead(
+      env, docId, async () => (part7Bytes ? part7Bytes.slice(0) : null), claimToken,
+    );
+    if (settled) return settledZeroReadResult(docId, 2, settled);
     return markExtractEmptyFailure(env, docId, 2, labels, claimToken);
   }
   if (decision.action === 'junk') {
@@ -2485,6 +2677,8 @@ export async function handleAgreementCheck(
         && (
           (res.flags ?? []).includes('extract_empty_failure')
           || (res.flags ?? []).includes('oge_part7_explicit_none')
+          || (res.flags ?? []).includes('auto_resolved_empty')
+          || (res.flags ?? []).includes('oge_text_unreadable')
         )
       ) {
         // markExtractEmptyFailure or resolveVerifiedEmpty already applied.
@@ -2534,10 +2728,27 @@ export async function handleAgreementCheck(
     }
     if (res.outcome === 'agree_but_hardfail') {
       const flags = res.flags ?? [];
-      if (flags.includes('oge_part7_explicit_none')) {
-        // processAgreementDoc already closed this as verified_empty.
+      if (
+        flags.includes('oge_part7_explicit_none')
+        || flags.includes('auto_resolved_empty')
+        || flags.includes('oge_text_unreadable')
+      ) {
+        // processAgreementDoc already settled/closed this executive zero-read.
       } else if (flags.includes('extract_empty_failure')) {
         // Do not escalate empty×empty and do not soft-label as cascade_unresolved.
+        // Executive 278e empty / refused 278-T close themselves; everything
+        // else stays extract_empty_failure.
+        const settled = await maybeSettleExecutiveZeroRead(env, docId, async () => {
+          const loaded = signal
+            ? await loadDocBytes(env, docId, rawObjectKey, signal)
+            : await loadDocBytes(env, docId, rawObjectKey);
+          return 'skip' in loaded ? null : loaded.bytes;
+        }, claimed.token);
+        if (settled) {
+          await finishTerminalClaim(env, docId, claimed.token, max);
+          console.log(`agreement.check ${docId} tier1: executive ${settled.kind}`);
+          return settledZeroReadResult(docId, 1, settled);
+        }
         await markExtractEmptyFailure(
           env, docId, 1, modelLabels(tier1Models), claimed.token,
           `hard_fail:${(res.flags ?? []).join(',')}`,
@@ -2584,10 +2795,32 @@ export async function handleAgreementCheck(
 }
 
 /**
+ * Reasons capped-row recovery must leave alone: rows already carrying the
+ * capped terminal label, and unreadable/OCR terminals (health-terminal
+ * already; relabeling them would hide why they closed).
+ *
+ * Empty failures are NOT excluded.  They are not health-terminal
+ * (reviewQueueHealth only treats ocr_unusable etc. as terminal), and once
+ * capped the normal selectors reject them, so without this path they sit
+ * eligible/unhealthy forever.  An executive empty failure is first re-run
+ * through the Part 7 classifier (maybeSettleExecutiveZeroRead) so a real
+ * empty 278e or refused 278-T still closes honestly instead of being
+ * relabeled; only a read that stays `unconfirmed` (blank, garbled,
+ * header-only) gets the human-review label.
+ */
+export const CAPPED_RECOVERY_REASON_EXCLUDE_SQL = `
+  COALESCE(reason, '') <> 'agreement_cascade_unresolved'
+  AND COALESCE(reason, '') NOT LIKE '%oge_text_unreadable%'
+  AND ${TERMINAL_REVIEW_REASON_EXCLUDE_SQL_UNALIASED}
+`.trim();
+
+/**
  * Repair a capped row whose previous consumer died before it could write the
  * terminal human-review flag. A fresh CAS lease makes this safe under
  * concurrent cron ticks; failures retain the lease and are retried after its
  * 15-minute expiry instead of silently stranding the row at the attempt cap.
+ * Unreadable rows are already an honest terminal; do not relabel them.
+ * Executive empty failures get one more classifier pass before the label.
  */
 async function recoverExpiredCappedReviews(
   env: Env,
@@ -2597,12 +2830,19 @@ async function recoverExpiredCappedReviews(
   const now = new Date();
   const nowIso = now.toISOString();
   const expiredBefore = leaseExpiredBefore(now);
-  const rows = await all<{ doc_id: string; agreement_tier: number | null }>(
+  // review_revision is NOT NULL DEFAULT 1 (migration 0037_review_revision),
+  // so the lease CAS below can compare it with = directly.
+  const rows = await all<{
+    doc_id: string;
+    agreement_tier: number | null;
+    reason: string | null;
+    review_revision: number;
+  }>(
     env.DB,
-    `SELECT doc_id, agreement_tier FROM review_queue
+    `SELECT doc_id, agreement_tier, reason, review_revision FROM review_queue
       WHERE resolved = 0 AND agreement_suppressed_at IS NULL
         AND COALESCE(agreement_attempts, 0) >= ?
-        AND COALESCE(reason, '') <> 'agreement_cascade_unresolved'
+        AND ${CAPPED_RECOVERY_REASON_EXCLUDE_SQL}
         AND (
           agreement_claim_token IS NULL OR agreement_claimed_at IS NULL
           OR agreement_claimed_at <= ?
@@ -2614,20 +2854,78 @@ async function recoverExpiredCappedReviews(
   for (const row of rows) {
     const token = uuid();
     try {
+      // CAS on the review_revision this pass selected: a concurrent update
+      // (e.g. normalize() revising the row, changing its reason) bumps the
+      // revision, the lease fails, and we skip rather than branch on stale
+      // state like row.reason.
       const leased = await run(
         env.DB,
         `UPDATE review_queue
             SET agreement_claim_token = ?, agreement_claimed_at = ?
           WHERE doc_id = ? AND resolved = 0 AND agreement_suppressed_at IS NULL
             AND COALESCE(agreement_attempts, 0) >= ?
-            AND COALESCE(reason, '') <> 'agreement_cascade_unresolved'
+            AND ${CAPPED_RECOVERY_REASON_EXCLUDE_SQL}
+            AND review_revision = ?
             AND (
               agreement_claim_token IS NULL OR agreement_claimed_at IS NULL
               OR agreement_claimed_at <= ?
             )`,
-        [token, nowIso, row.doc_id, max, expiredBefore],
+        [token, nowIso, row.doc_id, max, row.review_revision, expiredBefore],
       );
       if ((leased.meta?.changes ?? 0) === 0) continue;
+      if (row.doc_id.startsWith('E-') && (row.reason ?? '').includes('empty_failure')) {
+        // Load outside the settle helper (which swallows loader errors) so a
+        // storage throw reaches the catch below: the lease is kept and the
+        // row retries after expiry instead of being labeled on a blip.
+        const filing = await loadFilingRow(env, row.doc_id);
+        const loaded = await loadDocBytes(env, row.doc_id, filing?.raw_object_key ?? null);
+        if ('skip' in loaded && loaded.skip.retryable) {
+          // A soft load failure (R2 miss + source timeout, etc.) is a blip,
+          // not a read. Keep the lease so the row retries after expiry;
+          // falling through would stamp the permanent
+          // agreement_cascade_unresolved label, which this recovery's own
+          // selector excludes from later passes.
+          console.warn(
+            'agreement capped-row recovery: doc bytes temporarily unavailable, retry after lease expiry:',
+            row.doc_id,
+            loaded.skip.reason,
+          );
+          continue;
+        }
+        const bytes = 'skip' in loaded ? null : loaded.bytes;
+        const settled = await maybeSettleExecutiveZeroRead(env, row.doc_id, async () => bytes, token);
+        if (settled) {
+          // The close helpers clear the lease themselves.  A recovered-rows
+          // settlement that stays in review ran the normalizer instead, and
+          // routeToReview already cleared agreement_claim_token, so a
+          // token-CAS finishTerminalClaim would match nothing: the row would
+          // keep a non-terminal reason and be re-normalized on every pass.
+          // Terminalize the revision the settlement produced -
+          // leaveInReviewHighPriority re-reads the row, CASes on that
+          // review_revision, and merges the staged candidates into the
+          // terminal-labeled payload, taking the row out of this selector.
+          if (settled.kind === 'rows') {
+            if (settled.needsReview) {
+              await leaveInReviewHighPriority(
+                env,
+                row.doc_id,
+                row.agreement_tier ?? 1,
+                {},
+                null,
+                'attempt_cap_recovery',
+              );
+            }
+            // A staged (needsReview) or persisted (published) settlement is
+            // terminal here.  A lost persist CAS (neither) persisted or
+            // staged nothing: do not count it - the row stays eligible for
+            // the next pass.
+            if (settled.needsReview || settled.published || settled.settled) terminalized += 1;
+            continue;
+          }
+          terminalized += 1;
+          continue;
+        }
+      }
       const flagged = await leaveInReviewHighPriority(
         env,
         row.doc_id,

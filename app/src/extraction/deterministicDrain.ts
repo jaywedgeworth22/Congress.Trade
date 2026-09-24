@@ -287,6 +287,7 @@ export async function maybeRunDeterministicReviewDrain(
           extractor: extracted.extractor,
           modelVersion: extracted.modelVersion,
           sourceText: extracted.raw,
+          parseDisposition: extracted.parseDisposition,
         });
         if (result.published) {
           out.published++;

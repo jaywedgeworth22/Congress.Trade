@@ -34,6 +34,7 @@ interface Captured {
   filingUpdates: unknown[][];
   enqueued: Array<{ type: string; txId: string }>;
   batches: string[][];
+  batchParams: unknown[][][];
   auditRows: unknown[][];
   masterReads: number;
   deprecated: unknown[][];
@@ -43,7 +44,14 @@ function makeEnv(
   securities: Array<{ ticker: string; name: string | null; aliases: string | null }>,
   opts: {
     failAudit?: boolean;
-    resolvedReview?: { resolved: number; review_revision: number; agreement_suppressed_at: string | null };
+    resolvedReview?: {
+      resolved: number;
+      review_revision: number;
+      agreement_suppressed_at: string | null;
+      payload?: string | null;
+    };
+    refuseClose?: boolean;
+    liveTxMatch?: boolean;
   } = {},
 ) {
   const cap: Captured = {
@@ -53,6 +61,7 @@ function makeEnv(
     filingUpdates: [],
     enqueued: [],
     batches: [],
+    batchParams: [],
     auditRows: [],
     masterReads: 0,
     deprecated: [],
@@ -80,11 +89,16 @@ function makeEnv(
         if (/SELECT resolved, review_revision, agreement_suppressed_at/i.test(sql)) {
           return (opts.resolvedReview ?? null) as T | null;
         }
+        if (opts.liveTxMatch && /SELECT id FROM transactions/i.test(sql)) {
+          return { id: 'live-tx-1' } as T | null;
+        }
         return null as T | null;
       },
       async run() {
         let changes = 1;
-        if (/INSERT(?: OR IGNORE)? INTO transactions/i.test(sql) && /json_each/i.test(sql)) {
+        if (opts.refuseClose && (/INSERT OR IGNORE INTO review_queue\s*\(\s*doc_id, reason, payload, created_at, resolved,/i.test(sql) || /UPDATE review_queue\s+SET resolved = 1/i.test(sql))) {
+          changes = 0;
+        } else if (/INSERT(?: OR IGNORE)? INTO transactions/i.test(sql) && /json_each/i.test(sql)) {
           const rows = JSON.parse(String(this._params[0])) as Array<Record<string, unknown>>;
           changes = 0;
           for (const row of rows) {
@@ -122,8 +136,9 @@ function makeEnv(
   const env = {
     DB: {
       prepare,
-      async batch(statements: Array<{ _sql: string; run(): Promise<unknown> }>) {
+      async batch(statements: Array<{ _sql: string; _params: unknown[]; run(): Promise<unknown> }>) {
         cap.batches.push(statements.map((statement) => statement._sql));
+        cap.batchParams.push(statements.map((statement) => statement._params));
         if (failAudit && statements.some((statement) => /ingestion_decisions/i.test(statement._sql))) {
           throw new Error('audit insert failed');
         }
@@ -678,7 +693,29 @@ describe('normalize', () => {
     ]));
   });
 
-  it('does not verified_empty a zero-row extract without a Part 7 None marker', async () => {
+  it('closes an empty executive 278e as verified_empty instead of parking it', async () => {
+    const { env, cap } = makeEnv([]);
+    const result = await normalize(
+      env,
+      filing({
+        docId: 'E-undated-pam-bondi-2026-278term',
+        chamber: 'executive',
+        docKind: 'text_pdf',
+        extractor: 'ogeText',
+      }),
+      [],
+      { extractor: 'ogeText', parseDisposition: 'empty' },
+    );
+    expect(result.needsReview).toBe(false);
+    expect(result.reviewReason).toBe('executive_278e_no_transactions');
+    const sql = cap.batches.flat().join('\n');
+    expect(sql).toContain('resolution_kind = ?');
+    expect(sql).toContain('ingest_status = ?');
+    expect(cap.auditRows.some((row) => row[2] === 'auto_resolved_empty')).toBe(true);
+    expect(cap.reviewRows.some((row) => String(row[1]).includes('extract_empty_failure'))).toBe(false);
+  });
+
+  it('does not verified_empty a zero-row extract without a Part 7 None marker or empty disposition', async () => {
     const { env, cap } = makeEnv([]);
     const result = await normalize(
       env,
@@ -704,6 +741,181 @@ describe('normalize', () => {
     expect(result.reviewReason).not.toBe('nothing_to_report');
     expect(String(cap.reviewRows[0][1])).toContain('extract_empty_failure');
     expect(cap.filingUpdates.some((row) => row[0] === 'verified_empty')).toBe(false);
+  });
+
+  it('does not verified_empty an executive extract whose Part 7 None points at an attachment', async () => {
+    const { env, cap } = makeEnv([]);
+    const result = await normalize(
+      env,
+      filing({
+        docId: 'E-2026-someone-278e',
+        chamber: 'executive',
+        docKind: 'text_pdf',
+        extractor: 'ogeText',
+      }),
+      [],
+      {
+        extractor: 'ogeText',
+        sourceText: 'OGE Form 278e Part 7. Transactions None. See attachment. Part 8. Liabilities',
+      },
+    );
+    // Rows live on the attachment: the doc stays in review instead of taking
+    // the oge_part7_explicit_none verified_empty close.
+    expect(result.needsReview).toBe(true);
+    expect(result.reviewReason).not.toBe('oge_part7_explicit_none');
+    expect(result.reviewReason).not.toBe('nothing_to_report');
+    expect(cap.auditRows.some((row) => row[2] === 'auto_resolved_empty')).toBe(false);
+    expect(String(cap.reviewRows[0][1])).toContain('extract_empty_failure');
+  });
+
+  it('closes a refused executive extract as unreadable, not verified_empty', async () => {
+    const { env, cap } = makeEnv([]);
+    const result = await normalize(
+      env,
+      filing({
+        docId: 'E-2026-donald-j-trump-09-8-2026-278t',
+        chamber: 'executive',
+        docKind: 'text_pdf',
+        extractor: 'ogeText',
+      }),
+      [],
+      { extractor: 'ogeText', parseDisposition: 'unreadable' },
+    );
+    expect(result.needsReview).toBe(false);
+    expect(result.reviewReason).toContain('oge_text_unreadable');
+    expect(result.reviewReason).toContain('ocr_unusable');
+    const sql = cap.batches.flat().join('\n');
+    expect(sql).toContain('resolution_kind = ?');
+    expect(sql).not.toContain("ingest_status = 'verified_empty'");
+    expect(cap.auditRows.some((row) => row[2] === 'rejected' && row[5] === 'oge_text_unreadable')).toBe(true);
+  });
+
+  it('closes a refused executive extract only against the captured review revision', async () => {
+    const { env, cap } = makeEnv([], {
+      resolvedReview: { resolved: 0, review_revision: 7, agreement_suppressed_at: null },
+    });
+    const result = await normalize(
+      env,
+      filing({
+        docId: 'E-2026-donald-j-trump-09-8-2026-278t',
+        chamber: 'executive',
+        docKind: 'text_pdf',
+        extractor: 'ogeText',
+      }),
+      [],
+      { extractor: 'ogeText', parseDisposition: 'unreadable' },
+    );
+    expect(result.needsReview).toBe(false);
+    // The close UPDATE must carry the snapshot's review_revision in its guard
+    // (writeClose appends the reviewWhere params after docId), so a row revised
+    // after the snapshot is left for the human instead of resolved by a stale
+    // zero-row parse.
+    const closeIdx = cap.batches.findIndex((batch) =>
+      batch.some((sql) => /UPDATE review_queue\s+SET resolved = 1/i.test(sql)),
+    );
+    expect(closeIdx).toBeGreaterThanOrEqual(0);
+    const closeParams = cap.batchParams[closeIdx][
+      cap.batches[closeIdx].findIndex((sql) => /UPDATE review_queue\s+SET resolved = 1/i.test(sql))
+    ];
+    expect(closeParams).toContain(7);
+  });
+
+  it('closes a verified-empty executive extract only against the captured review revision', async () => {
+    const { env, cap } = makeEnv([], {
+      resolvedReview: { resolved: 0, review_revision: 7, agreement_suppressed_at: null },
+    });
+    const result = await normalize(
+      env,
+      filing({
+        docId: 'E-2026-pam-bondi-08-20-2026-278t',
+        chamber: 'executive',
+        docKind: 'text_pdf',
+        extractor: 'ogeText',
+      }),
+      [],
+      { extractor: 'ogeText', parseDisposition: 'empty' },
+    );
+    expect(result.needsReview).toBe(false);
+    // Same revision guard as the unreadable close: the close UPDATE must
+    // carry the snapshot's review_revision, or a retry-auto that bumped the
+    // revision would let a stale empty parse close the freshly released row.
+    const closeIdx = cap.batches.findIndex((batch) =>
+      batch.some((sql) => /UPDATE review_queue\s+SET resolved = 1/i.test(sql)),
+    );
+    expect(closeIdx).toBeGreaterThanOrEqual(0);
+    const closeParams = cap.batchParams[closeIdx][
+      cap.batches[closeIdx].findIndex((sql) => /UPDATE review_queue\s+SET resolved = 1/i.test(sql))
+    ];
+    expect(closeParams).toContain(7);
+  });
+
+  it('preserves staged payload candidates when a zero-row executive close is refused', async () => {
+    // The terminal close is refused because the review payload stages
+    // candidates; routeToReview must not then rewrite that payload with an
+    // empty candidate list, or a later zero-row pass would close the filing
+    // verified-empty and lose them.
+    const stagedPayload = JSON.stringify({
+      transactionCount: 2,
+      transactions: [{ ticker: 'AAPL' }, { ticker: 'MSFT' }],
+    });
+    const { env, cap } = makeEnv([], {
+      resolvedReview: {
+        resolved: 0,
+        review_revision: 3,
+        agreement_suppressed_at: null,
+        payload: stagedPayload,
+      },
+      refuseClose: true,
+    });
+    const result = await normalize(
+      env,
+      filing({
+        docId: 'E-2026-pam-bondi-08-20-2026-278t',
+        chamber: 'executive',
+        docKind: 'text_pdf',
+        extractor: 'ogeText',
+      }),
+      [],
+      { extractor: 'ogeText', parseDisposition: 'empty' },
+    );
+    expect(result.needsReview).toBe(true);
+    // The close was refused; no INSERT (insert-if-absent) or UPDATE
+    // (routeToReview) against review_queue may have run.
+    expect(cap.reviewRows).toHaveLength(0);
+    expect(
+      cap.batches.flat().some((sql) => /UPDATE review_queue\s+SET reason/i.test(sql)),
+    ).toBe(false);
+  });
+
+  it('still rewrites the review when the existing payload holds no candidates', async () => {
+    const { env, cap } = makeEnv([], {
+      resolvedReview: {
+        resolved: 0,
+        review_revision: 3,
+        agreement_suppressed_at: null,
+        payload: JSON.stringify({ transactionCount: 0, transactions: [] }),
+      },
+      refuseClose: true,
+    });
+    const result = await normalize(
+      env,
+      filing({
+        docId: 'E-2026-pam-bondi-08-20-2026-278t',
+        chamber: 'executive',
+        docKind: 'text_pdf',
+        extractor: 'ogeText',
+      }),
+      [],
+      { extractor: 'ogeText', parseDisposition: 'empty' },
+    );
+    expect(result.needsReview).toBe(true);
+    // With nothing staged, the zero-row pass rewrites the review row with the
+    // empty payload as before.
+    expect(cap.reviewRows.length).toBeGreaterThan(0);
+    const updateParams = cap.reviewRows[cap.reviewRows.length - 1];
+    expect(String(updateParams[0])).toContain('extract_empty');
+    const payload = JSON.parse(String(updateParams[1])) as { transactionCount: number };
+    expect(payload.transactionCount).toBe(0);
   });
 
   it('closes a handwritten PTR sample / nothing-to-report extract as verified empty', async () => {
@@ -753,9 +965,42 @@ describe('normalize', () => {
     expect(result.needsReview).toBe(false);
     expect(result.published).toBe(false);
     expect(result.reviewReason).toBe('deleted_rows_applied');
+    expect(result.settled).toBe(true);
     expect(cap.reviewRows[0]).toEqual(expect.arrayContaining(['verified_empty', 'deleted_rows_applied']));
     expect(cap.filingUpdates[0][0]).toBe('verified_empty');
     expect(cap.reviewSql.some((sql) => /resolution_kind = 'published'/.test(sql))).toBe(false);
+  });
+
+  it('marks an amendment whose rows already live on a predecessor as settled (not a CAS loss)', async () => {
+    // Every row matches a live predecessor transaction: the publish path
+    // resolves the review with nothing new to persist.  That success is
+    // needsReview:false / published:false - the same shape as a lost CAS -
+    // so it must carry the explicit settled flag.
+    const { env, cap } = makeEnv(
+      [{ ticker: 'VSNT', name: 'Versant Media Group, Inc.', aliases: '[]' }],
+      { liveTxMatch: true },
+    );
+    const result = await normalize(
+      env,
+      filing({ filerId: 'house-ok01-kevin-hern', filingType: 'Amendment' }),
+      [
+        tx({
+          ticker: 'VSNT',
+          assetName: 'Versant Media Group, Inc. Class A',
+          txType: 'S',
+          txDate: '2026-08-05',
+          amountMin: 1001,
+          amountMax: 15000,
+          owner: 'joint',
+          confidence: 0.97,
+        }),
+      ],
+    );
+    expect(result.needsReview).toBe(false);
+    expect(result.published).toBe(false);
+    expect(result.settled).toBe(true);
+    expect(result.reviewReason).toBe('amendment_already_persisted');
+    expect(cap.insertedTx).toHaveLength(0);
   });
 
   it('parks a form-sample-only extract for review instead of verified_empty', async () => {

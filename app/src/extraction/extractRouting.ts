@@ -222,7 +222,19 @@ export function looksLikeOgePart7ExplicitNone(text: string | null | undefined): 
   // Part 7 / "7. Transactions" whose immediate body is only None / N/A / No transactions.
   // Allow same-line OCR collapses ("… None 7. Transactions None 8. …") and
   // require a word boundary so "None of the above" does not count.
-  return /(?:^|[\n\s])(?:part\s*7[.:\s]+transactions?|(?<!\d)7[.]\s*transactions?)\s+(?:none|n\/a|no\s+transactions?(?:\s+to\s+report)?)\b(?!\s+of\b)/i.test(text);
+  const none = /(?:^|[\n\s])(?:part\s*7[.:\s]+transactions?|(?<!\d)7[.]\s*transactions?)\s+(?:none|n\/a|no\s+transactions?(?:\s+to\s+report)?)\b(?!\s+of\b)/i.exec(text);
+  if (!none) return false;
+  // Every empty-resolution path calls this check, so the attachment veto
+  // lives here: "None. See attachment." still points at rows on an attached
+  // schedule. Scoped to the section tail so form boilerplate cannot veto an
+  // honest empty.
+  const rest = text.slice(none.index + none[0].length);
+  // Same row-8 false-end guard as ogeText's PART7_END_RE: the numbered
+  // alternative requires the Liabilities title, so a Part 7 table row 8
+  // cannot shrink the attachment-veto tail.
+  const end = /(?:^|\s)(?:part\s*8\b|(?<!\d)8[.]\s*liabilities\b|summary\s+of\s+contents)/i.exec(rest);
+  const tail = end ? rest.slice(0, end.index) : rest.slice(0, 80);
+  return !/\battach(?:ed|ments?)\b/i.test(tail);
 }
 
 export function isDeletedFilingStatus(status: string | null | undefined): boolean {

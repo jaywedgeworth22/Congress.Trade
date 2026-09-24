@@ -44,10 +44,11 @@
  * type+date+notification+amount suffix to immediately follow the description,
  * so 278e prose fails to match and yields zero rows, never a wrong parse.
  * A Part 7 body that is only None / N/A / No transactions is an honest empty
- * (looksLikeOgePart7ExplicitNone → verified_empty). A zero-row 278-T whose
- * amounts are garbled is NOT that marker and stays in review. A scanned 278-T
- * whose text layer is garbled (e.g. "Fobn.iary" for "February") also yields
- * zero rows rather than guessed data.
+ * (looksLikeOgePart7ExplicitNone → verified_empty).  A 278e with no 278-T
+ * table and no other successful read is the same close even without the
+ * word None.  A refused or unreadable 278-T (index/coverage gate, or a
+ * periodic report with no readable rows) is not that empty.  Callers must
+ * not treat a refusal as "nothing to report".
  */
 
 import { extractText, getDocumentProxy } from 'unpdf';
@@ -135,9 +136,32 @@ const MAX_NON_INCREASING_STEP_RATIO = 0.3;
 const MIN_INDEX_SPAN_COVERAGE = 0.8;
 
 /**
+ * Doc-id shape for the two executive disclosure forms this parser sees.
+ * `278term` (and its hyphenated / spaced spellings) plus `278e` must win over
+ * `278t`: a termination id contains the letters "278t" as a prefix of
+ * "278term", and a hyphenated "278-term" would otherwise match "278-t".
+ */
+export function executiveDisclosureForm(docId: string): '278e' | '278t' | 'unknown' {
+  const id = docId.toLowerCase();
+  if (
+    id.includes('278term') || id.includes('278-term') || id.includes('278 term')
+    || id.includes('278e') || id.includes('278-e')
+  ) return '278e';
+  if (id.includes('278t') || id.includes('278-t')) return '278t';
+  return 'unknown';
+}
+
+export type OgeTextClassification =
+  | { disposition: 'rows'; rows: ParsedTx[] }
+  | { disposition: 'empty'; rows: ParsedTx[] }
+  | { disposition: 'unreadable'; rows: ParsedTx[]; reason: 'index_incoherent' | 'unreadable_278t' }
+  /** Zero rows, but nothing shows Part 7 is empty (blank, garbled, or unsupported layout). */
+  | { disposition: 'unconfirmed'; rows: ParsedTx[] };
+
+/**
  * True when the matched rows' leading "#" tokens look like a real table index:
  * essentially unique, strictly increasing (allowing a few OCR skips/dupes),
- * and covering their span. Filings with fewer than eight rows are always
+ * and covering their span.  Filings with fewer than eight rows are always
  * treated as coherent.
  */
 export function isOgeRowSequenceCoherent(indexes: readonly number[]): boolean {
@@ -172,7 +196,10 @@ export class OgeTextExtractor implements Extractor {
       throw new Error('ogeText: no bytes provided on ExtractorInput');
     }
     const { text, pageCount } = await extractPdfText(input.bytes);
-    const rows = parseOgeTransactionRows(text);
+    const classified = classifyOgeTransactionText(text, input.filing.docId);
+    const rows = classified.rows;
+    // 'unconfirmed' carries no disposition: callers keep the fail-closed path.
+    const parseDisposition = classified.disposition === 'unconfirmed' ? undefined : classified.disposition;
     const confidence =
       rows.length > 0 ? rows.reduce((s, r) => s + r.confidence, 0) / rows.length : 0.3;
     const result = {
@@ -181,6 +208,7 @@ export class OgeTextExtractor implements Extractor {
       raw: text,
       extractor: this.name,
       pageCount,
+      parseDisposition,
     };
     return result;
   }
@@ -214,8 +242,202 @@ async function extractPdfText(
   };
 }
 
+/**
+ * Parse the merged text and say whether zero rows means "no transactions"
+ * or "this read is not usable".
+ *
+ * A zero-row `278e` is empty only with positive evidence: a Part 7
+ * Transactions section that is present, bounded by the next part, and holds
+ * no transaction-looking content (Bondi-style Part 7).  Otherwise it is
+ * `unconfirmed` and stays on the fail-closed path.  A `278t` that matches
+ * nothing, or any parse the index/coverage gate refuses, is unreadable — the
+ * same zero-row array must not take the empty path.
+ */
+export function classifyOgeTransactionText(text: string, docId = ''): OgeTextClassification {
+  const scanned = scanOgeTransactionRows(text);
+  if (scanned.refused) {
+    return { disposition: 'unreadable', rows: [], reason: 'index_incoherent' };
+  }
+  if (scanned.rows.length > 0) return { disposition: 'rows', rows: scanned.rows };
+  const form = executiveDisclosureForm(docId);
+  if (form === '278t' || (form !== '278e' && scanned.has278tTable)) {
+    return { disposition: 'unreadable', rows: [], reason: 'unreadable_278t' };
+  }
+  if (ogePart7SectionLooksEmpty(text)) return { disposition: 'empty', rows: [] };
+  return { disposition: 'unconfirmed', rows: [] };
+}
+
+const PART7_HEADING_RE = /(?:^|\s)(?:part\s*7[.:\s]+transactions?|(?<!\d)7[.]\s*transactions?)\b/i;
+const PART7_HEADING_GLOBAL_RE = new RegExp(PART7_HEADING_RE.source, 'gi');
+// The numbered alternative requires the Part 8 title: a bare "8. <word>"
+// also matches row 8 of a Part 7 table ("8. Apple Inc Purchase ..."), which
+// would end the section early and make the rows before it vanish from the
+// body guards.
+const PART7_END_RE = /(?:^|\s)(?:part\s*8\b|(?<!\d)8[.]\s*liabilities\b|summary\s+of\s+contents)/i;
+/** The real section boundary: the Part 8 heading, not front/back-matter boilerplate. */
+const PART7_REAL_END_RE = /(?:^|\s)(?:part\s*8\b|(?<!\d)8[.]\s*liabilities\b)/i;
+/** Table evidence used both for the empty-section body guard and the boilerplate-end guard. */
+const PART7_TABLE_EVIDENCE_RE = /#|\b(?:description|type|date|amount|notification)\b/i;
+/**
+ * Row evidence in text after a Summary of Contents marker: dates, dollar
+ * amounts, or transaction words mean rows follow the marker even when the
+ * table header glyphs were lost. Bare digits are deliberately excluded -
+ * contents entries themselves carry part numbers.
+ */
+const PART7_TAIL_ROW_EVIDENCE_RE = /\d{1,2}\/\d{1,2}\/\d{2,4}|\$\s*\d|\b(?:purchase|sale|exchange)\b/i;
+/** One short table-of-contents entry: "6. Agreements" / "Part 6 Agreements". */
+const PART7_TOC_ENTRY_RE = /(?:part\s*\d{1,2}\b|(?<!\d)\d{1,2}[.])\s*[A-Za-z]/i;
+const PART7_TOC_ENTRY_GLOBAL_RE = new RegExp(PART7_TOC_ENTRY_RE.source, 'gi');
+/**
+ * A none-marker between two part entries is a real (empty) section body, not
+ * contents-run packing.  Mirrors the explicit-none vocabulary in
+ * looksLikeOgePart7ExplicitNone.
+ */
+const PART7_SECTION_BODY_RE = /(?:^|\s)(?:none|n\/a|no\s+transactions?(?:\s+to\s+report)?)\b/i;
+/**
+ * How far around a Part 7 heading to look for neighbouring contents entries.
+ * TOC lines sit right next to each other; a real Part 7 heading follows the
+ * whole Part 6 body and its Part 8 successor heads a real section, so real
+ * headings never have part entries on BOTH sides within this window.
+ */
+const PART7_TOC_ENTRY_WINDOW = 120;
+/**
+ * How much text may sit between the previous contents entry and a heading
+ * for the heading to still count as packed inside the contents run.  TOC
+ * lines sit right next to each other (a few characters, or a page number);
+ * a real Part 7 heading follows the whole earlier body.
+ */
+const PART7_TOC_PACKED_GAP = 40;
+
+/**
+ * Positive evidence that an OGE 278e Part 7 (Transactions) section has no
+ * rows: an explicit None marker, or a Part 7 heading whose body up to the
+ * next part holds no table header, row number, type word, date, or dollar
+ * amount.  A blank or garbled text layer, a header-only table, or a Part 7 we
+ * cannot see the end of, is not evidence.
+ */
+export function ogePart7SectionLooksEmpty(text: string | null | undefined): boolean {
+  if (!text) return false;
+  const normalized = text
+    .replace(/\u0000/g, ' ')
+    .replace(/\u00a0/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!normalized) return false;
+  if (looksLikeOgePart7ExplicitNone(normalized)) return true;
+  // Walk EVERY Part 7 heading, not just the first. A table of contents
+  // carries the same words ("7. Transactions 8. Liabilities"), and a
+  // first-match search stops there: bounded by the next TOC entry the
+  // "section" looks empty, so a filing whose real Part 7 sits further down -
+  // trades included - would close verified_empty. Same fail-closed class as
+  // the header-only guard below: a TOC stub is not positive evidence of an
+  // empty section, so skip headings inside a contents run (another part
+  // entry just before AND just after) and keep scanning for the real one.
+  let sawPositivelyEmptySection = false;
+  PART7_HEADING_GLOBAL_RE.lastIndex = 0;
+  let heading: RegExpExecArray | null;
+  while ((heading = PART7_HEADING_GLOBAL_RE.exec(normalized)) !== null) {
+    const rest = normalized.slice(heading.index + heading[0].length);
+    const end = PART7_END_RE.exec(rest);
+    // A Part 7 whose end we cannot see is not evidence; a later heading may
+    // still be readable.
+    if (!end) continue;
+    // "Summary of Contents" is boilerplate that flattened extraction can drop
+    // BETWEEN the Part 7 heading and its table (the production 278-T fixture
+    // reads "... Endnotes Summary of Contents The 278-T ... # DESCRIPTION ...
+    // 1 Amazon ..."). Ending the section there makes the heading-to-marker
+    // gap look like a positively empty section while rows follow. When table
+    // evidence sits between the marker and the real Part 8 boundary, the
+    // marker is not the section end: treat the end as unseen and move on.
+    if (/summary\s+of\s+contents/i.test(end[0])) {
+      const tail = rest.slice(end.index + end[0].length);
+      const realEnd = PART7_REAL_END_RE.exec(tail);
+      const window = realEnd ? tail.slice(0, realEnd.index) : tail;
+      if (PART7_TABLE_EVIDENCE_RE.test(window) || PART7_TAIL_ROW_EVIDENCE_RE.test(window)) continue;
+    }
+    const before = normalized.slice(
+      Math.max(0, heading.index - PART7_TOC_ENTRY_WINDOW),
+      heading.index,
+    );
+    const after = rest.slice(
+      end.index + end[0].length,
+      end.index + end[0].length + PART7_TOC_ENTRY_WINDOW,
+    );
+    // Skip headings inside a contents run: another part entry just before
+    // AND just after, with no section body between the entries.  A
+    // none-marker between entries is a real empty body ("Part 6. Agreements
+    // None Part 7. Transactions Part 8. Liabilities None ..."), so a
+    // short-but-real Part 7 must not be filtered out as a contents entry.
+    const entriesBefore = [...before.matchAll(PART7_TOC_ENTRY_GLOBAL_RE)];
+    const entryAfter = PART7_TOC_ENTRY_RE.exec(after);
+    // A contents prefix can also be TRUNCATED at the boundary: the text ends
+    // at "8. Liabilities", so the Part 7 contents line has entries before it
+    // but none after, the both-sides filter does not fire, and the empty
+    // prefix reads as a positively empty section - closing the 278e without
+    // the real Part 7 ever being read.  With part entries before it and no
+    // text at all after the boundary, the line is a contents stub either
+    // way: skip it and keep scanning for the real heading.
+    if (entriesBefore.length > 0) {
+      if (!entryAfter) {
+        // `part 8` ends the boundary match before its title, so a truncated
+        // prefix can leave ". Liabilities" dangling after the boundary.
+        const tail = after.replace(/^[.:]?\s*liabilities\b/i, '').trim();
+        // Nothing readable follows the boundary.  Skip the heading only
+        // when it is still packed against the previous contents entry: a
+        // real Part 7 that is positively empty up to a truncated Part 8
+        // boundary follows the whole earlier body, not a contents run, and
+        // must still close.
+        if (tail === '') {
+          const lastBefore = entriesBefore[entriesBefore.length - 1];
+          const betweenBefore = before.slice(lastBefore.index + lastBefore[0].length);
+          if (betweenBefore.trim().length <= PART7_TOC_PACKED_GAP) continue;
+        }
+      } else {
+        const lastBefore = entriesBefore[entriesBefore.length - 1];
+        const betweenBefore = before.slice(lastBefore.index + lastBefore[0].length);
+        const betweenAfter = after.slice(0, entryAfter.index);
+        if (!PART7_SECTION_BODY_RE.test(betweenBefore) && !PART7_SECTION_BODY_RE.test(betweenAfter)) {
+          continue;
+        }
+      }
+    }
+    const body = rest.slice(0, end.index);
+    // A table header (or its `#` row-number column) with no rows under it is a
+    // read that lost the row glyphs, not an empty section.  Real empty 278e
+    // Part 7s print no table at all, or say None (handled above).
+    if (/#|\b(?:description|type|date|amount|notification)\b/i.test(body)) return false;
+    // "See Attachment" means the rows live on an attached schedule; the
+    // section is not empty and the attachment is not in this text layer.
+    if (/\battach(?:ed|ments?)\b/i.test(body)) return false;
+    // Any digit (row number, date, amount) means content we could not parse.
+    if (/\d/.test(body)) return false;
+    if (/\b(?:purchase|sale|exchange)\b/i.test(body)) return false;
+    if (/\d{1,2}\/\d{1,2}\/\d{2,4}/.test(body)) return false;
+    if (/\$\s*\d/.test(body)) return false;
+    // Leftover alphabetic content — asset names with no digits, #, header
+    // words, "attach", or purchase/sale/exchange ("Apple Inc Microsoft
+    // Corporation") — is a read we could not parse, not positive evidence of
+    // an empty section.  A real empty Part 7 prints nothing between the
+    // headings, so any leftover alphabetic body stays unconfirmed.
+    if (/[a-z]/i.test(body)) return false;
+    sawPositivelyEmptySection = true;
+  }
+  return sawPositivelyEmptySection;
+}
+
 /** Parse the merged 278-T text into ParsedTx[]. Pure / unit-testable. */
 export function parseOgeTransactionRows(text: string): ParsedTx[] {
+  return classifyOgeTransactionText(text).rows;
+}
+
+interface OgeTextScan {
+  rows: ParsedTx[];
+  refused: boolean;
+  /** True when the 278-T transactions table header is present. */
+  has278tTable: boolean;
+}
+
+function scanOgeTransactionRows(text: string): OgeTextScan {
   // Fold NUL bytes, non-breaking spaces, and every run of whitespace
   // (including real newlines, when the runtime's pdf.js DOES emit them) down
   // to single spaces, so the same global scan below is correct regardless of
@@ -225,7 +447,7 @@ export function parseOgeTransactionRows(text: string): ParsedTx[] {
     .replace(/\u00a0/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
-  if (!normalized) return [];
+  if (!normalized) return { rows: [], refused: false, has278tTable: false };
 
   // Prefer scanning only after the table header (see TABLE_HEADER_RE above);
   // fall back to the whole text if the header wasn't found (a format variant
@@ -288,9 +510,21 @@ export function parseOgeTransactionRows(text: string): ParsedTx[] {
   }
   // Refuse a garbled-OCR parse: if the matched "#" tokens are not a plausible
   // unique/increasing table index, ROW_RE was latching onto years/amounts and
-  // the rows are mis-merged guesses. Zero rows is the safe outcome.
-  if (!isOgeRowSequenceCoherent(rowIndexes)) return [];
-  return rows;
+  // the rows are mis-merged guesses.  Callers must keep this distinct from
+  // a section that simply had no rows.
+  if (!isOgeRowSequenceCoherent(rowIndexes)) {
+    return { rows: [], refused: true, has278tTable: Boolean(headerMatch) };
+  }
+  return { rows, refused: false, has278tTable: Boolean(headerMatch) };
+}
+
+/** Text-layer classification for one stored executive PDF. */
+export async function classifyExecutivePdfBytes(
+  bytes: ArrayBuffer,
+  docId = '',
+): Promise<OgeTextClassification> {
+  const { text } = await extractPdfText(bytes);
+  return classifyOgeTransactionText(text, docId);
 }
 
 /**

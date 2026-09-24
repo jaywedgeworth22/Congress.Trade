@@ -6358,6 +6358,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       filingsPromoted: 0, //    review -> feed (now clears the bar)
       rowsPromoted: 0,
       filingsStillInReview: 0,
+      settledZeroRow: 0, //      zero-row reads normalize() settled (empty/unreadable)
       skippedNoExtract: 0,
       skippedCountMismatch: 0,
       errors: [] as string[],
@@ -6373,6 +6374,48 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         continue;
       }
       if (!extracted || extracted.transactions.length === 0) {
+        // An executive zero-row read carrying a parse disposition is a
+        // terminal signal, not "no extract": normalize() closes the filing
+        // verified_empty / ocr_unusable (or stages recovered rows) instead of
+        // leaving the row parked for the next reprocess pass.
+        if (
+          !dryRun
+          && extracted?.filing.chamber === 'executive'
+          && extracted.parseDisposition
+        ) {
+          try {
+            const norm = await normalize(c.env, extracted.filing, [], {
+              extractor: extracted.extractor,
+              modelVersion: extracted.modelVersion,
+              sourceText: extracted.raw || null,
+              parseDisposition: extracted.parseDisposition,
+            });
+            // A settled zero-row read is a success, not a skip: counting it
+            // skippedNoExtract and pushing a "no extract" error would report
+            // ok:false for a pass that closed the filing.  But normalize()
+            // declines the terminal close without throwing when the close is
+            // refused (candidates staged for review instead): that filing is
+            // still in review, not settled.
+            if (norm.needsReview) {
+              summary.filingsStillInReview += 1;
+            } else {
+              // A concurrent revision can make BOTH the close and the
+              // routeToReview CAS lose: normalize() then returns
+              // needsReview:false without settling anything.  Count settled
+              // only when the review row actually resolved.
+              const review = await get<{ resolved: number }>(
+                c.env.DB,
+                'SELECT resolved FROM review_queue WHERE doc_id = ?',
+                [doc_id],
+              ).catch(() => null);
+              if (review?.resolved === 1) summary.settledZeroRow += 1;
+              else summary.filingsStillInReview += 1;
+            }
+            continue;
+          } catch (err) {
+            summary.errors.push(`${doc_id}: zero-row normalize failed: ${(err as Error).message}`);
+          }
+        }
         summary.skippedNoExtract += 1; summary.errors.push(`${doc_id}: no extract, extractor=${extracted?.extractor}, txCount=${extracted?.transactions?.length}`);
         continue;
       }
