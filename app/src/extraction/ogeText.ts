@@ -274,6 +274,13 @@ const PART7_END_RE = /(?:^|\s)(?:part\s*8\b|(?<!\d)8[.]\s*[a-z]|summary\s+of\s+c
 const PART7_REAL_END_RE = /(?:^|\s)(?:part\s*8\b|(?<!\d)8[.]\s*[a-z])/i;
 /** Table evidence used both for the empty-section body guard and the boilerplate-end guard. */
 const PART7_TABLE_EVIDENCE_RE = /#|\b(?:description|type|date|amount|notification)\b/i;
+/**
+ * Row evidence in text after a Summary of Contents marker: dates, dollar
+ * amounts, or transaction words mean rows follow the marker even when the
+ * table header glyphs were lost. Bare digits are deliberately excluded -
+ * contents entries themselves carry part numbers.
+ */
+const PART7_TAIL_ROW_EVIDENCE_RE = /\d{1,2}\/\d{1,2}\/\d{2,4}|\$\s*\d|\b(?:purchase|sale|exchange)\b/i;
 /** One short table-of-contents entry: "6. Agreements" / "Part 6 Agreements". */
 const PART7_TOC_ENTRY_RE = /(?:part\s*\d{1,2}\b|(?<!\d)\d{1,2}[.])\s*[A-Za-z]/i;
 /**
@@ -328,7 +335,7 @@ export function ogePart7SectionLooksEmpty(text: string | null | undefined): bool
       const tail = rest.slice(end.index + end[0].length);
       const realEnd = PART7_REAL_END_RE.exec(tail);
       const window = realEnd ? tail.slice(0, realEnd.index) : tail;
-      if (PART7_TABLE_EVIDENCE_RE.test(window)) continue;
+      if (PART7_TABLE_EVIDENCE_RE.test(window) || PART7_TAIL_ROW_EVIDENCE_RE.test(window)) continue;
     }
     const before = normalized.slice(
       Math.max(0, heading.index - PART7_TOC_ENTRY_WINDOW),
