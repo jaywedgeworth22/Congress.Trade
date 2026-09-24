@@ -1252,6 +1252,24 @@ export async function processAgreementDoc(
       dryRun,
     );
     if (part7) return { ...part7, rows: lineupRows() };
+    // Every non-dry caller — handleAgreementCheck's tier-1 claim AND the
+    // operator /agreement-reprocess route — settles an executive zero-read
+    // here before extract_empty_failure: a real 278e empty / unreadable 278-T
+    // closes itself, and deterministic rows are routed through normalization.
+    if (!dryRun) {
+      const settled = await maybeSettleExecutiveZeroRead(
+        env,
+        docId,
+        async () => (part7Bytes ? part7Bytes.slice(0) : null),
+        audit?.claimToken,
+      );
+      if (settled) {
+        return {
+          ...settledZeroReadResult(docId, audit?.tier ?? (models.c ? 2 : 1), settled),
+          rows: lineupRows(),
+        };
+      }
+    }
     return {
       docId,
       outcome: 'agree_but_hardfail',
@@ -2671,8 +2689,12 @@ export async function handleAgreementCheck(
     }
     if (res.outcome === 'agree_but_hardfail') {
       const flags = res.flags ?? [];
-      if (flags.includes('oge_part7_explicit_none')) {
-        // processAgreementDoc already closed this as verified_empty.
+      if (
+        flags.includes('oge_part7_explicit_none')
+        || flags.includes('auto_resolved_empty')
+        || flags.includes('oge_text_unreadable')
+      ) {
+        // processAgreementDoc already settled/closed this executive zero-read.
       } else if (flags.includes('extract_empty_failure')) {
         // Do not escalate empty×empty and do not soft-label as cascade_unresolved.
         // Executive 278e empty / refused 278-T close themselves; everything
