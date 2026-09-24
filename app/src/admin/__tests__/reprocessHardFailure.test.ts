@@ -151,6 +151,10 @@ describe('admin /reprocess hard failures', () => {
       raw: 'OGE Form 278e 7. Transactions 8. Liabilities',
       parseDisposition: 'empty',
     });
+    // A successful terminal close: normalize() returns needsReview:false.
+    mocks.normalize.mockResolvedValue({
+      transactions: [], minConfidence: 0, needsReview: false, published: false,
+    });
 
     const res = await app.request(
       '/reprocess',
@@ -179,6 +183,46 @@ describe('admin /reprocess hard failures', () => {
       parseDisposition: 'empty',
       sourceText: 'OGE Form 278e 7. Transactions 8. Liabilities',
     });
+  });
+
+  it('counts a refused zero-row close as still in review, not settled', async () => {
+    mocks.extractParsed.mockResolvedValue({
+      filing: {
+        ...filing(),
+        docId: 'E-2026-staged-278e',
+        chamber: 'executive',
+        docKind: 'text_pdf',
+        extractor: 'ogeText',
+      },
+      transactions: [],
+      extractor: 'ogeText',
+      modelVersion: null,
+      raw: 'OGE Form 278e 7. Transactions Apple Inc 8. Liabilities',
+      parseDisposition: 'empty',
+    });
+    // The terminal close is refused and the candidates are staged for review
+    // instead: normalize() returns needsReview:true without throwing.
+    mocks.normalize.mockResolvedValue({
+      transactions: [], minConfidence: 0, needsReview: true, published: false,
+    });
+
+    const res = await app.request(
+      '/reprocess',
+      {
+        method: 'POST',
+        headers: { Authorization: 'Bearer admin-secret', 'content-type': 'application/json' },
+        body: JSON.stringify({ chamber: 'executive', limit: 1 }),
+      },
+      { ADMIN_TOKEN: 'admin-secret', DB: fakeDb() } as unknown as Env,
+    );
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as Record<string, unknown>;
+    expect(body.ok).toBe(true);
+    expect(body.settledZeroRow).toBe(0);
+    expect(body.filingsStillInReview).toBe(1);
+    expect(body.skippedNoExtract).toBe(0);
+    expect(body.errors).toEqual([]);
   });
 
   it('does not normalize a zero-row read without a parse disposition (or on dryRun)', async () => {
