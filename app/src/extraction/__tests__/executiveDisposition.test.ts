@@ -774,7 +774,7 @@ describe('recoverExpiredCappedReviews', () => {
     // settledZeroReadResult: published:false with needsReview:false means
     // the recovered rows were neither persisted nor staged.
     expect(settledZeroReadResult('E-x', 1, {
-      kind: 'rows', needsReview: false, published: false, rowCount: 2,
+      kind: 'rows', needsReview: false, published: false, settled: false, rowCount: 2,
     })).toMatchObject({
       outcome: 'skipped',
       reason: 'review_resolved_or_claim_lost',
@@ -783,11 +783,55 @@ describe('recoverExpiredCappedReviews', () => {
     });
     // The real publish and review shapes are unchanged.
     expect(settledZeroReadResult('E-x', 1, {
-      kind: 'rows', needsReview: false, published: true, rowCount: 2,
+      kind: 'rows', needsReview: false, published: true, settled: false, rowCount: 2,
     })).toMatchObject({ outcome: 'published', reason: 'deterministic_rows_recovered' });
     expect(settledZeroReadResult('E-x', 1, {
-      kind: 'rows', needsReview: true, published: false, rowCount: 2,
+      kind: 'rows', needsReview: true, published: false, settled: false, rowCount: 2,
     })).toMatchObject({ outcome: 'review_flagged', reason: 'deterministic_rows_recovered' });
+  });
+
+  it('preserves a successful no-new-row settlement (amendment already persisted)', () => {
+    // normalize() resolved the review with nothing new to persist: a
+    // terminal no-op success, published with its distinguishing reason -
+    // not skipped as a CAS loss.
+    expect(settledZeroReadResult('E-x', 1, {
+      kind: 'rows', needsReview: false, published: false, settled: true,
+      rowCount: 0, reason: 'amendment_already_persisted',
+    })).toMatchObject({
+      outcome: 'published',
+      reason: 'amendment_already_persisted',
+      flags: ['deterministic_rows_recovered'],
+    });
+    expect(settledZeroReadResult('E-x', 1, {
+      kind: 'rows', needsReview: false, published: false, settled: true,
+      rowCount: 0, reason: 'deleted_rows_applied',
+    })).toMatchObject({ outcome: 'published', reason: 'deleted_rows_applied' });
+  });
+
+  it('counts a no-new-row settlement as terminalized in the capped sweep', async () => {
+    const db = await sqliteDatabase();
+    seedReview(db, 'E-2026-nonewrows-278e', 'extract_empty_failure');
+    db.prepare(`UPDATE filings SET raw_object_key = 'raw/nonewrows.pdf' WHERE doc_id = 'E-2026-nonewrows-278e'`).run();
+    classifyOverride.fn = async () => ({
+      disposition: 'rows',
+      rows: [{
+        txDate: '2026-06-19', owner: null, assetName: 'Apple Inc.', ticker: 'AAPL',
+        assetType: null, assetTypeName: null, txType: 'B', amountMin: 1001, amountMax: 15000,
+        isOption: false, capGainsOver200: false,
+        rawText: '1 Apple Inc. Purchase 06/19/2026 No $1,001 - $15,000',
+        confidence: 0.9,
+      }],
+    });
+    // normalize() resolved the review with nothing new to persist
+    // (amendment rows already live on a predecessor).
+    normalizeOverride.fn = async () => ({
+      transactions: [], minConfidence: 0.9, needsReview: false, published: false,
+      reviewReason: 'amendment_already_persisted', settled: true,
+    });
+    const env = withBytes(db, async () => ({ arrayBuffer: async () => new ArrayBuffer(8) }));
+
+    const out = await maybeRunAgreementAutopublish(env);
+    expect(out).toMatchObject({ terminalized: 1 });
   });
 
   it('treats a soft loadDocBytes skip (R2 miss + source timeout) as retryable, keeping lease and reason', async () => {
