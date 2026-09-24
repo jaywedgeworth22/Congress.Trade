@@ -6396,8 +6396,21 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
             // declines the terminal close without throwing when the close is
             // refused (candidates staged for review instead): that filing is
             // still in review, not settled.
-            if (norm.needsReview) summary.filingsStillInReview += 1;
-            else summary.settledZeroRow += 1;
+            if (norm.needsReview) {
+              summary.filingsStillInReview += 1;
+            } else {
+              // A concurrent revision can make BOTH the close and the
+              // routeToReview CAS lose: normalize() then returns
+              // needsReview:false without settling anything.  Count settled
+              // only when the review row actually resolved.
+              const review = await get<{ resolved: number }>(
+                c.env.DB,
+                'SELECT resolved FROM review_queue WHERE doc_id = ?',
+                [doc_id],
+              ).catch(() => null);
+              if (review?.resolved === 1) summary.settledZeroRow += 1;
+              else summary.filingsStillInReview += 1;
+            }
             continue;
           } catch (err) {
             summary.errors.push(`${doc_id}: zero-row normalize failed: ${(err as Error).message}`);
