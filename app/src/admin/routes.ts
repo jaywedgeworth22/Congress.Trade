@@ -6384,7 +6384,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
           && extracted.parseDisposition
         ) {
           try {
-            await normalize(c.env, extracted.filing, [], {
+            const norm = await normalize(c.env, extracted.filing, [], {
               extractor: extracted.extractor,
               modelVersion: extracted.modelVersion,
               sourceText: extracted.raw || null,
@@ -6392,8 +6392,12 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
             });
             // A settled zero-row read is a success, not a skip: counting it
             // skippedNoExtract and pushing a "no extract" error would report
-            // ok:false for a pass that closed the filing.
-            summary.settledZeroRow += 1;
+            // ok:false for a pass that closed the filing.  But normalize()
+            // declines the terminal close without throwing when the close is
+            // refused (candidates staged for review instead): that filing is
+            // still in review, not settled.
+            if (norm.needsReview) summary.filingsStillInReview += 1;
+            else summary.settledZeroRow += 1;
             continue;
           } catch (err) {
             summary.errors.push(`${doc_id}: zero-row normalize failed: ${(err as Error).message}`);
