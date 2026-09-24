@@ -816,6 +816,35 @@ describe('normalize', () => {
     expect(closeParams).toContain(7);
   });
 
+  it('closes a verified-empty executive extract only against the captured review revision', async () => {
+    const { env, cap } = makeEnv([], {
+      resolvedReview: { resolved: 0, review_revision: 7, agreement_suppressed_at: null },
+    });
+    const result = await normalize(
+      env,
+      filing({
+        docId: 'E-2026-pam-bondi-08-20-2026-278t',
+        chamber: 'executive',
+        docKind: 'text_pdf',
+        extractor: 'ogeText',
+      }),
+      [],
+      { extractor: 'ogeText', parseDisposition: 'empty' },
+    );
+    expect(result.needsReview).toBe(false);
+    // Same revision guard as the unreadable close: the close UPDATE must
+    // carry the snapshot's review_revision, or a retry-auto that bumped the
+    // revision would let a stale empty parse close the freshly released row.
+    const closeIdx = cap.batches.findIndex((batch) =>
+      batch.some((sql) => /UPDATE review_queue\s+SET resolved = 1/i.test(sql)),
+    );
+    expect(closeIdx).toBeGreaterThanOrEqual(0);
+    const closeParams = cap.batchParams[closeIdx][
+      cap.batches[closeIdx].findIndex((sql) => /UPDATE review_queue\s+SET resolved = 1/i.test(sql))
+    ];
+    expect(closeParams).toContain(7);
+  });
+
   it('preserves staged payload candidates when a zero-row executive close is refused', async () => {
     // The terminal close is refused because the review payload stages
     // candidates; routeToReview must not then rewrite that payload with an
