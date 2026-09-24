@@ -97,6 +97,19 @@ describe('loadDocBytes', () => {
     }
   });
 
+  it('treats a 200 with an empty body as terminal, not retryable', async () => {
+    // Same capped-recovery loop as a permanent 4xx: a retryable empty body
+    // keeps the lease and retries forever instead of reaching human review.
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, status: 200, arrayBuffer: async () => new ArrayBuffer(0) })));
+    const env = makeEnv({ get: async () => null });
+    const res = await loadDocBytes(env, 'S-1', 'raw/S-1.pdf');
+    expect('skip' in res).toBe(true);
+    if ('skip' in res) {
+      expect(res.skip.reason).toMatch(/source_url empty body/);
+      expect(res.skip.retryable).toBe(false);
+    }
+  });
+
   it('keeps transient statuses retryable', async () => {
     for (const status of [408, 429, 500, 502, 503]) {
       vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status, arrayBuffer: async () => new ArrayBuffer(0) })));
