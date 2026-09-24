@@ -347,6 +347,25 @@ describe('classifyOgeTransactionText', () => {
     expect(ogePart7SectionLooksEmpty('OGE Form 278e 7. Transactions 8. Liabilities')).toBe(true);
   });
 
+  it('does not close on a contents prefix truncated at the Part 8 boundary', () => {
+    const bondi = 'E-undated-pam-bondi-2026-278term';
+    // The extraction ran out of text at the last contents entry: the Part 7
+    // line has part entries before it but none after, so the both-sides TOC
+    // filter does not fire and the empty prefix would close verified_empty
+    // without the real Part 7 ever being read.
+    const truncated =
+      'OGE Form 278e Summary of Contents 5. Other Income 6. Agreements 7. Transactions 8. Liabilities';
+    expect(ogePart7SectionLooksEmpty(truncated)).toBe(false);
+    expect(classifyOgeTransactionText(truncated, bondi))
+      .toEqual({ disposition: 'unconfirmed', rows: [] });
+    // Same stub with the titled form of the boundary.
+    const truncatedTitled =
+      'OGE Form 278e Summary of Contents 5. Other Income 6. Agreements Part 7. Transactions Part 8. Liabilities';
+    expect(ogePart7SectionLooksEmpty(truncatedTitled)).toBe(false);
+    expect(classifyOgeTransactionText(truncatedTitled, bondi))
+      .toEqual({ disposition: 'unconfirmed', rows: [] });
+  });
+
   it('does not let a table-of-contents Part 7 entry hide the real Part 7 further down', () => {
     const bondi = 'E-undated-pam-bondi-2026-278term';
     // TOC stub first, then the real Part 7 with a traded row: verified_empty
