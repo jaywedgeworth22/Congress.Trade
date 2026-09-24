@@ -1,5 +1,9 @@
 # Current Handoff
 
+## 2026-09-24 BF-PUBLISHER — Disputed agreement vision vs unreadable 278-T
+
+Live Trump `E-2026-donald-j-trump-09-8-2026-278t` rejected at rev 35 (unusable OCR; official 1156 rows; vision 472/66/33).  `#2554` sweep could not close it because disagreed kind=agreement runs counted as a successful nonempty read.  Branch `publisher/oge-disputed-vision-guard`.  No merge/deploy.  House historic backlog untouched.  Rollout: `docs/rollouts/2026-09-24-disputed-agreement-vision-unreadable.md`.
+
 ## 2026-09-18 CLAUDE — Map the CI backstop schedule in the Crons reporter (FLEET-INFRA-BJ)
 
 `ci.yml` has an hourly `23 * * * *` backstop tick, but `CRON_SCHEDULES` in

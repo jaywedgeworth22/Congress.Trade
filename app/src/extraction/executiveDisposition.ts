@@ -31,6 +31,65 @@ const EMPTY_ERROR_CLEARED = EXECUTIVE_EMPTY_RESOLUTION_REASON;
 const UNREADABLE_FILING_ERROR =
   'oge_text_unreadable: deterministic extractor refused a garbled or unreadable 278-T text layer';
 
+/**
+ * Two kind=agreement vision runs count as the same reading only when their
+ * row counts are this close.  33 vs 66 vs 472 (Trump 278-T) is not a
+ * successful read of a 1156-row filing.
+ */
+export const AGREEMENT_VISION_COUNT_AGREE_RATIO = 0.8;
+
+/**
+ * True when extraction_runs already holds a successful nonempty read of
+ * `doc_id`.  Bind `doc_id` three times: a non-agreement (or null-kind) ok
+ * run with rows still blocks; kind=agreement vision blocks only when at
+ * least two ok>0 runs exist and every pair has min/max row_count >=
+ * AGREEMENT_VISION_COUNT_AGREE_RATIO.  Disputed agreement vision must not
+ * block an unreadable or empty close.  A pair is two distinct models
+ * (provider or model differs) in the same agreement batch: retries of one
+ * model, or runs from different batches, are not independent agreement.
+ */
+export const SUCCESSFUL_NONEMPTY_READ_SQL = `(
+  EXISTS (
+    SELECT 1 FROM extraction_runs
+     WHERE doc_id = ? AND ok = 1 AND COALESCE(row_count, 0) > 0
+       AND COALESCE(kind, '') <> 'agreement'
+  )
+  OR (
+    EXISTS (
+      SELECT 1 FROM extraction_runs a
+        JOIN extraction_runs b
+          ON b.doc_id = a.doc_id AND b.rowid > a.rowid
+         AND b.batch_id = a.batch_id
+         AND (b.provider <> a.provider OR b.model <> a.model)
+       WHERE a.doc_id = ?
+         AND a.ok = 1 AND b.ok = 1
+         AND COALESCE(a.kind, '') = 'agreement'
+         AND COALESCE(b.kind, '') = 'agreement'
+         AND COALESCE(a.row_count, 0) > 0
+         AND COALESCE(b.row_count, 0) > 0
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM extraction_runs a
+        JOIN extraction_runs b
+          ON b.doc_id = a.doc_id AND b.rowid > a.rowid
+         AND b.batch_id = a.batch_id
+         AND (b.provider <> a.provider OR b.model <> a.model)
+       WHERE a.doc_id = ?
+         AND a.ok = 1 AND b.ok = 1
+         AND COALESCE(a.kind, '') = 'agreement'
+         AND COALESCE(b.kind, '') = 'agreement'
+         AND COALESCE(a.row_count, 0) > 0
+         AND COALESCE(b.row_count, 0) > 0
+         AND (MIN(a.row_count, b.row_count) * 1.0 / MAX(a.row_count, b.row_count))
+             < ${AGREEMENT_VISION_COUNT_AGREE_RATIO}
+    )
+  )
+)`;
+
+function successfulNonemptyReadParams(docId: string): SqlParam[] {
+  return [docId, docId, docId];
+}
+
 export interface ExecutiveCloseOptions {
   nowIso?: string;
   /** When set, only the holder of this lease (or an unclaimed row) may close. */
@@ -65,16 +124,15 @@ async function hasLiveTransactions(env: Env, docId: string): Promise<boolean> {
 /**
  * True when some earlier successful read already found transactions.  A
  * bare zero from the deterministic parser is not enough to call the filing
- * empty in that case.
+ * empty in that case.  Disputed kind=agreement vision is not a successful
+ * read.
  */
 export async function otherSuccessfulReadHasRows(env: Env, docId: string): Promise<boolean> {
   try {
     const row = await get<{ hit: number }>(
       env.DB,
-      `SELECT 1 AS hit FROM extraction_runs
-        WHERE doc_id = ? AND ok = 1 AND COALESCE(row_count, 0) > 0
-        LIMIT 1`,
-      [docId],
+      `SELECT 1 AS hit WHERE ${SUCCESSFUL_NONEMPTY_READ_SQL}`,
+      successfulNonemptyReadParams(docId),
     );
     return Boolean(row);
   } catch {
@@ -143,13 +201,11 @@ async function writeClose(
                AND NOT EXISTS (
                  SELECT 1 FROM transactions WHERE doc_id = ? AND deprecated_at IS NULL
                )
-               -- Same atomic guard as the UPDATE close below: a nonempty
-               -- extraction_run persisted between the outer guard and this
+               -- Same atomic guard as the UPDATE close below: a successful
+               -- nonempty read persisted between the outer guard and this
                -- batch must not be closed over on a first pass either.
-               AND NOT EXISTS (
-                 SELECT 1 FROM extraction_runs
-                  WHERE doc_id = ? AND ok = 1 AND COALESCE(row_count, 0) > 0
-               )`,
+               -- Disputed kind=agreement vision is not a successful read.
+               AND NOT ${SUCCESSFUL_NONEMPTY_READ_SQL}`,
         [
           docId,
           review.reason,
@@ -160,7 +216,7 @@ async function writeClose(
           docId,
           docId,
           docId,
-          docId,
+          ...successfulNonemptyReadParams(docId),
         ],
       ]]
     : [];
@@ -186,14 +242,13 @@ async function writeClose(
           AND NOT EXISTS (
             SELECT 1 FROM transactions WHERE doc_id = ? AND deprecated_at IS NULL
           )
-          AND NOT EXISTS (
-            SELECT 1 FROM extraction_runs
-             WHERE doc_id = ? AND ok = 1 AND COALESCE(row_count, 0) > 0
-          )
+          AND NOT ${SUCCESSFUL_NONEMPTY_READ_SQL}
           -- routeToReview stages low-confidence candidates only in
-          -- payload.transactions: no live transaction and no extraction_runs
-          -- row, so both table guards pass while the review holds real
-          -- candidates. Staged candidates are row evidence too.
+          -- payload.transactions: no live transaction and no successful
+          -- nonempty extraction_runs row, so both table guards pass while
+          -- the review holds real candidates. Staged candidates are row
+          -- evidence too. Disputed kind=agreement vision is not a successful
+          -- read.
           AND NOT (COALESCE(json_extract(payload, '$.transactionCount'), 0) > 0)`,
       [
         review.reason,
@@ -203,7 +258,7 @@ async function writeClose(
         docId,
         ...where.params,
         docId,
-        docId,
+        ...successfulNonemptyReadParams(docId),
       ],
     ],
     [
