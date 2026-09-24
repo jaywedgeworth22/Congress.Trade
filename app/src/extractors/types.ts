@@ -521,6 +521,11 @@ export class OgePdfExtractor implements Extractor {
       const fallback = textResult ?? emptyOgeTextResult();
       return {
         ...fallback,
+        // Vision never confirmed this read: a terminal disposition from the
+        // refused text layer must not survive the fail-soft, or normalize()
+        // resolves the filing rejected without a successful zero-row vision
+        // read.
+        parseDisposition: undefined,
         raw: `${fallback.raw}\n\n---\nogePdf vision fail-soft: ${reason}`,
       };
     }
