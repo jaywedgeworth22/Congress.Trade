@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Env } from '../../shared/types.ts';
-import { maybeRunAgreementAutopublish } from '../agreement.ts';
+import { maybeRunAgreementAutopublish, settledZeroReadResult } from '../agreement.ts';
 import {
   BONDI_EMPTY_DOC_ID,
   closeUnreadableExecutive,
@@ -40,6 +40,22 @@ vi.mock('../ogeText.ts', async (importOriginal) => {
     ...actual,
     classifyExecutivePdfBytes: (bytes: ArrayBuffer, docId: string) =>
       classifyOverride.fn ? classifyOverride.fn(bytes, docId) : actual.classifyExecutivePdfBytes(bytes, docId),
+  };
+});
+
+// CAS-loss tests stub normalize()'s result; every other test runs the real
+// implementation.
+const normalizeOverride = vi.hoisted(() => ({
+  fn: null as null | ((...args: unknown[]) => Promise<unknown>),
+}));
+vi.mock('../normalizer.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../normalizer.ts')>();
+  return {
+    ...actual,
+    normalize: (...args: unknown[]) =>
+      normalizeOverride.fn
+        ? normalizeOverride.fn(...args)
+        : (actual.normalize as (...a: unknown[]) => Promise<unknown>)(...args),
   };
 });
 
@@ -185,6 +201,7 @@ function seedReview(
 
 afterEach(() => {
   classifyOverride.fn = null;
+  normalizeOverride.fn = null;
   openDatabase?.close();
   openDatabase = null;
 });
@@ -722,6 +739,55 @@ describe('recoverExpiredCappedReviews', () => {
     };
     const again = await maybeRunAgreementAutopublish(env);
     expect(again).toMatchObject({ terminalized: 0 });
+  });
+
+  it('does not count a recovered-rows CAS loss as terminalized (row stays eligible)', async () => {
+    const db = await sqliteDatabase();
+    seedReview(db, 'E-2026-caslost-278e', 'extract_empty_failure');
+    db.prepare(`UPDATE filings SET raw_object_key = 'raw/caslost.pdf' WHERE doc_id = 'E-2026-caslost-278e'`).run();
+    classifyOverride.fn = async () => ({
+      disposition: 'rows',
+      rows: [{
+        txDate: '2026-06-19', owner: null, assetName: 'Apple Inc.', ticker: 'AAPL',
+        assetType: null, assetTypeName: null, txType: 'B', amountMin: 1001, amountMax: 15000,
+        isOption: false, capGainsOver200: false,
+        rawText: '1 Apple Inc. Purchase 06/19/2026 No $1,001 - $15,000',
+        confidence: 0.9,
+      }],
+    });
+    // normalize() lost the persist/stage CAS: the recovered rows were
+    // neither persisted nor staged, so the pass must not finish as a
+    // success over nothing.
+    normalizeOverride.fn = async () => ({
+      transactions: [{}], minConfidence: 0.9, needsReview: false, published: false,
+    });
+    const env = withBytes(db, async () => ({ arrayBuffer: async () => new ArrayBuffer(8) }));
+
+    const out = await maybeRunAgreementAutopublish(env);
+    expect(out).toMatchObject({ terminalized: 0 });
+    // Untouched: same non-terminal reason, still unresolved, no re-label.
+    const row = reviewRow(db, 'E-2026-caslost-278e');
+    expect(row).toMatchObject({ resolved: 0, reason: 'extract_empty_failure' });
+  });
+
+  it('maps a recovered-rows CAS loss to skipped/claim-lost, not published', () => {
+    // settledZeroReadResult: published:false with needsReview:false means
+    // the recovered rows were neither persisted nor staged.
+    expect(settledZeroReadResult('E-x', 1, {
+      kind: 'rows', needsReview: false, published: false, rowCount: 2,
+    })).toMatchObject({
+      outcome: 'skipped',
+      reason: 'review_resolved_or_claim_lost',
+      rowCount: 2,
+      flags: ['deterministic_rows_recovered'],
+    });
+    // The real publish and review shapes are unchanged.
+    expect(settledZeroReadResult('E-x', 1, {
+      kind: 'rows', needsReview: false, published: true, rowCount: 2,
+    })).toMatchObject({ outcome: 'published', reason: 'deterministic_rows_recovered' });
+    expect(settledZeroReadResult('E-x', 1, {
+      kind: 'rows', needsReview: true, published: false, rowCount: 2,
+    })).toMatchObject({ outcome: 'review_flagged', reason: 'deterministic_rows_recovered' });
   });
 
   it('treats a soft loadDocBytes skip (R2 miss + source timeout) as retryable, keeping lease and reason', async () => {
