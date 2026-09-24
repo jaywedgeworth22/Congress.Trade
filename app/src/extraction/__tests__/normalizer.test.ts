@@ -731,6 +731,31 @@ describe('normalize', () => {
     expect(cap.filingUpdates.some((row) => row[0] === 'verified_empty')).toBe(false);
   });
 
+  it('does not verified_empty an executive extract whose Part 7 None points at an attachment', async () => {
+    const { env, cap } = makeEnv([]);
+    const result = await normalize(
+      env,
+      filing({
+        docId: 'E-2026-someone-278e',
+        chamber: 'executive',
+        docKind: 'text_pdf',
+        extractor: 'ogeText',
+      }),
+      [],
+      {
+        extractor: 'ogeText',
+        sourceText: 'OGE Form 278e Part 7. Transactions None. See attachment. Part 8. Liabilities',
+      },
+    );
+    // Rows live on the attachment: the doc stays in review instead of taking
+    // the oge_part7_explicit_none verified_empty close.
+    expect(result.needsReview).toBe(true);
+    expect(result.reviewReason).not.toBe('oge_part7_explicit_none');
+    expect(result.reviewReason).not.toBe('nothing_to_report');
+    expect(cap.auditRows.some((row) => row[2] === 'auto_resolved_empty')).toBe(false);
+    expect(String(cap.reviewRows[0][1])).toContain('extract_empty_failure');
+  });
+
   it('closes a refused executive extract as unreadable, not verified_empty', async () => {
     const { env, cap } = makeEnv([]);
     const result = await normalize(
