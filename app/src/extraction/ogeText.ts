@@ -137,12 +137,16 @@ const MIN_INDEX_SPAN_COVERAGE = 0.8;
 
 /**
  * Doc-id shape for the two executive disclosure forms this parser sees.
- * `278term` / `278e` must win over `278t`: a termination id contains the
- * letters "278t" as a prefix of "278term".
+ * `278term` (and its hyphenated / spaced spellings) plus `278e` must win over
+ * `278t`: a termination id contains the letters "278t" as a prefix of
+ * "278term", and a hyphenated "278-term" would otherwise match "278-t".
  */
 export function executiveDisclosureForm(docId: string): '278e' | '278t' | 'unknown' {
   const id = docId.toLowerCase();
-  if (id.includes('278term') || id.includes('278e') || id.includes('278-e')) return '278e';
+  if (
+    id.includes('278term') || id.includes('278-term') || id.includes('278 term')
+    || id.includes('278e') || id.includes('278-e')
+  ) return '278e';
   if (id.includes('278t') || id.includes('278-t')) return '278t';
   return 'unknown';
 }
