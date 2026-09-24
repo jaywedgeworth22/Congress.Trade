@@ -309,6 +309,39 @@ describe('admin reopen and first-pass closes', () => {
     expect(await closeUnreadableExecutive(env, TRUMP_UNREADABLE_DOC_ID, { insertIfAbsent: true })).toBe(false);
   });
 
+  it('does not insert a resolved first-pass row when a nonempty run lands between guard and batch', async () => {
+    const db = await sqliteDatabase();
+    db.prepare(
+      `INSERT INTO filings (doc_id, chamber, ingest_status, doc_kind, extractor)
+       VALUES (?, 'executive', 'pending', 'text_pdf', 'ogeText')`,
+    ).run(BONDI_EMPTY_DOC_ID);
+    const env = envFor(db);
+    // Same race as the UPDATE close: the outer emptiness guards pass, then a
+    // concurrent worker persists a nonempty extraction_run before the
+    // first-pass INSERT runs.
+    const realPrepare = env.DB.prepare.bind(env.DB);
+    let injected = false;
+    (env.DB as { prepare: (sql: string) => unknown }).prepare = (sql: string) => {
+      if (!injected && /INSERT\s+OR\s+IGNORE\s+INTO\s+review_queue/i.test(sql)) {
+        injected = true;
+        db.prepare(
+          `INSERT INTO extraction_runs (doc_id, ok, row_count, result_json) VALUES (?, 1, 4, '[{}]')`,
+        ).run(BONDI_EMPTY_DOC_ID);
+      }
+      return realPrepare(sql);
+    };
+
+    const closed = await closeVerifiedEmptyExecutive(env, BONDI_EMPTY_DOC_ID, { insertIfAbsent: true });
+    expect(injected).toBe(true);
+    expect(closed).toBe(false);
+    expect(
+      db.prepare(`SELECT count(*) AS n FROM review_queue WHERE doc_id = ?`).get(BONDI_EMPTY_DOC_ID),
+    ).toEqual({ n: 0 });
+    expect(
+      db.prepare(`SELECT ingest_status FROM filings WHERE doc_id = ?`).get(BONDI_EMPTY_DOC_ID),
+    ).toEqual({ ingest_status: 'pending' });
+  });
+
   it('does not insert over an existing unresolved row a human suppressed', async () => {
     const db = await sqliteDatabase();
     seedReview(db, BONDI_EMPTY_DOC_ID, 'extract_empty_failure');
