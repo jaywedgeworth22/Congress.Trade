@@ -44,7 +44,9 @@ export const AGREEMENT_VISION_COUNT_AGREE_RATIO = 0.8;
  * run with rows still blocks; kind=agreement vision blocks only when at
  * least two ok>0 runs exist and every pair has min/max row_count >=
  * AGREEMENT_VISION_COUNT_AGREE_RATIO.  Disputed agreement vision must not
- * block an unreadable or empty close.
+ * block an unreadable or empty close.  A pair is two distinct models
+ * (provider or model differs) in the same agreement batch: retries of one
+ * model, or runs from different batches, are not independent agreement.
  */
 export const SUCCESSFUL_NONEMPTY_READ_SQL = `(
   EXISTS (
@@ -57,6 +59,8 @@ export const SUCCESSFUL_NONEMPTY_READ_SQL = `(
       SELECT 1 FROM extraction_runs a
         JOIN extraction_runs b
           ON b.doc_id = a.doc_id AND b.rowid > a.rowid
+         AND b.batch_id = a.batch_id
+         AND (b.provider <> a.provider OR b.model <> a.model)
        WHERE a.doc_id = ?
          AND a.ok = 1 AND b.ok = 1
          AND COALESCE(a.kind, '') = 'agreement'
@@ -68,6 +72,8 @@ export const SUCCESSFUL_NONEMPTY_READ_SQL = `(
       SELECT 1 FROM extraction_runs a
         JOIN extraction_runs b
           ON b.doc_id = a.doc_id AND b.rowid > a.rowid
+         AND b.batch_id = a.batch_id
+         AND (b.provider <> a.provider OR b.model <> a.model)
        WHERE a.doc_id = ?
          AND a.ok = 1 AND b.ok = 1
          AND COALESCE(a.kind, '') = 'agreement'
