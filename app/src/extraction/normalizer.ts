@@ -592,6 +592,10 @@ export async function normalize(
         nowIso,
         respectSuppression: true,
         insertIfAbsent: true,
+        // Close only the review version we read: a retry-auto that bumps the
+        // revision must not let a stale empty parse close the freshly
+        // released row (same guard as the unreadable branch above).
+        reviewRevision: reviewSnapshot?.review_revision ?? null,
       });
       if (closed) {
         return {
