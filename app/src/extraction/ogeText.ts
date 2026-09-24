@@ -269,9 +269,13 @@ export function classifyOgeTransactionText(text: string, docId = ''): OgeTextCla
 
 const PART7_HEADING_RE = /(?:^|\s)(?:part\s*7[.:\s]+transactions?|(?<!\d)7[.]\s*transactions?)\b/i;
 const PART7_HEADING_GLOBAL_RE = new RegExp(PART7_HEADING_RE.source, 'gi');
-const PART7_END_RE = /(?:^|\s)(?:part\s*8\b|(?<!\d)8[.]\s*[a-z]|summary\s+of\s+contents)/i;
+// The numbered alternative requires the Part 8 title: a bare "8. <word>"
+// also matches row 8 of a Part 7 table ("8. Apple Inc Purchase ..."), which
+// would end the section early and make the rows before it vanish from the
+// body guards.
+const PART7_END_RE = /(?:^|\s)(?:part\s*8\b|(?<!\d)8[.]\s*liabilities\b|summary\s+of\s+contents)/i;
 /** The real section boundary: the Part 8 heading, not front/back-matter boilerplate. */
-const PART7_REAL_END_RE = /(?:^|\s)(?:part\s*8\b|(?<!\d)8[.]\s*[a-z])/i;
+const PART7_REAL_END_RE = /(?:^|\s)(?:part\s*8\b|(?<!\d)8[.]\s*liabilities\b)/i;
 /** Table evidence used both for the empty-section body guard and the boilerplate-end guard. */
 const PART7_TABLE_EVIDENCE_RE = /#|\b(?:description|type|date|amount|notification)\b/i;
 /**
