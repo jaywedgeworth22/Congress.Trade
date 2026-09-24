@@ -539,13 +539,14 @@ describe('recoverExpiredCappedReviews', () => {
     );
     // No bytes are reachable for the executive empty failures (no raw key, no
     // source_url), so they cannot be re-classified and take the capped
-    // human-review label instead of stranding.
-    expect(out).toMatchObject({ terminalized: 5, attempted: 0 });
+    // human-review label instead of stranding. E-chrome carries the terminal
+    // form_chrome_only reason, so recovery leaves it untouched.
+    expect(out).toMatchObject({ terminalized: 4, attempted: 0 });
 
     const reason = (docId: string) =>
       (db.prepare(`SELECT reason FROM review_queue WHERE doc_id = ?`).get(docId) as { reason: string }).reason;
     expect(reason('E-empty')).toBe('agreement_cascade_unresolved');
-    expect(reason('E-chrome')).toBe('agreement_cascade_unresolved');
+    expect(reason('E-chrome')).toBe('form_chrome_only,extract_empty_failure,no_transactions_extracted');
     expect(reason('E-unread')).toBe('ocr_unusable,oge_text_unreadable');
     expect(reason('E-already')).toBe('agreement_cascade_unresolved');
     expect(reason('E-capped')).toBe('agreement_cascade_unresolved');
@@ -584,6 +585,33 @@ describe('recoverExpiredCappedReviews', () => {
     // Not leased, not relabeled: the stale pass drops the row for a later one.
     expect(row).toMatchObject({ resolved: 0, reason: 'extract_empty_failure' });
     expect(row.agreement_claim_token).toBeNull();
+  });
+
+  it('preserves established terminal reasons instead of relabeling them during capped recovery', async () => {
+    const db = await sqliteDatabase();
+    seedReview(db, 'E-localvision', 'local_vision_exhausted');
+    seedReview(db, 'E-rowlimit', 'extraction_row_limit');
+    seedReview(db, 'E-spend', 'scanned_pdf_vision_spend');
+    seedReview(db, 'E-chrome2', 'form_chrome_only,extract_empty_failure');
+    seedReview(db, 'E-rejected', 'rejected:manual');
+    seedReview(db, 'E-plain', 'extract_empty_failure');
+
+    const out = await maybeRunAgreementAutopublish(
+      { ...envFor(db), AGREEMENT_AUTOPUBLISH_LIMIT: '10' } as unknown as Env,
+    );
+    // Only the plain nonterminal empty failure is recovered; the terminal
+    // rows keep their reasons (sweepLocalVisionHostedFallback selects on
+    // local_vision_exhausted) and are never leased.
+    expect(out).toMatchObject({ terminalized: 1 });
+    const row = (docId: string) =>
+      db.prepare(`SELECT reason, agreement_claim_token FROM review_queue WHERE doc_id = ?`).get(docId) as
+        { reason: string; agreement_claim_token: string | null };
+    expect(row('E-localvision')).toEqual({ reason: 'local_vision_exhausted', agreement_claim_token: null });
+    expect(row('E-rowlimit')).toEqual({ reason: 'extraction_row_limit', agreement_claim_token: null });
+    expect(row('E-spend')).toEqual({ reason: 'scanned_pdf_vision_spend', agreement_claim_token: null });
+    expect(row('E-chrome2')).toEqual({ reason: 'form_chrome_only,extract_empty_failure', agreement_claim_token: null });
+    expect(row('E-rejected')).toEqual({ reason: 'rejected:manual', agreement_claim_token: null });
+    expect(row('E-plain').reason).toBe('agreement_cascade_unresolved');
   });
 
   function withBytes(db: SqliteDatabase, get: (key: string) => Promise<unknown>): Env {
