@@ -109,6 +109,7 @@ async function sqliteDatabase(): Promise<SqliteDatabase> {
       doc_id TEXT,
       ok INTEGER,
       row_count INTEGER,
+      kind TEXT,
       result_json TEXT
     );
     CREATE TABLE securities_master (
@@ -293,6 +294,45 @@ describe('sweepKnownParkedExecutiveTerminals', () => {
     const bondi = db.prepare(`SELECT resolved, reason FROM review_queue WHERE doc_id = ?`)
       .get(BONDI_EMPTY_DOC_ID) as { resolved: number; reason: string };
     expect(bondi).toEqual({ resolved: 0, reason: 'extract_empty_failure' });
+    const trump = db.prepare(`SELECT resolved FROM review_queue WHERE doc_id = ?`)
+      .get(TRUMP_UNREADABLE_DOC_ID) as { resolved: number };
+    expect(trump.resolved).toBe(0);
+  });
+
+  it('closes Trump as unreadable when agreement vision counts disagree (33/66/472)', async () => {
+    const db = await sqliteDatabase();
+    seedReview(db, TRUMP_UNREADABLE_DOC_ID, 'agreement_cascade_unresolved');
+    const insert = db.prepare(
+      `INSERT INTO extraction_runs (doc_id, ok, row_count, kind, result_json) VALUES (?, 1, ?, 'agreement', '[]')`,
+    );
+    insert.run(TRUMP_UNREADABLE_DOC_ID, 33);
+    insert.run(TRUMP_UNREADABLE_DOC_ID, 66);
+    insert.run(TRUMP_UNREADABLE_DOC_ID, 472);
+
+    const result = await sweepKnownParkedExecutiveTerminals(envFor(db));
+    expect(result).toEqual({ verifiedEmpty: 0, unreadable: 1 });
+    const trump = db.prepare(
+      `SELECT resolved, resolution_kind, resolution_reason, reason FROM review_queue WHERE doc_id = ?`,
+    ).get(TRUMP_UNREADABLE_DOC_ID) as Record<string, unknown>;
+    expect(trump).toMatchObject({
+      resolved: 1,
+      resolution_kind: 'rejected',
+      resolution_reason: 'oge_text_unreadable',
+    });
+    expect(String(trump.reason)).toContain('ocr_unusable');
+  });
+
+  it('does not close Trump when two agreement vision runs agree on row count', async () => {
+    const db = await sqliteDatabase();
+    seedReview(db, TRUMP_UNREADABLE_DOC_ID, 'agreement_cascade_unresolved');
+    const insert = db.prepare(
+      `INSERT INTO extraction_runs (doc_id, ok, row_count, kind, result_json) VALUES (?, 1, ?, 'agreement', '[]')`,
+    );
+    insert.run(TRUMP_UNREADABLE_DOC_ID, 1150);
+    insert.run(TRUMP_UNREADABLE_DOC_ID, 1160);
+
+    const result = await sweepKnownParkedExecutiveTerminals(envFor(db));
+    expect(result).toEqual({ verifiedEmpty: 0, unreadable: 0 });
     const trump = db.prepare(`SELECT resolved FROM review_queue WHERE doc_id = ?`)
       .get(TRUMP_UNREADABLE_DOC_ID) as { resolved: number };
     expect(trump.resolved).toBe(0);
