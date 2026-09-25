@@ -28,6 +28,8 @@ import {
   HOURLY_ENRICHMENT_SLICE_DEADLINE_MS,
 } from '../jobs.ts';
 import { runAutonomySweeps } from '../ingestion/autonomySweeps.ts';
+import { runDisclosureLatencyProbe } from '../ingestion/tradeLatency.ts';
+import { runLeasedLatencyProbe } from '../ingestion/scoutHandoff.ts';
 import { acquireDenoCronSingleton, type TickSingletonLock } from './scheduledTick.ts';
 import { withThirdPartyTelemetry } from '../shared/thirdPartyTelemetry.ts';
 import { captureException } from '#sentry';
@@ -194,5 +196,104 @@ export function registerDailyLaneCrons(
   }
   console.log(
     `Daily lane crons registered: ${DAILY_LANE_CRONS.map((l) => `${l.name}="${l.schedule}"`).join(' ')} deadlineMs=${deadlineMs}`,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Frequent (sub-minute) lane crons
+//
+// These lanes were previously inside runMaintenancePipeline on the main tick,
+// but their sequential external HTTP calls routinely consumed the tick's 120 s
+// budget and — critically — ignored the AbortSignal, causing hard-deadline
+// overruns (CONGRESS-TRADE-1B).  Each lane now runs in its own cron at a
+// cadence that keeps detection latency acceptable (disclosure probe every 3 min,
+// price snapshots every 5 min) while keeping the main tick lean.
+// ---------------------------------------------------------------------------
+
+/** Helper: per-request fetch with a 15 s timeout + optional parent AbortSignal. */
+function makeDeadlineFetch(parentSignal?: AbortSignal) {
+  return async function deadlineFetch(
+    input: RequestInfo | URL,
+    init?: RequestInit,
+  ): Promise<Response> {
+    const perReqAbort = new AbortController();
+    const timeoutId = setTimeout(
+      () => perReqAbort.abort(new Error('upstream fetch timeout')),
+      15000,
+    );
+    const signals: AbortSignal[] = [perReqAbort.signal];
+    if (parentSignal) signals.push(parentSignal);
+    if (init?.signal) signals.push(init.signal as AbortSignal);
+    try {
+      return await fetch(input, { ...init, signal: AbortSignal.any(signals) });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  };
+}
+
+export const FREQUENT_LANE_CRONS: readonly DailyLaneCron[] = [
+  {
+    // Disclosure-latency (missed-filing) probe. Lease-gated so the server only
+    // fetches the providers it currently owns. Runs every 3 minutes so the
+    // overall detection window does not regress from the old per-tick cadence.
+    name: 'latency-probe',
+    schedule: '*/3 * * * *',
+    run: (env, now, signal) =>
+      runLeasedLatencyProbe(
+        env,
+        (providers) =>
+          runDisclosureLatencyProbe(env, now, makeDeadlineFetch(signal), { providers }),
+        now,
+      ),
+  },
+  {
+    // Latency price snapshots. Runs every 5 minutes; the provider-paced HTTP
+    // calls inside can take up to 15 s each and were the primary source of
+    // main-tick deadline overruns.
+    name: 'latency-price-snapshots',
+    schedule: '*/5 * * * *',
+    run: async (env, now, signal) => {
+      const { runLatencyPriceSnapshotTick } = await import('../ingestion/latencyPriceSnapshots.ts');
+      return runLatencyPriceSnapshotTick(env, now, makeDeadlineFetch(signal), signal);
+    },
+  },
+];
+
+/** Default deadline for a frequent lane: 2 minutes. Provider-paced HTTP calls
+ *  rarely exceed 30 s each; the 2 min cap gives headroom without risk of
+ *  filling the 3- or 5-minute cron window. */
+export const FREQUENT_LANE_DEFAULT_DEADLINE_MS = 2 * 60_000;
+
+/**
+ * Register every frequent lane as its own Deno.cron entry. Call this once
+ * at startup alongside registerDailyLaneCrons. In-isolate in-flight guards
+ * mirror the daily-lane pattern; the DB singleton inside runDailyLane covers
+ * any cross-isolate overlap.
+ */
+export function registerFrequentLaneCrons(
+  buildEnv: () => Env,
+  deadlineMs = FREQUENT_LANE_DEFAULT_DEADLINE_MS,
+): void {
+  const inFlight = new Set<string>();
+  for (const lane of FREQUENT_LANE_CRONS) {
+    Deno.cron(`frequent-lane ${lane.name}`, lane.schedule, async () => {
+      if (inFlight.has(lane.name)) {
+        console.warn(`frequent lane ${lane.name} skipped: previous run still in flight`);
+        return;
+      }
+      inFlight.add(lane.name);
+      try {
+        const result = await runDailyLane(lane, buildEnv(), new Date(), deadlineMs);
+        const status =
+          typeof result.status === 'string' ? result.status : JSON.stringify(result.status);
+        console.log(`frequent lane ${lane.name} ${status} in ${result.durationMs}ms`);
+      } finally {
+        inFlight.delete(lane.name);
+      }
+    });
+  }
+  console.log(
+    `Frequent lane crons registered: ${FREQUENT_LANE_CRONS.map((l) => `${l.name}="${l.schedule}"`).join(' ')} deadlineMs=${deadlineMs}`,
   );
 }

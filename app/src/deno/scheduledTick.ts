@@ -254,6 +254,14 @@ export interface MaintenancePipelineOptions {
    * (deno/cronLanes.ts) own daily work; legacy/external paths leave it true.
    */
   includeDailyJobs?: boolean;
+  /**
+   * When false, skip the disclosure_latency and latency_price_snapshots lanes.
+   * The Deno internal cron passes false because dedicated sub-minute crons
+   * (deno/cronLanes.ts) own these lanes with their own deadlines; omitting
+   * them from the main tick prevents their abort-ignorant external HTTP calls
+   * from consuming the tick's 120 s budget (CONGRESS-TRADE-1B).
+   */
+  includeLatencyLanes?: boolean;
   now?: Date;
   signal?: AbortSignal;
   /** Gate for the two outbox lanes (Deno idle short-circuit). Default: run. */
@@ -408,11 +416,14 @@ export async function runMaintenancePipeline(
         () => flushUsageTelemetryFallback(env, { limit }),
       );
     }
-    if (options.disclosureLatency) {
+    if (options.disclosureLatency && options.includeLatencyLanes !== false) {
       // Lease-gated: the server fetches only the providers it currently owns.
       // Before this, the server probed every configured provider on every tick
       // even for providers it had already handed to the Mac scout — both hosts
       // hitting the same free-tier quota, which is pure waste.
+      // NOTE: when includeLatencyLanes=false these lanes run in their own
+      // dedicated sub-minute crons (cronLanes.ts) so the main tick is not
+      // burdened by their abort-ignorant external HTTP calls (CONGRESS-TRADE-1B).
       await runLane('disclosure_latency', () =>
         runLeasedLatencyProbe(
           env,
