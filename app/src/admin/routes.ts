@@ -3150,30 +3150,36 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     const filingSql = `UPDATE filings SET ingest_status = ?
       WHERE doc_id = ? AND EXISTS (SELECT 1 FROM review_queue
         WHERE doc_id = ? AND resolved = 1 AND review_revision = ?)`;
-    const results = await batch(c.env.DB, [
-      [deprecatedSql, [nowIso, reason, docId, docId, reviewRevision]],
-      [filingSql, ['needs_review', docId, docId, reviewRevision]],
-      [
-        `UPDATE review_queue
-            SET resolved = 0,
-                reason = ?,
-                created_at = ?,
-                agreement_attempted_at = NULL,
-                agreement_attempts = 0,
-                agreement_tier = NULL,
-                agreement_next_attempt_at = NULL,
-                agreement_claim_token = NULL,
-                agreement_claimed_at = NULL,
-                agreement_suppressed_at = ?,
-                agreement_suppression_reason = ?,
-                resolution_kind = NULL,
-                resolution_reason = NULL,
-                resolved_at = NULL,
-                review_revision = review_revision + 1
-          WHERE doc_id = ? AND resolved = 1 AND review_revision = ?`,
-        [holdReason, nowIso, nowIso, holdReason, docId, reviewRevision],
-      ],
-    ]);
+    let results;
+    try {
+      results = await batch(c.env.DB, [
+        [deprecatedSql, [nowIso, reason, docId, docId, reviewRevision]],
+        [filingSql, ['needs_review', docId, docId, reviewRevision]],
+        [
+          `UPDATE review_queue
+              SET resolved = 0,
+                  reason = ?,
+                  created_at = ?,
+                  agreement_attempted_at = NULL,
+                  agreement_attempts = 0,
+                  agreement_tier = NULL,
+                  agreement_next_attempt_at = NULL,
+                  agreement_claim_token = NULL,
+                  agreement_claimed_at = NULL,
+                  agreement_suppressed_at = ?,
+                  agreement_suppression_reason = ?,
+                  resolution_kind = NULL,
+                  resolution_reason = NULL,
+                  resolved_at = NULL,
+                  review_revision = review_revision + 1
+            WHERE doc_id = ? AND resolved = 1 AND review_revision = ?`,
+          [holdReason, nowIso, nowIso, holdReason, docId, reviewRevision],
+        ],
+      ]);
+    } catch (err) {
+      console.error('review unpublish batch failed', docId, (err as Error).message);
+      return c.json({ error: 'unpublish failed', detail: (err as Error).message }, 500);
+    }
     if ((results[results.length - 1]?.meta?.changes ?? 0) === 0) {
       return c.json({ error: 'review item changed before it could be unpublished' }, 409);
     }
@@ -3203,6 +3209,122 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       docId,
       unpublished: true,
       deprecatedTransactions: deprecated,
+      reason,
+      reviewRevision: reviewRevision + 1,
+    });
+  });
+
+  // --- POST /review/:docId/reopen-rejected --------------------------------
+  // Reopen a terminal reject for manual extraction/confirm. Separate from
+  // /unpublish, which targets previously published rows and currently returns
+  // an opaque HTTP 500 for some rejected executive 278-Ts (e.g. Trump).
+  // Body: { reviewRevision: number, reason?: string }
+  r.post('/review/:docId/reopen-rejected', async (c) => {
+    const docId = c.req.param('docId');
+    let body: Record<string, unknown> = {};
+    try {
+      const raw = await c.req.text();
+      if (raw) body = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return c.json({ error: 'invalid JSON body' }, 400);
+    }
+    const reason =
+      typeof body.reason === 'string' && body.reason.length
+        ? body.reason
+        : 'reopened after reject for manual extraction';
+    if (!Number.isInteger(body.reviewRevision) || Number(body.reviewRevision) < 1) {
+      return c.json({ error: 'reviewRevision must be a positive integer from the review queue item' }, 400);
+    }
+
+    let review: {
+      resolved: number;
+      review_revision: number;
+      resolution_kind: string | null;
+    } | null;
+    try {
+      review = await get(
+        c.env.DB,
+        `SELECT rq.resolved, rq.review_revision, rq.resolution_kind
+           FROM review_queue rq
+          WHERE rq.doc_id = ?`,
+        [docId],
+      );
+    } catch (err) {
+      return c.json({ error: 'review schema unavailable', detail: (err as Error).message }, 503);
+    }
+    if (!review) return c.json({ error: 'review item not found' }, 404);
+    if (review.resolved !== 1) return c.json({ error: 'review item is already pending' }, 409);
+    if (review.resolution_kind !== 'rejected') {
+      return c.json({
+        error: 'review item is not a reject; use /unpublish for published rows',
+        resolutionKind: review.resolution_kind,
+      }, 409);
+    }
+    const reviewRevision = Number(body.reviewRevision);
+    if (review.review_revision !== reviewRevision) {
+      return c.json({ error: 'review item changed; reload it before reopening' }, 409);
+    }
+
+    const nowIso = new Date().toISOString();
+    const holdReason = 'reopened_after_reject: ' + reason;
+    try {
+      const results = await batch(c.env.DB, [
+        [
+          `UPDATE review_queue
+              SET resolved = 0,
+                  reason = ?,
+                  agreement_attempted_at = NULL,
+                  agreement_attempts = 0,
+                  agreement_tier = NULL,
+                  agreement_next_attempt_at = NULL,
+                  agreement_claim_token = NULL,
+                  agreement_claimed_at = NULL,
+                  agreement_suppressed_at = ?,
+                  agreement_suppression_reason = ?,
+                  resolution_kind = NULL,
+                  resolution_reason = NULL,
+                  resolved_at = NULL,
+                  review_revision = review_revision + 1
+            WHERE doc_id = ? AND resolved = 1 AND review_revision = ? AND resolution_kind = 'rejected'`,
+          [holdReason, nowIso, holdReason, docId, reviewRevision],
+        ],
+        [
+          `UPDATE filings SET ingest_status = 'needs_review' WHERE doc_id = ?`,
+          [docId],
+        ],
+      ]);
+      if ((results[0]?.meta?.changes ?? 0) === 0) {
+        return c.json({ error: 'review item changed before it could be reopened' }, 409);
+      }
+    } catch (err) {
+      console.error('reopen-rejected failed', docId, (err as Error).message);
+      return c.json({ error: 'reopen-rejected failed', detail: (err as Error).message }, 500);
+    }
+
+    void notifyReviewQueuePublisher(c.env, {
+      docId,
+      reason: holdReason,
+      kind: 'reopen',
+      at: nowIso,
+    });
+
+    try {
+      await recordIngestionDecision(c.env.DB, {
+        docId,
+        action: 'reopened_after_reject',
+        source: 'admin',
+        actor: adminActor(c),
+        reason,
+        payload: {},
+        createdAt: nowIso,
+      });
+    } catch (err) {
+      console.error('reopen-rejected: audit receipt failed', docId, (err as Error).message);
+    }
+
+    return c.json({
+      docId,
+      reopened: true,
       reason,
       reviewRevision: reviewRevision + 1,
     });
