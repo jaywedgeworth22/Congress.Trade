@@ -240,6 +240,17 @@ export function registerDailyLaneCrons(
 }
 
 /**
+ * These lanes run every 3-5 minutes and return tick result objects, not
+ * 'stamped', so logging every non-'stamped' result wrote a (stringified)
+ * line per run.  Only runner outcome markers (skipped-overlap, aborted,
+ * error) are worth a line; a normal completion stays quiet.
+ */
+export function frequentLaneLogLine(name: string, result: DailyLaneRunResult): string | null {
+  if (typeof result.status !== 'string' || result.status === 'stamped') return null;
+  return `frequent lane ${name} ${result.status} in ${result.durationMs}ms`;
+}
+
+/**
  * Register sub-minute latency lane crons (probe every 3m, price snapshots every 5m).
  * Mirrors registerDailyLaneCrons: in-flight guard + DB singleton via runDailyLane.
  */
@@ -257,11 +268,8 @@ export function registerFrequentLaneCrons(
       inFlight.add(lane.name);
       try {
         const result = await runDailyLane(lane, buildEnv(), new Date(), deadlineMs);
-        const status =
-          typeof result.status === 'string' ? result.status : JSON.stringify(result.status);
-        if (status !== 'stamped') {
-          console.log(`frequent lane ${lane.name} ${status} in ${result.durationMs}ms`);
-        }
+        const line = frequentLaneLogLine(lane.name, result);
+        if (line) console.log(line);
       } finally {
         inFlight.delete(lane.name);
       }
