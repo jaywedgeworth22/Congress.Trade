@@ -167,6 +167,12 @@ export interface ScheduledTickOptions {
    * daily work, so the 45s 15-minute tick no longer runs (or starves) it.
    */
   includeDailyJobs?: boolean;
+  /**
+   * When false, skip disclosure_latency and latency_price_snapshots. The Deno
+   * internal cron passes false; dedicated sub-minute lane crons (cronLanes.ts)
+   * own these lanes (CONGRESS-TRADE-1B).
+   */
+  includeLatencyLanes?: boolean;
 }
 
 export interface TickSingletonLock {
@@ -254,6 +260,12 @@ export interface MaintenancePipelineOptions {
    * (deno/cronLanes.ts) own daily work; legacy/external paths leave it true.
    */
   includeDailyJobs?: boolean;
+  /**
+   * When false, skip disclosure_latency and latency_price_snapshots. The Deno
+   * internal cron passes false; dedicated sub-minute lane crons (cronLanes.ts)
+   * own these lanes (CONGRESS-TRADE-1B).
+   */
+  includeLatencyLanes?: boolean;
   now?: Date;
   signal?: AbortSignal;
   /** Gate for the two outbox lanes (Deno idle short-circuit). Default: run. */
@@ -408,7 +420,7 @@ export async function runMaintenancePipeline(
         () => flushUsageTelemetryFallback(env, { limit }),
       );
     }
-    if (options.disclosureLatency) {
+    if (options.disclosureLatency && options.includeLatencyLanes !== false) {
       // Lease-gated: the server fetches only the providers it currently owns.
       // Before this, the server probed every configured provider on every tick
       // even for providers it had already handed to the Mac scout — both hosts
@@ -497,6 +509,7 @@ export async function runScheduledTick(
       usageTelemetryLimit: 25,
       disclosureLatency: true,
       includeDailyJobs: options.includeDailyJobs,
+      includeLatencyLanes: options.includeLatencyLanes,
       now,
       signal,
       // Idle short-circuit: skip multi-statement outbox flushes and the empty

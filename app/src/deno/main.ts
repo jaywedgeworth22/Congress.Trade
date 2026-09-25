@@ -10,7 +10,11 @@ import { resolveResidentialProxyUrl } from '../shared/proxyFetch.ts';
 import { resolveDenoCostProfile } from './costProfile.ts';
 import { createRuntimeQueueHandlers } from './runtimeHandlers.ts';
 import { runScheduledTick } from './scheduledTick.ts';
-import { registerDailyLaneCrons, resolveDailyLaneDeadlineMs } from './cronLanes.ts';
+import {
+  registerDailyLaneCrons,
+  registerFrequentLaneCrons,
+  resolveDailyLaneDeadlineMs,
+} from './cronLanes.ts';
 import { withThirdPartyTelemetry } from '../shared/thirdPartyTelemetry.ts';
 import { resolveProductionSentryEnv } from '../shared/sentryRuntime.ts';
 import { datadogCaptureException, initProductionDatadog } from '../shared/datadog.ts';
@@ -316,13 +320,18 @@ if (!costProfile.disableInternalCron) {
         new Date(),
         // Daily work moved to dedicated staggered lane crons (cronLanes.ts)
         // with multi-minute deadlines; the 45s tick must not run or starve it.
-        { signal: tickAbort.signal, includeDailyJobs: false },
+        {
+          signal: tickAbort.signal,
+          includeDailyJobs: false,
+          includeLatencyLanes: false,
+        },
       ));
       let softTimeoutId: ReturnType<typeof setTimeout> | undefined;
       let hardTimeoutId: ReturnType<typeof setTimeout> | undefined;
 
-      // Soft abort 5s before hard deadline so active lanes stop claiming and return cleanly
-      const softDeadlineMs = Math.max(5000, tickDeadlineMs - 5000);
+      // Soft abort 20s before hard deadline so active lanes wind down before
+      // CONGRESS-TRADE-1B hard cutoff (latency lanes moved to dedicated crons).
+      const softDeadlineMs = Math.max(5000, tickDeadlineMs - 20000);
       softTimeoutId = setTimeout(() => {
         tickAbort.abort(new Error(`Deno cron tick nearing ${tickDeadlineMs}ms deadline`));
       }, softDeadlineMs);
@@ -370,6 +379,7 @@ if (!costProfile.disableInternalCron) {
   // multi-minute deadline, so a slow provider lane can no longer starve the
   // lanes behind it (the old single-stamp chain died at the tick's 45s).
   registerDailyLaneCrons(buildEnv, resolveDailyLaneDeadlineMs(Deno.env));
+  registerFrequentLaneCrons(buildEnv);
 } else {
   console.log(
     'Deno internal cron disabled (DENO_DISABLE_INTERNAL_CRON); ' +
