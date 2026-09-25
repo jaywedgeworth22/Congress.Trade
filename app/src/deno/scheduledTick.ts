@@ -167,6 +167,14 @@ export interface ScheduledTickOptions {
    * daily work, so the 45s 15-minute tick no longer runs (or starves) it.
    */
   includeDailyJobs?: boolean;
+  /**
+   * Forwarded to the maintenance pipeline. The Deno internal cron passes
+   * false: dedicated sub-minute crons (cronLanes.ts FREQUENT_LANE_CRONS) own
+   * the disclosure-latency and latency-price-snapshot lanes so the main tick
+   * is not burdened by their abort-ignorant external HTTP calls
+   * (CONGRESS-TRADE-1B).
+   */
+  includeLatencyLanes?: boolean;
 }
 
 export interface TickSingletonLock {
@@ -508,6 +516,7 @@ export async function runScheduledTick(
       usageTelemetryLimit: 25,
       disclosureLatency: true,
       includeDailyJobs: options.includeDailyJobs,
+      includeLatencyLanes: options.includeLatencyLanes,
       now,
       signal,
       // Idle short-circuit: skip multi-statement outbox flushes and the empty
