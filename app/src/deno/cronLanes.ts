@@ -28,6 +28,8 @@ import {
   HOURLY_ENRICHMENT_SLICE_DEADLINE_MS,
 } from '../jobs.ts';
 import { runAutonomySweeps } from '../ingestion/autonomySweeps.ts';
+import { runDisclosureLatencyProbe } from '../ingestion/tradeLatency.ts';
+import { runLeasedLatencyProbe } from '../ingestion/scoutHandoff.ts';
 import { acquireDenoCronSingleton, type TickSingletonLock } from './scheduledTick.ts';
 import { withThirdPartyTelemetry } from '../shared/thirdPartyTelemetry.ts';
 import { captureException } from '#sentry';
@@ -78,6 +80,46 @@ export const DAILY_LANE_CRONS: readonly DailyLaneCron[] = [
   // Retention sweeps last, clear of every write-heavy lane.
   { name: 'daily-retention', schedule: '53 * * * *', run: maybeRunDailyRetentionJobs },
 ];
+
+function makeDeadlineFetch(parentSignal?: AbortSignal) {
+  return async (input: RequestInfo | URL, init?: RequestInit) => {
+    const reqAbort = new AbortController();
+    const timeoutId = setTimeout(() => reqAbort.abort(new Error('upstream fetch timeout')), 15000);
+    const signals: AbortSignal[] = [reqAbort.signal];
+    if (parentSignal) signals.push(parentSignal);
+    if (init?.signal) signals.push(init.signal);
+    try {
+      return await fetch(input, { ...init, signal: AbortSignal.any(signals) });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  };
+}
+
+/** Sub-minute latency lanes moved off the main tick (CONGRESS-TRADE-1B). */
+export const FREQUENT_LANE_CRONS: readonly DailyLaneCron[] = [
+  {
+    name: 'latency-probe',
+    schedule: '*/3 * * * *',
+    run: (env, now, signal) =>
+      runLeasedLatencyProbe(
+        env,
+        (providers) =>
+          runDisclosureLatencyProbe(env, now, makeDeadlineFetch(signal), { providers }),
+        now,
+      ),
+  },
+  {
+    name: 'latency-price-snapshots',
+    schedule: '*/5 * * * *',
+    run: async (env, now, signal) => {
+      const { runLatencyPriceSnapshotTick } = await import('../ingestion/latencyPriceSnapshots.ts');
+      return runLatencyPriceSnapshotTick(env, now, makeDeadlineFetch(signal), signal);
+    },
+  },
+];
+
+export const FREQUENT_LANE_DEFAULT_DEADLINE_MS = 2 * 60_000;
 
 /** Per-lane deadline. The tick's 45s was a Deno Deploy free-tier constraint;
  *  on Coolify / Hetzner a lane may take minutes (provider pacing). */
@@ -194,5 +236,38 @@ export function registerDailyLaneCrons(
   }
   console.log(
     `Daily lane crons registered: ${DAILY_LANE_CRONS.map((l) => `${l.name}="${l.schedule}"`).join(' ')} deadlineMs=${deadlineMs}`,
+  );
+}
+
+/**
+ * Register sub-minute latency lane crons (probe every 3m, price snapshots every 5m).
+ * Mirrors registerDailyLaneCrons: in-flight guard + DB singleton via runDailyLane.
+ */
+export function registerFrequentLaneCrons(
+  buildEnv: () => Env,
+  deadlineMs = FREQUENT_LANE_DEFAULT_DEADLINE_MS,
+): void {
+  const inFlight = new Set<string>();
+  for (const lane of FREQUENT_LANE_CRONS) {
+    Deno.cron(`frequent-lane ${lane.name}`, lane.schedule, async () => {
+      if (inFlight.has(lane.name)) {
+        console.warn(`frequent lane ${lane.name} skipped: previous run still in flight`);
+        return;
+      }
+      inFlight.add(lane.name);
+      try {
+        const result = await runDailyLane(lane, buildEnv(), new Date(), deadlineMs);
+        const status =
+          typeof result.status === 'string' ? result.status : JSON.stringify(result.status);
+        if (status !== 'stamped') {
+          console.log(`frequent lane ${lane.name} ${status} in ${result.durationMs}ms`);
+        }
+      } finally {
+        inFlight.delete(lane.name);
+      }
+    });
+  }
+  console.log(
+    `Frequent lane crons registered: ${FREQUENT_LANE_CRONS.map((l) => `${l.name}="${l.schedule}"`).join(' ')} deadlineMs=${deadlineMs}`,
   );
 }
