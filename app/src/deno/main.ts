@@ -10,7 +10,11 @@ import { resolveResidentialProxyUrl } from '../shared/proxyFetch.ts';
 import { resolveDenoCostProfile } from './costProfile.ts';
 import { createRuntimeQueueHandlers } from './runtimeHandlers.ts';
 import { runScheduledTick } from './scheduledTick.ts';
-import { registerDailyLaneCrons, resolveDailyLaneDeadlineMs, registerFrequentLaneCrons } from './cronLanes.ts';
+import {
+  registerDailyLaneCrons,
+  registerFrequentLaneCrons,
+  resolveDailyLaneDeadlineMs,
+} from './cronLanes.ts';
 import { withThirdPartyTelemetry } from '../shared/thirdPartyTelemetry.ts';
 import { resolveProductionSentryEnv } from '../shared/sentryRuntime.ts';
 import { datadogCaptureException, initProductionDatadog } from '../shared/datadog.ts';
@@ -315,19 +319,18 @@ if (!costProfile.disableInternalCron) {
         costProfile,
         new Date(),
         // Daily work moved to dedicated staggered lane crons (cronLanes.ts)
-        // with multi-minute deadlines; the tick must not run or starve them.
-        // Latency lanes (disclosure_latency, latency_price_snapshots) also
-        // moved to dedicated sub-minute crons — their abort-ignorant external
-        // HTTP calls were the primary cause of tick deadline overruns
-        // (CONGRESS-TRADE-1B).
-        { signal: tickAbort.signal, includeDailyJobs: false, includeLatencyLanes: false },
+        // with multi-minute deadlines; the 45s tick must not run or starve it.
+        {
+          signal: tickAbort.signal,
+          includeDailyJobs: false,
+          includeLatencyLanes: false,
+        },
       ));
       let softTimeoutId: ReturnType<typeof setTimeout> | undefined;
       let hardTimeoutId: ReturnType<typeof setTimeout> | undefined;
 
-      // Soft abort 20s before hard deadline so active lanes stop claiming and return cleanly.
-      // 5s was too tight — lanes mid-flight when the soft abort fired had less than 5s to
-      // wind down, often running into the hard deadline anyway (CONGRESS-TRADE-1B).
+      // Soft abort 20s before hard deadline so active lanes wind down before
+      // CONGRESS-TRADE-1B hard cutoff (latency lanes moved to dedicated crons).
       const softDeadlineMs = Math.max(5000, tickDeadlineMs - 20000);
       softTimeoutId = setTimeout(() => {
         tickAbort.abort(new Error(`Deno cron tick nearing ${tickDeadlineMs}ms deadline`));
@@ -376,11 +379,6 @@ if (!costProfile.disableInternalCron) {
   // multi-minute deadline, so a slow provider lane can no longer starve the
   // lanes behind it (the old single-stamp chain died at the tick's 45s).
   registerDailyLaneCrons(buildEnv, resolveDailyLaneDeadlineMs(Deno.env));
-  // Frequent sub-minute crons: disclosure-latency probe (every 3 min) and
-  // latency price snapshots (every 5 min).  These were removed from the main
-  // tick (CONGRESS-TRADE-1B) because their abort-ignorant external HTTP calls
-  // routinely consumed the tick's 120 s budget.  Each now has its own 2-minute
-  // deadline and singleton lock via runDailyLane.
   registerFrequentLaneCrons(buildEnv);
 } else {
   console.log(

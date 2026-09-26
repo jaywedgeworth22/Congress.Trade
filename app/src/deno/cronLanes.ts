@@ -81,6 +81,46 @@ export const DAILY_LANE_CRONS: readonly DailyLaneCron[] = [
   { name: 'daily-retention', schedule: '53 * * * *', run: maybeRunDailyRetentionJobs },
 ];
 
+function makeDeadlineFetch(parentSignal?: AbortSignal) {
+  return async (input: RequestInfo | URL, init?: RequestInit) => {
+    const reqAbort = new AbortController();
+    const timeoutId = setTimeout(() => reqAbort.abort(new Error('upstream fetch timeout')), 15000);
+    const signals: AbortSignal[] = [reqAbort.signal];
+    if (parentSignal) signals.push(parentSignal);
+    if (init?.signal) signals.push(init.signal);
+    try {
+      return await fetch(input, { ...init, signal: AbortSignal.any(signals) });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  };
+}
+
+/** Sub-minute latency lanes moved off the main tick (CONGRESS-TRADE-1B). */
+export const FREQUENT_LANE_CRONS: readonly DailyLaneCron[] = [
+  {
+    name: 'latency-probe',
+    schedule: '*/3 * * * *',
+    run: (env, now, signal) =>
+      runLeasedLatencyProbe(
+        env,
+        (providers) =>
+          runDisclosureLatencyProbe(env, now, makeDeadlineFetch(signal), { providers }),
+        now,
+      ),
+  },
+  {
+    name: 'latency-price-snapshots',
+    schedule: '*/5 * * * *',
+    run: async (env, now, signal) => {
+      const { runLatencyPriceSnapshotTick } = await import('../ingestion/latencyPriceSnapshots.ts');
+      return runLatencyPriceSnapshotTick(env, now, makeDeadlineFetch(signal), signal);
+    },
+  },
+];
+
+export const FREQUENT_LANE_DEFAULT_DEADLINE_MS = 2 * 60_000;
+
 /** Per-lane deadline. The tick's 45s was a Deno Deploy free-tier constraint;
  *  on Coolify / Hetzner a lane may take minutes (provider pacing). */
 export const DAILY_LANE_DEFAULT_DEADLINE_MS = 10 * 60_000;
@@ -199,77 +239,20 @@ export function registerDailyLaneCrons(
   );
 }
 
-// ---------------------------------------------------------------------------
-// Frequent (sub-minute) lane crons
-//
-// These lanes were previously inside runMaintenancePipeline on the main tick,
-// but their sequential external HTTP calls routinely consumed the tick's 120 s
-// budget and — critically — ignored the AbortSignal, causing hard-deadline
-// overruns (CONGRESS-TRADE-1B).  Each lane now runs in its own cron at a
-// cadence that keeps detection latency acceptable (disclosure probe every 3 min,
-// price snapshots every 5 min) while keeping the main tick lean.
-// ---------------------------------------------------------------------------
-
-/** Helper: per-request fetch with a 15 s timeout + optional parent AbortSignal. */
-function makeDeadlineFetch(parentSignal?: AbortSignal) {
-  return async function deadlineFetch(
-    input: RequestInfo | URL,
-    init?: RequestInit,
-  ): Promise<Response> {
-    const perReqAbort = new AbortController();
-    const timeoutId = setTimeout(
-      () => perReqAbort.abort(new Error('upstream fetch timeout')),
-      15000,
-    );
-    const signals: AbortSignal[] = [perReqAbort.signal];
-    if (parentSignal) signals.push(parentSignal);
-    if (init?.signal) signals.push(init.signal as AbortSignal);
-    try {
-      return await fetch(input, { ...init, signal: AbortSignal.any(signals) });
-    } finally {
-      clearTimeout(timeoutId);
-    }
-  };
+/**
+ * These lanes run every 3-5 minutes and return tick result objects, not
+ * 'stamped', so logging every non-'stamped' result wrote a (stringified)
+ * line per run.  Only runner outcome markers (skipped-overlap, aborted,
+ * error) are worth a line; a normal completion stays quiet.
+ */
+export function frequentLaneLogLine(name: string, result: DailyLaneRunResult): string | null {
+  if (typeof result.status !== 'string' || result.status === 'stamped') return null;
+  return `frequent lane ${name} ${result.status} in ${result.durationMs}ms`;
 }
 
-export const FREQUENT_LANE_CRONS: readonly DailyLaneCron[] = [
-  {
-    // Disclosure-latency (missed-filing) probe. Lease-gated so the server only
-    // fetches the providers it currently owns. Runs every 3 minutes so the
-    // overall detection window does not regress from the old per-tick cadence.
-    name: 'latency-probe',
-    schedule: '*/3 * * * *',
-    run: (env, now, signal) =>
-      runLeasedLatencyProbe(
-        env,
-        (providers) =>
-          runDisclosureLatencyProbe(env, now, makeDeadlineFetch(signal), { providers }),
-        now,
-      ),
-  },
-  {
-    // Latency price snapshots. Runs every 5 minutes; the provider-paced HTTP
-    // calls inside can take up to 15 s each and were the primary source of
-    // main-tick deadline overruns.
-    name: 'latency-price-snapshots',
-    schedule: '*/5 * * * *',
-    run: async (env, now, signal) => {
-      const { runLatencyPriceSnapshotTick } = await import('../ingestion/latencyPriceSnapshots.ts');
-      return runLatencyPriceSnapshotTick(env, now, makeDeadlineFetch(signal), signal);
-    },
-  },
-];
-
-/** Default deadline for a frequent lane: 2 minutes. Provider-paced HTTP calls
- *  rarely exceed 30 s each; the 2 min cap gives headroom without risk of
- *  filling the 3- or 5-minute cron window. */
-export const FREQUENT_LANE_DEFAULT_DEADLINE_MS = 2 * 60_000;
-
 /**
- * Register every frequent lane as its own Deno.cron entry. Call this once
- * at startup alongside registerDailyLaneCrons. In-isolate in-flight guards
- * mirror the daily-lane pattern; the DB singleton inside runDailyLane covers
- * any cross-isolate overlap.
+ * Register sub-minute latency lane crons (probe every 3m, price snapshots every 5m).
+ * Mirrors registerDailyLaneCrons: in-flight guard + DB singleton via runDailyLane.
  */
 export function registerFrequentLaneCrons(
   buildEnv: () => Env,
@@ -285,9 +268,8 @@ export function registerFrequentLaneCrons(
       inFlight.add(lane.name);
       try {
         const result = await runDailyLane(lane, buildEnv(), new Date(), deadlineMs);
-        const status =
-          typeof result.status === 'string' ? result.status : JSON.stringify(result.status);
-        console.log(`frequent lane ${lane.name} ${status} in ${result.durationMs}ms`);
+        const line = frequentLaneLogLine(lane.name, result);
+        if (line) console.log(line);
       } finally {
         inFlight.delete(lane.name);
       }

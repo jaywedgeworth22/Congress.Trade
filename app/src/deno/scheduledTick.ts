@@ -168,11 +168,9 @@ export interface ScheduledTickOptions {
    */
   includeDailyJobs?: boolean;
   /**
-   * Forwarded to the maintenance pipeline. The Deno internal cron passes
-   * false: dedicated sub-minute crons (cronLanes.ts FREQUENT_LANE_CRONS) own
-   * the disclosure-latency and latency-price-snapshot lanes so the main tick
-   * is not burdened by their abort-ignorant external HTTP calls
-   * (CONGRESS-TRADE-1B).
+   * When false, skip disclosure_latency and latency_price_snapshots. The Deno
+   * internal cron passes false; dedicated sub-minute lane crons (cronLanes.ts)
+   * own these lanes (CONGRESS-TRADE-1B).
    */
   includeLatencyLanes?: boolean;
 }
@@ -263,11 +261,9 @@ export interface MaintenancePipelineOptions {
    */
   includeDailyJobs?: boolean;
   /**
-   * When false, skip the disclosure_latency and latency_price_snapshots lanes.
-   * The Deno internal cron passes false because dedicated sub-minute crons
-   * (deno/cronLanes.ts) own these lanes with their own deadlines; omitting
-   * them from the main tick prevents their abort-ignorant external HTTP calls
-   * from consuming the tick's 120 s budget (CONGRESS-TRADE-1B).
+   * When false, skip disclosure_latency and latency_price_snapshots. The Deno
+   * internal cron passes false; dedicated sub-minute lane crons (cronLanes.ts)
+   * own these lanes (CONGRESS-TRADE-1B).
    */
   includeLatencyLanes?: boolean;
   now?: Date;
