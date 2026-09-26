@@ -2,35 +2,26 @@
  * src/prices/service.ts
  * OWNER: prices
  *
- * Budgeted price refresh. Per run: refresh the S&P 500 series once, then for the
- * tickers that most need it (newest-traded first, then backfill), fetch one EOD
- * history call each — which yields both the trade-date anchor and the current
- * price — and compute per-trade performance anchors. Shares the same daily FMP
- * budget counter as enrichment, so prices + enrichment together stay under the
- * cap and resume the next day.
+ * Price refresh. Per run: refresh the S&P 500 series once, then for the tickers
+ * that most need it (newest-traded first, then backfill), fetch one EOD history
+ * call each — which yields both the trade-date anchor and the current price —
+ * and compute per-trade performance anchors. History comes from Socratic.Trade
+ * (`APP_B_IMPORT_URL` + `APP_B_INGEST_TOKEN`). FMP, Massive, and Tiingo are not
+ * price sources.
  */
 
 import type { Env } from '../shared/types.ts';
 import { all, batchPrepared, get, run } from '../shared/db.ts';
-import { remainingBudget } from '../enrichment/compute.ts';
-import { getDailyUsed, addDailyUsed } from '../enrichment/service.ts';
 import { getSharedFmpPacer } from '../shared/pace.ts';
 import type { PriceClient } from './fmp.ts';
-import { buildMassivePriceClient } from './massive.ts';
-import { buildTiingoPriceClient } from './tiingo.ts';
 import { buildPeerPriceClient } from './peer.ts';
-import { buildFallbackPriceClient } from './fallback.ts';
 import type { Close } from './compute.ts';
 import { resolveSecrets } from '../secrets/infisical.ts';
 
-const DEFAULT_DAILY_CAP = 230;
 /**
- * Per-run ticker cap when the peer app (Socratic.Trade) is the sole price
- * source. The peer serves from its own database — no metered quota — so the
- * only real bound is run duration. 230 (the FMP-era default) throttled the
- * ~370-ticker daily backlog into a rolling multi-day queue that left the
- * most-traded names 2+ weeks stale (owner report 2026-08-10); 5000 clears the
- * whole universe every run with headroom. FMP_DAILY_CALL_CAP still overrides.
+ * Per-run ticker cap. Socratic.Trade serves EOD from its own database — no
+ * metered FMP quota — so the bound is run duration. 5000 clears the traded
+ * universe in one run. FMP_DAILY_CALL_CAP is not a price budget.
  */
 const PEER_DAILY_CAP = 5000;
 /**
@@ -80,123 +71,34 @@ export const PRICE_UNAVAILABLE_NOT_FOUND_FIRST = 1;
 const PRICE_UNAVAILABLE_NOT_FOUND_AGAIN = 2;
 const PRICE_UNAVAILABLE_STALLED = 3;
 type EnvX = Env & {
-  FMP_API_KEY?: string;
-  FMP_DAILY_CALL_CAP?: string;
-  MASSIVE_API_KEY?: string;
-  TIINGO_API_KEY?: string;
+  FMP_MAX_PER_MINUTE?: string;
   APP_B_IMPORT_URL?: string;
-  /** Bearer token for the peer's (App B's) bearer-gated read endpoints. */
+  /** Bearer token for the peer's bearer-gated read endpoints. */
   APP_B_INGEST_TOKEN?: string;
-  /**
-   * Which provider supplies price history:
-   *   - 'peer' | 'socratic' | 'app_b' — Socratic.Trade / App B primary (preferred;
-   *     owner 2026-08-03: CT does not buy Massive history). Direct Massive is
-   *     last-resort only when MASSIVE_API_KEY is also set.
-   *   - 'fmp' (legacy default when no peer config), 'massive', or 'tiingo'
-   */
-  PRICE_PROVIDER?: string;
 };
 
 interface PricePlan {
   client: PriceClient;
-  /** True only for FMP, whose calls are metered against the shared daily budget. */
+  /** Always false: prices are not metered against the FMP day counter. */
   fmpBudgeted: boolean;
-  /** True when the sole source is the peer app (Socratic.Trade) — no metered
-   * quota, so the per-run ticker cap defaults far higher (PEER_DAILY_CAP). */
+  /** Always true when a plan exists: Socratic.Trade is the only price source. */
   peerOnly: boolean;
 }
 
-/** True when PRICE_PROVIDER selects Socratic.Trade / App B as the primary. */
-function isPeerOnlyProvider(provider: string): boolean {
-  return provider === 'peer' || provider === 'socratic' || provider === 'app_b' || provider === 'app-b';
-}
-
 /**
- * Peer-primary plan: Socratic.Trade first.  Direct Massive is last-resort
- * only (empty peer series / non-auth failures), never a parallel primary.
- * Peer 401/402/403 still throw — do not spend the shared Massive key on a
- * broken ingest token.  Do not mint a second Massive key.
- */
-function peerPrimaryPlan(env: EnvX): PricePlan | null {
-  if (!env.APP_B_IMPORT_URL) return null;
-  const peerClient = buildPeerPriceClient(env.APP_B_IMPORT_URL, fetch, env.APP_B_INGEST_TOKEN, {
-    strict: true,
-  });
-  if (env.MASSIVE_API_KEY) {
-    return {
-      client: buildFallbackPriceClient(peerClient, buildMassivePriceClient(env.MASSIVE_API_KEY), {
-        rethrowFatal: true,
-      }),
-      fmpBudgeted: false,
-      peerOnly: true,
-    };
-  }
-  return { client: peerClient, fmpBudgeted: false, peerOnly: true };
-}
-
-/**
- * Pick the price client from PRICE_PROVIDER, gated by configured keys.
- *
- * Preferred (owner 2026-08-03 / audit 2026-08-17): PRICE_PROVIDER=peer with
- * APP_B_IMPORT_URL + APP_B_INGEST_TOKEN — EOD history comes from Socratic.Trade.
- * If MASSIVE_API_KEY is also set, Massive is last-resort fallback only.
- *
- * Legacy: 'massive' / 'tiingo' pick a paid provider. FMP is never used for
- * prices (free keys are latency-monitoring only). When APP_B_IMPORT_URL is also
- * set, the peer is still tried first (soft) and the paid provider is the
- * empty/error fallback — useful during migration, not the steady state.
+ * EOD history is Socratic.Trade only. PRICE_PROVIDER, FMP_API_KEY, and
+ * MASSIVE/TIINGO keys are ignored so a stale env cannot fall back to a vendor.
+ * Missing peer config returns null (price refresh no-ops and diagnostics warn).
  */
 function pricePlan(env: EnvX): PricePlan | null {
-  const rawProvider = (env.PRICE_PROVIDER || '').trim().toLowerCase();
-  // Explicit peer / socratic / app_b — peer-primary; Massive last-resort only.
-  if (isPeerOnlyProvider(rawProvider)) {
-    return peerPrimaryPlan(env);
-  }
-
-  // Unset PRICE_PROVIDER + App B configured → same peer-primary plan.
-  if (!rawProvider && env.APP_B_IMPORT_URL && env.APP_B_INGEST_TOKEN) {
-    return peerPrimaryPlan(env);
-  }
-
-  // Owner 2026-08: FMP free keys are latency-monitoring only. Prices never
-  // call financialmodelingprep — use peer (Socratic.Trade), Massive, or Tiingo.
-  const provider = rawProvider || 'massive';
-  let baseClient: PriceClient | null = null;
-  let budgeted = false;
-
-  if (provider === 'fmp') {
-    // Explicit fmp is refused so misconfigured PRICE_PROVIDER=fmp cannot burn
-    // free latency keys. Fall through to peer/massive/tiingo if available.
-  } else if (provider === 'massive' && env.MASSIVE_API_KEY) {
-    baseClient = buildMassivePriceClient(env.MASSIVE_API_KEY);
-  } else if (provider === 'tiingo' && env.TIINGO_API_KEY) {
-    baseClient = buildTiingoPriceClient(env.TIINGO_API_KEY);
-  }
-
-  if (!baseClient) {
-    if (env.MASSIVE_API_KEY) {
-      baseClient = buildMassivePriceClient(env.MASSIVE_API_KEY);
-    } else if (env.TIINGO_API_KEY) {
-      baseClient = buildTiingoPriceClient(env.TIINGO_API_KEY);
-    } else if (env.APP_B_IMPORT_URL) {
-      // Last resort: peer-only when no paid keys exist.
-      return {
-        client: buildPeerPriceClient(env.APP_B_IMPORT_URL, fetch, env.APP_B_INGEST_TOKEN, { strict: true }),
-        fmpBudgeted: false,
-        peerOnly: true,
-      };
-    }
-  }
-
-  if (!baseClient) return null;
-
-  if (env.APP_B_IMPORT_URL) {
-    // Soft peer-first: empty/soft-fail peer → paid secondary (migration only).
-    const peerClient = buildPeerPriceClient(env.APP_B_IMPORT_URL, fetch, env.APP_B_INGEST_TOKEN);
-    baseClient = buildFallbackPriceClient(peerClient, baseClient);
-  }
-
-  return { client: baseClient, fmpBudgeted: budgeted, peerOnly: false };
+  if (!env.APP_B_IMPORT_URL || !env.APP_B_INGEST_TOKEN) return null;
+  return {
+    client: buildPeerPriceClient(env.APP_B_IMPORT_URL, fetch, env.APP_B_INGEST_TOKEN, {
+      strict: true,
+    }),
+    fmpBudgeted: false,
+    peerOnly: true,
+  };
 }
 
 /**
@@ -209,18 +111,18 @@ function pricePlan(env: EnvX): PricePlan | null {
  */
 const FATAL_PRICE_PROVIDER_ERROR = /_HTTP_(401|402|403)$/;
 /**
- * 429 is fatal ONLY for the metered FMP budget: there, every guaranteed-fail
- * retry still burns the shared daily meter, so the run aborts to protect it.
- * Massive/Tiingo are unmetered — their 429s are per-minute windows (usually a
- * shared key saturated by sibling apps) that clear on their own, and the clients
- * already retried them with backoff (./retry429.ts), so a 429 that still escapes
- * skips just that one call instead of aborting the whole run.
+ * 429 is always run-fatal on the current peer-only EOD path.  Price refresh
+ * talks only to Socratic.Trade (`fmpBudgeted` is always false); a rate-limited
+ * peer would otherwise keep walking ~thousands of tickers with the same failure.
+ * Auth/plan 401/402/403 stay fatal via FATAL_PRICE_PROVIDER_ERROR.  The
+ * `fmpBudgeted` parameter is retained for call-site compatibility but no longer
+ * gates 429 — there is no metered FMP price client on this path anymore.
  */
 const RATE_LIMIT_PROVIDER_ERROR = /_HTTP_429$/;
-function isFatalPriceProviderError(e: unknown, fmpBudgeted: boolean): boolean {
+function isFatalPriceProviderError(e: unknown, _fmpBudgeted: boolean): boolean {
   const message = e instanceof Error ? e.message : String(e ?? '');
   if (FATAL_PRICE_PROVIDER_ERROR.test(message)) return true;
-  return fmpBudgeted && RATE_LIMIT_PROVIDER_ERROR.test(message);
+  return RATE_LIMIT_PROVIDER_ERROR.test(message);
 }
 
 function isoDaysAgo(days: number, from = new Date()): string {
@@ -303,11 +205,10 @@ export interface PriceRefreshResult {
   budgetRemaining: number;
   dryRun: boolean;
   errors: string[];
-  /** True when an auth/plan error (401/402/403 — or 429 for the metered FMP
-   *  budget only) stopped the run early — see isFatalPriceProviderError.
-   *  Remaining un-attempted tickers are left untouched for the next run rather
-   *  than burning the rest of the budget on calls guaranteed to fail
-   *  identically. */
+  /** True when an auth/plan/rate-limit error (401/402/403/429) stopped the run
+   *  early — see isFatalPriceProviderError.  Peer EOD is the only price path,
+   *  so a 429 aborts rather than walking the full ticker list.  Remaining
+   *  un-attempted tickers are left untouched for the next run. */
   aborted: boolean;
   /** What THIS run actually fetched (for the App B outbound push — our delta only). */
   shareSpx: Close[];
@@ -422,17 +323,12 @@ export async function runPriceRefresh(
   const runtimeSecrets = await resolveSecrets(env, [
     'APP_B_IMPORT_URL',
     'APP_B_INGEST_TOKEN',
-    'FMP_API_KEY',
-    'FMP_DAILY_CALL_CAP',
     'FMP_MAX_PER_MINUTE',
-    'MASSIVE_API_KEY',
-    'PRICE_PROVIDER',
-    'TIINGO_API_KEY',
   ]);
   const envx = { ...(env as EnvX), ...runtimeSecrets };
   const dryRun = opts.dryRun === true;
   const result: PriceRefreshResult = {
-    hasFmpKey: !!envx.FMP_API_KEY,
+    hasFmpKey: false,
     spxUpdated: false,
     tickersPriced: 0,
     tradesComputed: 0,
@@ -448,12 +344,8 @@ export async function runPriceRefresh(
   if (!plan) return result; // no usable price provider configured
   const { client, fmpBudgeted } = plan;
 
-  const cap =
-    parseInt(envx.FMP_DAILY_CALL_CAP || '', 10) ||
-    (plan.peerOnly ? PEER_DAILY_CAP : DEFAULT_DAILY_CAP);
-  // Massive isn't metered against the FMP budget; cap its per-run work instead.
-  const used = fmpBudgeted ? await getDailyUsed(env) : 0;
-  let budget = fmpBudgeted ? remainingBudget(cap, used, opts.max) : opts.max ?? cap;
+  const cap = PEER_DAILY_CAP;
+  let budget = opts.max ?? cap;
   result.budgetRemaining = budget;
   if (budget <= 0) return result;
 
@@ -517,14 +409,12 @@ export async function runPriceRefresh(
     }
   } catch (e) {
     result.errors.push('spx: ' + (e as Error).message);
-    // Auth/plan failure (or 429 under the metered FMP budget): every subsequent
-    // call this run (SPX or any ticker) shares the same key/plan and would fail
-    // identically, so abort the whole run rather than burning the rest of the
-    // day's budget on calls that are guaranteed to fail. Remaining tickers are
-    // left untouched for the next run — no negative-cache writes, no partial
-    // state. For unmetered providers a 429 is NOT fatal (see
-    // RATE_LIMIT_PROVIDER_ERROR): the per-minute window clears on its own, so
-    // only the SPX refresh is skipped and the ticker loop still runs.
+    // Auth/plan/rate-limit failure: every subsequent call this run (SPX or any
+    // ticker) would fail the same way, so abort rather than walking the rest of
+    // the ticker list.  Remaining tickers are left untouched for the next run —
+    // no negative-cache writes, no partial state.  Peer EOD treats 429 as fatal
+    // (see RATE_LIMIT_PROVIDER_ERROR) so a rate-limited Socratic.Trade cannot
+    // burn thousands of identical retries in one refresh.
     if (isFatalPriceProviderError(e, fmpBudgeted)) result.aborted = true;
   }
 
@@ -580,11 +470,10 @@ export async function runPriceRefresh(
     } catch (e) {
       result.errors.push(ticker + ': ' + (e as Error).message);
       if (isFatalPriceProviderError(e, fmpBudgeted)) {
-        // Same key/plan will fail identically for every remaining ticker —
-        // abort the whole run instead of spending the rest of the budget on
-        // calls that cannot succeed. Tickers not yet reached this run are
-        // left completely untouched (no negative-cache write) for next time.
-        // (Unmetered-provider 429s never reach here — non-fatal, skip only.)
+        // Same auth/plan/rate-limit will fail identically for every remaining
+        // ticker — abort the whole run instead of walking thousands of peers
+        // that cannot succeed.  Tickers not yet reached this run are left
+        // completely untouched (no negative-cache write) for next time.
         result.aborted = true;
         break;
       }
@@ -713,8 +602,7 @@ export async function runPriceRefresh(
   }
 
   result.fmpCalls = calls;
-  if (fmpBudgeted && !dryRun && calls > 0) await addDailyUsed(env, calls);
-  result.budgetRemaining = fmpBudgeted ? remainingBudget(cap, used + calls) : Math.max(0, budget - calls);
+  result.budgetRemaining = Math.max(0, budget);
   return result;
 }
 

@@ -4536,6 +4536,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
     }>(
       c.env,
       `SELECT CASE
+                WHEN lower(source) LIKE '%socratic%' THEN 'socratic'
                 WHEN lower(source) LIKE '%massive%' THEN 'massive'
                 WHEN lower(source) LIKE '%intrinio%' THEN 'intrinio'
                 WHEN lower(source) LIKE '%twelvedata%' THEN 'twelvedata'
@@ -4569,12 +4570,21 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         note,
       });
     };
-    addMarketProvider('massive', 'Massive Market Data', !!runtimeSecrets.MASSIVE_API_KEY, runtimeSecrets.MASSIVE_API_KEY ? 'Reference/price fallback configured' : 'MASSIVE_API_KEY is not available to this Worker runtime');
-    addMarketProvider('intrinio', 'Intrinio Reference Data', !!runtimeSecrets.INTRINIO_API_KEY, runtimeSecrets.INTRINIO_API_KEY ? 'Reference fallback configured' : 'INTRINIO_API_KEY is not available to this Worker runtime');
-    addMarketProvider('twelvedata', 'Twelve Data Reference', !!runtimeSecrets.TWELVEDATA_API_KEY, runtimeSecrets.TWELVEDATA_API_KEY ? 'Reference fallback configured' : 'TWELVEDATA_API_KEY is not available to this Worker runtime');
-    addMarketProvider('finnhub', 'Finnhub Reference', !!runtimeSecrets.FINNHUB_API_KEY, runtimeSecrets.FINNHUB_API_KEY ? 'Reference fallback configured' : 'FINNHUB_API_KEY is not available to this Worker runtime');
-    addMarketProvider('tiingo', 'Tiingo Reference', !!runtimeSecrets.TIINGO_API_KEY, runtimeSecrets.TIINGO_API_KEY ? 'Reference/price fallback configured' : 'TIINGO_API_KEY is not available to this Worker runtime');
-    addMarketProvider('edgar', 'SEC EDGAR Reference', true, 'Free fallback; no secret required');
+    const socraticConfigured = !!(runtimeSecrets.APP_B_IMPORT_URL && runtimeSecrets.APP_B_INGEST_TOKEN);
+    addMarketProvider(
+      'socratic',
+      'Socratic.Trade',
+      socraticConfigured,
+      socraticConfigured
+        ? 'Company profiles, quotes, and EOD prices. FMP is not a fallback.'
+        : 'APP_B_IMPORT_URL and APP_B_INGEST_TOKEN are required. FMP is not a fallback.',
+    );
+    addMarketProvider('massive', 'Massive Market Data', false, 'Not on the enrichment or price path. Market data comes from Socratic.Trade.');
+    addMarketProvider('intrinio', 'Intrinio Reference Data', false, 'Not on the enrichment or price path. Market data comes from Socratic.Trade.');
+    addMarketProvider('twelvedata', 'Twelve Data Reference', false, 'Not on the enrichment or price path. Market data comes from Socratic.Trade.');
+    addMarketProvider('finnhub', 'Finnhub Reference', false, 'Not on the enrichment or price path. Market data comes from Socratic.Trade.');
+    addMarketProvider('tiingo', 'Tiingo Reference', false, 'Not on the enrichment or price path. Market data comes from Socratic.Trade.');
+    addMarketProvider('edgar', 'SEC EDGAR Reference', true, 'Public CIK/SIC baseline when Socratic.Trade has no profile. No secret required.');
 
     const logoDevToken = runtimeSecrets.LOGODEV_PUBLISHABLE_KEY || runtimeSecrets.LOGO_DEV_TOKEN;
     connections.push({
@@ -4602,7 +4612,7 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       `SELECT MAX(latest_price_date) AS last_used_at FROM securities_ref`
     );
     const priceRow = priceRows[0];
-    const hasPriceProvider = !!(runtimeSecrets.FMP_API_KEY || runtimeSecrets.MASSIVE_API_KEY || runtimeSecrets.TIINGO_API_KEY);
+    const hasPriceProvider = !!(runtimeSecrets.APP_B_IMPORT_URL && runtimeSecrets.APP_B_INGEST_TOKEN);
     connections.push({
       id: 'cache:prices',
       label: 'Asset Price Cache',
@@ -4614,8 +4624,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       callsToday: 0,
       errorsLast24h: 0,
       note: hasPriceProvider
-        ? `PRICE_PROVIDER=${runtimeSecrets.PRICE_PROVIDER || 'fmp'}; counts show cached assets/rows, not raw API calls`
-        : 'No FMP_API_KEY or MASSIVE_API_KEY configured for price history',
+        ? 'EOD history from Socratic.Trade. Counts show cached assets/rows, not raw API calls.'
+        : 'APP_B_IMPORT_URL and APP_B_INGEST_TOKEN are required. FMP is not a price source.',
     });
 
     const spxRows = await optionalAll<{ last_used_at: string | null }>(
@@ -4785,32 +4795,14 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
         });
       }
     }
-    if (!runtimeSecrets.FMP_API_KEY) {
+    if (!runtimeSecrets.APP_B_IMPORT_URL || !runtimeSecrets.APP_B_INGEST_TOKEN) {
       errors.push({
         at: now.toISOString(),
-        area: 'Fallback / Degraded Mode',
+        area: 'Socratic.Trade',
         severity: 'warning',
-        subject: 'Security enrichment',
+        subject: 'Market data',
         message:
-          'FMP_API_KEY is not available to this Worker runtime; enrichment uses runtime-available secondary providers and the EDGAR baseline for missing fields.',
-      });
-    }
-    if (!runtimeSecrets.FMP_API_KEY && runtimeSecrets.MASSIVE_API_KEY) {
-      errors.push({
-        at: now.toISOString(),
-        area: 'Fallback / Degraded Mode',
-        severity: 'warning',
-        subject: 'Price refresh',
-        message:
-          'FMP_API_KEY is not available to this Worker runtime; price refresh will use MASSIVE_API_KEY as the provider fallback.',
-      });
-    } else if (!runtimeSecrets.FMP_API_KEY && !runtimeSecrets.MASSIVE_API_KEY) {
-      errors.push({
-        at: now.toISOString(),
-        area: 'Fallback / Degraded Mode',
-        severity: 'warning',
-        subject: 'Price refresh',
-        message: 'No FMP_API_KEY or MASSIVE_API_KEY is available to this Worker runtime; price refresh is disabled.',
+          'APP_B_IMPORT_URL and APP_B_INGEST_TOKEN are required for company profiles, quotes, and EOD prices. FMP is latency probes only and is not a fallback.',
       });
     }
     const filingErrors = await optionalAll<{
@@ -9896,7 +9888,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
       pricePendingTickers: pending.prices,
       enrichedTickers: enriched?.n ?? 0,
       coverage,
-      hasFmpKey: !!(await resolveSecret(c.env, 'FMP_API_KEY')).value,
+      hasFmpKey: false,
+      hasSocraticPeer: retryIncomplete,
       hasKeyedEnrichmentProvider: retryIncomplete,
     });
   });

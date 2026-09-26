@@ -11,6 +11,7 @@ import { parseFmpProfile } from '../fmp.ts';
 import { parseCompanyTickers, parseSecSubmissions, padCik, buildSecProvider } from '../sec.ts';
 import {
   enrichmentNeededSql,
+  enrichmentChainNames,
   hasConfiguredKeyedEnrichmentProvider,
   runEnrichment,
   parseTransientRetryMarker,
@@ -69,7 +70,8 @@ describe('enrichmentNeededSql', () => {
     expect(withKey).toContain('sr.company_name IS NULL');
     expect(withKey).toContain('sr.country IS NULL');
     expect(withKey).toContain('sr.market_cap IS NULL');
-    expect(withKey).toContain("sr.source LIKE '%fmp%'");
+    expect(withKey).toContain("sr.source LIKE '%socratic%'");
+    expect(withKey).not.toContain("sr.source LIKE '%fmp%'");
     expect(withKey).toContain('AND NOT');
   });
 });
@@ -78,16 +80,28 @@ describe('hasConfiguredKeyedEnrichmentProvider', () => {
   // Async since the keys resolve through Infisical (env fallback in tests).
   it('detects any configured keyed market-data provider', async () => {
     expect(await hasConfiguredKeyedEnrichmentProvider({} as never)).toBe(false);
-    // FMP is hard-disabled for enrichment (owner 2026-08): free keys are
-    // latency-monitoring only. Even FMP_ENRICHMENT_ENABLED=true is ignored.
+    // FMP and direct vendor keys are not enrichment providers.
     expect(await hasConfiguredKeyedEnrichmentProvider({ FMP_API_KEY: 'k' } as never)).toBe(false);
-    expect(await hasConfiguredKeyedEnrichmentProvider({ FMP_API_KEY: 'k', FMP_ENRICHMENT_ENABLED: 'false' } as never)).toBe(false);
     expect(await hasConfiguredKeyedEnrichmentProvider({ FMP_API_KEY: 'k', FMP_ENRICHMENT_ENABLED: 'true' } as never)).toBe(false);
-    expect(await hasConfiguredKeyedEnrichmentProvider({ MASSIVE_API_KEY: 'k' } as never)).toBe(true);
-    // Tiingo is intentionally excluded — its free tier supplies only name+exchange,
-    // so it should not enable retry-incomplete mode that would endlessly re-select
-    // the same newest tickers (which already have enriched_at but not sector/market cap).
+    expect(await hasConfiguredKeyedEnrichmentProvider({ MASSIVE_API_KEY: 'k' } as never)).toBe(false);
     expect(await hasConfiguredKeyedEnrichmentProvider({ TIINGO_API_KEY: 'k' } as never)).toBe(false);
+    expect(await hasConfiguredKeyedEnrichmentProvider({ APP_B_IMPORT_URL: 'https://socratic.trade' } as never)).toBe(false);
+    expect(await hasConfiguredKeyedEnrichmentProvider({
+      APP_B_IMPORT_URL: 'https://socratic.trade',
+      APP_B_INGEST_TOKEN: 'token',
+    } as never)).toBe(true);
+  });
+});
+
+describe('enrichmentChainNames', () => {
+  it('is Socratic then EDGAR when the peer is configured, and never FMP', () => {
+    expect(enrichmentChainNames({
+      APP_B_IMPORT_URL: 'https://socratic.trade',
+      APP_B_INGEST_TOKEN: 'token',
+      FMP_API_KEY: 'k',
+      MASSIVE_API_KEY: 'm',
+    } as never)).toEqual(['socratic', 'edgar']);
+    expect(enrichmentChainNames({ FMP_API_KEY: 'k' } as never)).toEqual(['edgar']);
   });
 });
 
