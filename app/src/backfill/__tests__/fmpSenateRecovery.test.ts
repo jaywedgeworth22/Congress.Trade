@@ -5,6 +5,7 @@ import {
   fmpSenateDocId,
   fmpSenateRowKey,
   mapFmpSenateRecord,
+  FMP_SENATE_RECOVERY_RETIRED,
   runFmpSenateRecovery,
   type FmpSenateRecord,
 } from '../fmpSenateRecovery.ts';
@@ -108,45 +109,48 @@ function fakeEnv() {
 }
 
 describe('runFmpSenateRecovery', () => {
-  it('fetches only the bounded requested pages and writes filers, filings, and row-keyed transactions', async () => {
+  it('refuses every recovery run before any FMP HTTP call', async () => {
     const { env, captured } = fakeEnv();
     const urls: string[] = [];
     const fetchImpl = (async (input: RequestInfo | URL) => {
-      const url = String(input);
-      urls.push(url);
-      const page = Number(new URL(url).searchParams.get('page'));
-      return Response.json([{ ...BASE, link: BASE.link?.replace('abc12345', `page${page}abc`) }]);
+      urls.push(String(input));
+      return Response.json([]);
     }) as typeof fetch;
 
-    const result = await runFmpSenateRecovery(env, {
-      fromPage: 3,
-      toPage: 4,
-      fetchImpl,
-      now: new Date('2026-07-22T00:00:00.000Z'),
-    });
+    await expect(
+      runFmpSenateRecovery(env, {
+        fromPage: 0,
+        toPage: 0,
+        fetchImpl,
+        now: new Date('2026-07-22T00:00:00.000Z'),
+      }),
+    ).rejects.toThrow(FMP_SENATE_RECOVERY_RETIRED);
 
-    expect(result).toMatchObject({
-      ok: true,
-      fromPage: 3,
-      toPage: 4,
-      fetched: 2,
-      accepted: 2,
-      inserted: 2,
-      rejected: 0,
-    });
-    expect(urls).toHaveLength(2);
-    expect(urls.map((url) => new URL(url).searchParams.get('page'))).toEqual(['3', '4']);
-    expect(captured.some(({ sql }) => /provider_seeded/.test(sql))).toBe(true);
-    const txWrites = captured.filter(({ sql }) => /INSERT OR IGNORE INTO transactions/i.test(sql));
-    expect(txWrites).toHaveLength(2);
-    expect(txWrites.every(({ sql }) => /row_key/.test(sql))).toBe(true);
-    expect(txWrites.every(({ sql }) => /source IN \('primary', 'manual'\)/.test(sql))).toBe(true);
+    expect(urls).toEqual([]);
+    expect(captured).toEqual([]);
   });
 
-  it('rejects ranges larger than five pages before spending a provider call', async () => {
+  it('rejects ranges larger than five pages before the retirement error', async () => {
     const { env } = fakeEnv();
     await expect(runFmpSenateRecovery(env, { fromPage: 0, toPage: 5 })).rejects.toThrow(
       'at most 5 pages',
     );
+  });
+
+  it('does not fall back to FMP_LATENCY_* or spend FMP_API_KEY', async () => {
+    const { env } = fakeEnv();
+    (env as { FMP_API_KEY?: string }).FMP_API_KEY = 'should-not-be-used';
+    (env as { FMP_LATENCY_API_KEY?: string }).FMP_LATENCY_API_KEY = 'latency-1';
+    (env as { FMP_LATENCY_API_KEY_2?: string }).FMP_LATENCY_API_KEY_2 = 'latency-2';
+    const urls: string[] = [];
+    const fetchImpl = (async (input: RequestInfo | URL) => {
+      urls.push(String(input));
+      return Response.json([]);
+    }) as typeof fetch;
+
+    await expect(runFmpSenateRecovery(env, { fromPage: 1, toPage: 1, fetchImpl })).rejects.toThrow(
+      /FMP senate recovery is retired/,
+    );
+    expect(urls).toEqual([]);
   });
 });
