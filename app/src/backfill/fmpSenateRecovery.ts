@@ -1,13 +1,16 @@
 /**
- * Bounded Senate history recovery from Financial Modeling Prep's stable
- * `senate-latest` endpoint.
+ * src/backfill/fmpSenateRecovery.ts
+ * OWNER: ingestion
  *
- * These rows are deliberately persisted as `seed_dataset`: they provide broad
- * historical coverage without pretending that congress.trade fetched and
- * parsed the original filing.  Unlike the legacy aggregate seed, each row is
- * tied to its real Senate report id and a stable per-report row key.  A later
- * official discovery can therefore upgrade the filing in place; the normal
- * publisher deprecates these low-fidelity rows after primary rows land.
+ * Admin FMP senate-history recovery — RETIRED.
+ *
+ * Historical helper mapped FMP stable `senate-latest` pages into seed_dataset
+ * filings.  Jay binding: FMP keys are latency-probe only.  `runFmpSenateRecovery`
+ * now refuses every invocation before any FMP credential or HTTP call.
+ * Operators should use Quiver / official Senate eFD / existing disclosure paths.
+ *
+ * Pure helpers below (doc id / row key / mappers) remain for tests and any
+ * residual seed rows already in the DB.
  */
 
 import type { Env, Transaction } from '../shared/types.ts';
@@ -392,96 +395,17 @@ async function persistPage(
   return { inserted, duplicates, rejected, filingsInserted, filersInserted };
 }
 
+/** Operator-facing message when admin senate recovery is invoked. */
+export const FMP_SENATE_RECOVERY_RETIRED =
+  'FMP senate recovery is retired.  FMP keys (including FMP_API_KEY and FMP_LATENCY_*) are reserved for disclosure-latency probes only and must not backfill senate disclosures.  Use Quiver / official Senate eFD / existing disclosure ingestion instead.';
+
 export async function runFmpSenateRecovery(
   env: Env,
   opts: FmpSenateRecoveryOptions = {},
 ): Promise<FmpSenateRecoveryResult> {
-  const { fromPage, toPage } = validatedPages(opts);
-  const dryRun = opts.dryRun ?? false;
-  const nowIso = (opts.now ?? new Date()).toISOString();
-  const fetchImpl = opts.fetchImpl ?? fetch;
-  // Free-tier FMP latency keys (primary + secondary) are monitoring-only and must never
-  // be used here. Recovery requires a separate FMP_API_KEY (paid or intentionally
-  // non-latency). Do not fall back to latency secrets.
-  const key = (await resolveSecret(env, 'FMP_API_KEY')).value;
-  if (!key) {
-    throw new Error(
-      'FMP_API_KEY is not available (FMP_LATENCY_* keys are latency-only and cannot run recovery)',
-    );
-  }
-
-  const envx = env as Env & { FMP_MAX_PER_MINUTE?: string; FMP_DAILY_CALL_CAP?: string };
-  const maxPerMinuteRaw = (await resolveSecret(env, 'FMP_MAX_PER_MINUTE')).value ?? envx.FMP_MAX_PER_MINUTE;
-  const dailyCapRaw = (await resolveSecret(env, 'FMP_DAILY_CALL_CAP')).value ?? envx.FMP_DAILY_CALL_CAP;
-  const maxPerMinute = Number.parseInt(maxPerMinuteRaw ?? '', 10) || undefined;
-  const dailyCap = Math.max(1, Number.parseInt(dailyCapRaw ?? '', 10) || DEFAULT_DAILY_CALL_CAP);
-  const pace = getSharedFmpPacer(maxPerMinute);
-  const resolve: TickerResolver = dryRun || !env.DB ? () => null : await loadResolver(env);
-  const errors: string[] = [];
-  const pages: FmpSenatePageResult[] = [];
-
-  for (let page = fromPage; page <= toPage; page++) {
-    const used = await getDailyUsed(env);
-    if (used >= dailyCap) {
-      errors.push(`FMP_DAILY_CALL_CAP reached (${used}/${dailyCap}) before page ${page}`);
-      break;
-    }
-
-    let records: FmpSenateRecord[];
-    try {
-      records = await fetchPage(key, page, fetchImpl, pace);
-    } catch (error) {
-      errors.push((error as Error).message);
-      await addDailyUsed(env, 1);
-      continue;
-    }
-    await addDailyUsed(env, 1);
-
-    const occurrences = new Map<string, number>();
-    const mapped: MappedFmpSenateRecord[] = [];
-    let rejected = 0;
-    for (const record of records) {
-      const fingerprint = stableHash(canonicalRow(record));
-      const occurrence = (occurrences.get(fingerprint) ?? 0) + 1;
-      occurrences.set(fingerprint, occurrence);
-      const row = mapFmpSenateRecord(record, occurrence, nowIso, resolve);
-      if (row) mapped.push(row);
-      else rejected += 1;
-    }
-
-    const persisted = dryRun
-      ? { inserted: 0, duplicates: 0, rejected: 0, filingsInserted: 0, filersInserted: 0 }
-      : await persistPage(env, mapped, nowIso, errors);
-    const dates = mapped.map((row) => row.transaction.txDate).filter((date): date is string => !!date).sort();
-    pages.push({
-      page,
-      fetched: records.length,
-      accepted: mapped.length,
-      inserted: persisted.inserted,
-      duplicates: persisted.duplicates,
-      rejected: rejected + persisted.rejected,
-      filingsInserted: persisted.filingsInserted,
-      filersInserted: persisted.filersInserted,
-      oldestTransactionDate: dates[0] ?? null,
-      newestTransactionDate: dates.at(-1) ?? null,
-      exhausted: records.length < FMP_PAGE_LIMIT,
-    });
-  }
-
-  const sum = (key: keyof FmpSenatePageResult) => pages.reduce((total, page) => total + Number(page[key] ?? 0), 0);
-  return {
-    ok: errors.length === 0,
-    dryRun,
-    fromPage,
-    toPage,
-    fetched: sum('fetched'),
-    accepted: sum('accepted'),
-    inserted: sum('inserted'),
-    duplicates: sum('duplicates'),
-    rejected: sum('rejected'),
-    filingsInserted: sum('filingsInserted'),
-    filersInserted: sum('filersInserted'),
-    pages,
-    errors,
-  };
+  // Keep page-bound validation so oversized ranges still fail with the old message
+  // before the retirement error (admin UI / scripts may rely on that check).
+  validatedPages(opts);
+  void env;
+  throw new Error(FMP_SENATE_RECOVERY_RETIRED);
 }

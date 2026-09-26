@@ -2,29 +2,23 @@
  * src/enrichment/service.ts
  * OWNER: enrichment
  *
- * Budgeted enrichment runner. Each run enriches the tickers that most need it
- * (newest-traded first, then backfilling older un-enriched ones), spending at
- * most the day's remaining FMP budget. SEC EDGAR is free (no daily call cap)
- * and always attempted, but — like every other provider in the chain — its
- * calls are paced, against their OWN dedicated per-minute gate, separate from
- * FMP's budget/pacer. FMP is layered on top when a key is configured and
- * budget remains. A daily call counter lives in CONFIG_KV so "today's needed +
- * extra backfill" stays within the cap and resumes the next day.
+ * Enrichment runner. Each run fills tickers that most need it (newest-traded
+ * first, then older un-enriched ones). Company profile / sector / market-cap
+ * fields come from Socratic.Trade (`APP_B_IMPORT_URL` + `APP_B_INGEST_TOKEN`).
+ * FMP is not on this path — free FMP keys are disclosure-latency probes only.
+ * Direct Massive / Intrinio / Twelve Data / Finnhub / Tiingo keys are not
+ * enrichment fallbacks. SEC EDGAR remains the free public CIK/SIC baseline
+ * when ST has no profile for a symbol. EDGAR calls use their own per-minute
+ * gate. The historical FMP day-counter helpers stay exported so latency and
+ * older imports can still read `fmp:calls:*`; this runner does not spend them.
  */
 
 import type { Env } from '../shared/types.ts';
 import { all, run } from '../shared/db.ts';
 import type { SqlParam } from '../shared/db.ts';
-import { mergeRefs, remainingBudget } from './compute.ts';
-import { buildFmpProvider } from './fmp.ts';
+import { mergeRefs } from './compute.ts';
 import { buildSecProvider } from './sec.ts';
-import {
-  buildMassiveProvider,
-  buildFinnhubProvider,
-  buildTwelveDataProvider,
-  buildIntrinioProvider,
-  buildTiingoProvider,
-} from './providers.ts';
+import { buildSocraticProvider } from './socratic.ts';
 import { getSharedFmpPacer, getSharedEdgarPacer } from '../shared/pace.ts';
 import type { EnrichmentProvider, SecurityRef } from './types.ts';
 import { resolveSecrets } from '../secrets/infisical.ts';
@@ -34,27 +28,12 @@ import { resolveSecrets } from '../secrets/infisical.ts';
 export const DEFAULT_DAILY_CAP = 230;
 
 type EnvX = Env & {
-  FMP_API_KEY?: string;
   FMP_DAILY_CALL_CAP?: string;
-  /** Owner policy (2026-08-01): FMP keys are reserved for the disclosure-latency
-   *  race only. FMP joins the enrichment chain ONLY when this is explicitly
-   *  truthy ('true'/'1'/'yes'/'on'); unset or anything else = latency-only. */
-  FMP_ENRICHMENT_ENABLED?: string;
-  MASSIVE_API_KEY?: string;
-  INTRINIO_API_KEY?: string;
-  TWELVEDATA_API_KEY?: string;
-  FINNHUB_API_KEY?: string;
-  TIINGO_API_KEY?: string;
+  FMP_MAX_PER_MINUTE?: string;
+  EDGAR_MAX_PER_MINUTE?: string;
+  APP_B_IMPORT_URL?: string;
+  APP_B_INGEST_TOKEN?: string;
 };
-
-/**
- * FMP enrichment is permanently off (owner 2026-08): free FMP keys are reserved
- * for disclosure-latency probes only. Even FMP_ENRICHMENT_ENABLED=true is ignored
- * so a mis-set Infisical flag cannot burn the latency budget.
- */
-function fmpEnrichmentEnabled(_value?: string): boolean {
-  return false;
-}
 
 interface ChainEntry {
   name: string;
@@ -65,12 +44,12 @@ interface ChainEntry {
 
 /**
  * Keyed providers whose `source` marker blocks re-enrichment of a row that is
- * still missing display-critical fields (sector, country, market cap). Tiingo
- * is deliberately excluded: its free tier supplies only name + exchange, so a
- * Tiingo-enriched row should remain eligible for re-enrichment by a richer
- * provider (FMP, Massive, Intrinio, etc.) that may be configured later.
+ * still missing display-critical fields (sector, country, market cap). Only
+ * Socratic.Trade is on the live chain. Legacy vendor names are intentionally
+ * absent so an older `fmp` / `massive` row that is still missing those fields
+ * is retried through ST.
  */
-const KEYED_PROVIDER_SOURCE_MARKERS = ['fmp', 'massive', 'intrinio', 'twelvedata', 'finnhub'];
+const KEYED_PROVIDER_SOURCE_MARKERS = ['socratic'];
 
 function keyedSourceTriedSql(alias: string): string {
   return '(' + KEYED_PROVIDER_SOURCE_MARKERS.map((s) => `${alias}.source LIKE '%${s}%'`).join(' OR ') + ')';
@@ -158,61 +137,35 @@ export function enrichmentNeededSql(alias = 'sr', retryIncompleteWithKeyedProvid
 }
 
 /**
- * Whether any keyed enrichment provider with display-critical field coverage is
- * configured. This intentionally mirrors `KEYED_PROVIDER_SOURCE_MARKERS`:
- * Tiingo is excluded because its free tier supplies only name + exchange, so
- * a Tiingo-enriched row should remain eligible for re-enrichment by a richer
- * provider (FMP, Massive, Intrinio, etc.) that may be configured later.
- * Without a matching keyed provider, the re-enrichment SQL skips tickers that
- * already have an `enriched_at` timestamp, even if they are still missing
- * sector/country/market cap — preventing an endless loop of re-selecting the
- * newest tickers on every run.
+ * Whether Socratic.Trade is configured to fill display-critical company fields.
+ * Direct vendor keys (FMP, Massive, Tiingo, …) do not count: they are not on
+ * the enrichment chain. Without the peer, re-enrichment SQL skips tickers that
+ * already have `enriched_at`, even if sector/country/market cap are still
+ * empty — otherwise EDGAR-only runs would re-select the newest tickers forever.
  */
 export async function hasConfiguredKeyedEnrichmentProvider(env: Env): Promise<boolean> {
-  const keys = await resolveSecrets(env, [
-    'FMP_API_KEY',
-    'FMP_ENRICHMENT_ENABLED',
-    'MASSIVE_API_KEY',
-    'INTRINIO_API_KEY',
-    'TWELVEDATA_API_KEY',
-    'FINNHUB_API_KEY',
-  ]);
-  return Boolean(
-    (keys.FMP_API_KEY && fmpEnrichmentEnabled(keys.FMP_ENRICHMENT_ENABLED)) ||
-      keys.MASSIVE_API_KEY ||
-      keys.INTRINIO_API_KEY ||
-      keys.TWELVEDATA_API_KEY ||
-      keys.FINNHUB_API_KEY,
-  );
+  const keys = await resolveSecrets(env, ['APP_B_IMPORT_URL', 'APP_B_INGEST_TOKEN']);
+  return Boolean(keys.APP_B_IMPORT_URL && keys.APP_B_INGEST_TOKEN);
 }
 
 /**
- * Quality-ranked enrichment chain (best first), gated by configured keys.
- * Ranking is from the provider benchmark: FMP has the cleanest, widest profile
- * coverage; Massive (Polygon) adds reference + market cap + logos; Intrinio and
- * Twelve Data add classification; Finnhub adds an industry label + a directly-
- * displayable logo; Tiingo (free tier: name + exchange only, no sector/market
- * cap/CIK) sits just above the free baseline as one more freemium name/exchange
- * fallback; SEC EDGAR is the always-on, public-domain (free) baseline.
- * These are NOT mere fallbacks — each fills fields the higher ones lack.
- *
- * NOTE: `hasFmp` already encodes the FMP_ENRICHMENT_ENABLED policy gate
- * (FMP keys are latency-only unless explicitly opted in), so the FMP entry is
- * normally absent even when FMP_API_KEY is configured.
+ * Profile chain: Socratic.Trade first when the peer is configured, then SEC
+ * EDGAR for public CIK/SIC identity. No FMP and no direct market-data vendors.
  */
-function buildEnrichmentChain(env: EnvX, hasFmp: boolean): ChainEntry[] {
+export function enrichmentChainNames(env: EnvX): string[] {
+  return buildEnrichmentChain(env).map((entry) => entry.name);
+}
+
+function buildEnrichmentChain(env: EnvX): ChainEntry[] {
   const chain: ChainEntry[] = [];
-  if (hasFmp) chain.push({ name: 'fmp', provider: buildFmpProvider(env.FMP_API_KEY as string), budgeted: true });
-  if (env.MASSIVE_API_KEY) chain.push({ name: 'massive', provider: buildMassiveProvider(env.MASSIVE_API_KEY), budgeted: false });
-  if (env.INTRINIO_API_KEY) chain.push({ name: 'intrinio', provider: buildIntrinioProvider(env.INTRINIO_API_KEY), budgeted: false });
-  if (env.TWELVEDATA_API_KEY) chain.push({ name: 'twelvedata', provider: buildTwelveDataProvider(env.TWELVEDATA_API_KEY), budgeted: false });
-  if (env.FINNHUB_API_KEY) chain.push({ name: 'finnhub', provider: buildFinnhubProvider(env.FINNHUB_API_KEY), budgeted: false });
-  // Tiingo is thinner than the providers above (no sector/market cap on the free
-  // tier) but still richer than the free EDGAR baseline (adds a clean company
-  // name + exchange for tickers EDGAR can't resolve), so it slots in right
-  // before EDGAR rather than beside the other mid-tier providers above.
-  if (env.TIINGO_API_KEY) chain.push({ name: 'tiingo', provider: buildTiingoProvider(env.TIINGO_API_KEY), budgeted: false });
-  chain.push({ name: 'edgar', provider: buildSecProvider(), budgeted: false }); // free public-domain baseline, always last
+  if (env.APP_B_IMPORT_URL && env.APP_B_INGEST_TOKEN) {
+    chain.push({
+      name: 'socratic',
+      provider: buildSocraticProvider(env.APP_B_IMPORT_URL, env.APP_B_INGEST_TOKEN),
+      budgeted: false,
+    });
+  }
+  chain.push({ name: 'edgar', provider: buildSecProvider(), budgeted: false });
   return chain;
 }
 
@@ -312,45 +265,37 @@ export async function runEnrichment(
   opts: { max?: number; dryRun?: boolean; maxPerMinute?: number; edgarMaxPerMinute?: number; signal?: AbortSignal; deadlineMs?: number } = {},
 ): Promise<EnrichResult> {
   const runtimeSecrets = await resolveSecrets(env, [
-    'FMP_API_KEY',
-    'FMP_ENRICHMENT_ENABLED',
-    'FMP_DAILY_CALL_CAP',
     'FMP_MAX_PER_MINUTE',
     'EDGAR_MAX_PER_MINUTE',
-    'MASSIVE_API_KEY',
-    'INTRINIO_API_KEY',
-    'TWELVEDATA_API_KEY',
-    'FINNHUB_API_KEY',
-    'TIINGO_API_KEY',
+    'APP_B_IMPORT_URL',
+    'APP_B_INGEST_TOKEN',
   ]);
   const envx = { ...(env as EnvX), ...runtimeSecrets };
   const dryRun = opts.dryRun === true;
-  const cap = parseInt(envx.FMP_DAILY_CALL_CAP || '', 10) || DEFAULT_DAILY_CAP;
-  // FMP keys are latency-only by owner policy: the key being present is not
-  // enough — FMP only enriches when FMP_ENRICHMENT_ENABLED is explicitly truthy.
-  const hasFmp = !!envx.FMP_API_KEY && fmpEnrichmentEnabled(envx.FMP_ENRICHMENT_ENABLED);
-  const usedBefore = await getDailyUsed(env);
-  const fmpBudget = hasFmp ? remainingBudget(cap, usedBefore, opts.max) : 0;
-  // With a key, the run is bounded by the FMP budget; without one we still do
-  // SEC-only enrichment (free) up to `max` (default 200).
-  const selectLimit = hasFmp ? fmpBudget : opts.max != null ? Math.max(0, Math.floor(opts.max)) : 200;
+  // Profiles are not metered against the FMP day counter. `max` is a per-run
+  // slice; the default is higher when ST is configured because those reads
+  // are not a free-tier FMP budget.
+  const hasSocratic = !!(envx.APP_B_IMPORT_URL && envx.APP_B_INGEST_TOKEN);
+  const selectLimit = opts.max != null
+    ? Math.max(0, Math.floor(opts.max))
+    : hasSocratic ? 500 : 200;
 
   const result: EnrichResult = {
-    hasFmpKey: hasFmp,
-    dailyCap: cap,
-    usedBefore,
+    hasFmpKey: false,
+    dailyCap: 0,
+    usedBefore: 0,
     scanned: 0,
     enriched: 0,
     fmpCalls: 0,
     failures: 0,
-    budgetRemaining: fmpBudget,
+    budgetRemaining: 0,
     dryRun,
     errors: [],
     shareRefs: [],
   };
   if (selectLimit <= 0) return result;
 
-  const chain = buildEnrichmentChain(envx, hasFmp);
+  const chain = buildEnrichmentChain(envx);
   // Only providers in KEYED_PROVIDER_SOURCE_MARKERS can fill display-critical
   // fields (sector, country, market cap). Tiingo alone, for example, enriches
   // name + exchange but never sector/market cap, so it must not enable keyed-
@@ -373,7 +318,6 @@ export async function runEnrichment(
   const edgarMaxPerMinute =
     opts.edgarMaxPerMinute ?? (parseInt(envx.EDGAR_MAX_PER_MINUTE || '', 10) || undefined);
   const edgarPace = getSharedEdgarPacer(edgarMaxPerMinute);
-  let fmpCalls = 0;
   const runStartedAt = Date.now();
 
   for (const candidate of candidates) {
@@ -401,17 +345,14 @@ export async function runEnrichment(
     // every provider is a deterministic no-data outcome.
     let hadTransientError = false;
     for (const entry of chain) {
-      if (entry.budgeted && fmpCalls >= fmpBudget) continue; // out of FMP budget
       try {
         // Every provider paces before its call, each against its own budget:
         // EDGAR uses its dedicated gate (free, but still fair-access limited);
         // everything else shares the FMP per-minute gate.
         await (entry.name === 'edgar' ? edgarPace() : pace());
         const ref = await entry.provider.fetchRef(ticker);
-        if (entry.budgeted) fmpCalls++;
         if (ref) collected.push(ref);
       } catch (e) {
-        if (entry.budgeted) fmpCalls++; // a failed call still consumes quota
         hadTransientError = true;
         result.errors.push(ticker + ' ' + entry.name + ': ' + (e as Error).message);
       }
@@ -446,15 +387,8 @@ export async function runEnrichment(
     result.enriched++;
   }
 
-  result.fmpCalls = fmpCalls;
-  // Increment (read-add-write) rather than write an absolute usedBefore+fmpCalls:
-  // a concurrently-running probe/price refresh may have committed its own calls
-  // to the shared counter since we read usedBefore, and an absolute write would
-  // clobber those, undercounting real usage. addDailyUsed returns the post-add
-  // total so budgetRemaining reflects that concurrent spend too.
-  const usedAfter =
-    hasFmp && !dryRun && fmpCalls > 0 ? await addDailyUsed(env, fmpCalls) : usedBefore + fmpCalls;
-  result.budgetRemaining = hasFmp ? remainingBudget(cap, usedAfter) : 0;
+  result.fmpCalls = 0;
+  result.budgetRemaining = 0;
   return result;
 }
 

@@ -485,7 +485,7 @@ describe('tradeLatency', () => {
       expect(await resolveFmpRapidApiKey({ FMP_LATENCY_API_KEY: 'free-tier' } as never)).toBeNull();
     });
 
-    it('selectFmpLatencyPathForCycle defaults to stable only; alternates when rapidapi opt-in', async () => {
+    it('selectFmpLatencyPathForCycle stays on stable when RapidAPI is opted in (congress routes 404)', async () => {
       const kv = new Map<string, string>();
       const env = {
         FMP_LATENCY_API_KEY: 'k1',
@@ -498,25 +498,32 @@ describe('tradeLatency', () => {
         },
       } as never;
       const ids = ['fmp', 'fmp_rapidapi', 'quiver'] as const;
-      // Default FMP_LATENCY_PATHS=stable (RapidAPI congress endpoints 404 on product).
       expect(await selectFmpLatencyPathForCycle(env, ids, { force: true })).toBe('stable');
       expect(await selectFmpLatencyPathForCycle(env, ids, { force: true })).toBe('stable');
-      // Opt-in both paths → rotate.
+      // Opt-in must not rotate a cycle onto RapidAPI house/senate (those 404).
       const both = { ...env, FMP_LATENCY_PATHS: 'stable,rapidapi' } as never;
       expect(await selectFmpLatencyPathForCycle(both, ids, { force: true })).toBe('stable');
-      expect(await selectFmpLatencyPathForCycle(both, ids, { force: true })).toBe('rapidapi');
       expect(await selectFmpLatencyPathForCycle(both, ids, { force: true })).toBe('stable');
-      // Without marketplace key, RapidAPI is not a candidate even when opt-in.
+      // rapidapi-only paths still select stable so the congress lane is not silent.
+      const rapidOnly = { ...env, FMP_LATENCY_PATHS: 'rapidapi' } as never;
+      expect(await selectFmpLatencyPathForCycle(rapidOnly, ['fmp_rapidapi'], { force: true })).toBe('stable');
+      // A marketplace key is irrelevant: RapidAPI is not a disclosure candidate.
       const noRapid = {
         FMP_LATENCY_API_KEY: 'k1',
         FMP_LATENCY_PATHS: 'stable,rapidapi',
         CONFIG_KV: env.CONFIG_KV,
       } as never;
       expect(await selectFmpLatencyPathForCycle(noRapid, ids, { force: true })).toBe('stable');
-      expect(await selectFmpLatencyPathForCycle(noRapid, ids, { force: true })).toBe('stable');
       // Probe OFF — no path selected.
       const off = { ...env, FMP_LATENCY_PROBE_ENABLED: 'false' } as never;
       expect(await selectFmpLatencyPathForCycle(off, ids, { force: true })).toBeNull();
+      // No free-tier key → nothing to probe (RapidAPI key must not stand in).
+      const rapidKeyOnly = {
+        RAPIDAPI_KEY: 'marketplace-key',
+        FMP_LATENCY_PATHS: 'stable,rapidapi',
+        CONFIG_KV: env.CONFIG_KV,
+      } as never;
+      expect(await selectFmpLatencyPathForCycle(rapidKeyOnly, ids, { force: true })).toBeNull();
     });
 
     it('selectFmpLatencyKey rotates dual free keys including FMP_API_KEY as slot-2 fallback', async () => {
@@ -579,7 +586,7 @@ describe('tradeLatency', () => {
       expect(fleet.totalRemaining).toBe(FMP_LATENCY_DAILY_CAP_PER_KEY * 2 + 100);
     });
 
-    it('probe run HTTP-spends only one FMP path per cycle when both enabled', async () => {
+    it('probe run never calls RapidAPI congress routes even when the path is opted in', async () => {
       const kv = new Map<string, string>();
       const hosts: string[] = [];
       const fetchImpl = (async (input: RequestInfo | URL) => {
@@ -622,24 +629,25 @@ describe('tradeLatency', () => {
         force: true,
         providers: ['fmp', 'fmp_rapidapi'],
       });
-      // House + senate = 2 calls for the selected path only.
+      // House + senate on the stable host only. RapidAPI must not be called.
       expect(hosts.length).toBe(2);
       expect(hosts.every((u) => u.includes('financialmodelingprep.com'))).toBe(true);
-      const rotated = r1.providers.find((p) => p.id === 'fmp_rapidapi');
-      expect(rotated?.enabled).toBe(false);
-      expect(rotated?.reason).toMatch(/rotated/i);
+      expect(hosts.some((u) => u.includes('rapidapi.com'))).toBe(false);
+      const skipped = r1.providers.find((p) => p.id === 'fmp_rapidapi');
+      expect(skipped?.enabled).toBe(false);
+      expect(skipped?.operationalStatus).toBe('off');
+      expect(skipped?.reason).toMatch(/404/);
 
       hosts.length = 0;
       const r2 = await runDisclosureLatencyProbe(env, now, fetchImpl, {
         force: true,
         providers: ['fmp', 'fmp_rapidapi'],
       });
-      // Second cycle should hit RapidAPI host, not stable.
       expect(hosts.length).toBe(2);
-      expect(hosts.every((u) => u.includes('rapidapi.com'))).toBe(true);
-      const rotatedStable = r2.providers.find((p) => p.id === 'fmp');
-      expect(rotatedStable?.enabled).toBe(false);
-      expect(rotatedStable?.reason).toMatch(/rotated/i);
+      expect(hosts.every((u) => u.includes('financialmodelingprep.com'))).toBe(true);
+      expect(hosts.some((u) => u.includes('rapidapi.com'))).toBe(false);
+      const stable = r2.providers.find((p) => p.id === 'fmp');
+      expect(stable?.enabled).toBe(true);
     });
 
     it('selectFmpLatencyKey skips a slot marked HTTP 429 for the UTC day', async () => {
@@ -658,6 +666,68 @@ describe('tradeLatency', () => {
       await markFmpSlotHttp429(env, '1', now);
       const picked = await selectFmpLatencyKey(env, now, { force: true });
       expect(picked?.slot).toBe('2');
+    });
+
+    it('retries the other FMP free-tier key in the same cycle after HTTP 401', async () => {
+      const kv = new Map<string, string>();
+      const keysUsed: string[] = [];
+      const row = {
+        symbol: 'AAPL',
+        firstName: 'Ro',
+        lastName: 'Khanna',
+        office: 'Ro Khanna',
+        disclosureDate: '2026-08-17',
+        transactionDate: '2026-08-10',
+        type: 'Purchase',
+      };
+      const fetchImpl = (async (input: RequestInfo | URL) => {
+        const url =
+          typeof input === 'string'
+            ? input
+            : input instanceof URL
+              ? input.href
+              : (input as Request).url;
+        const key = decodeURIComponent((/[?&]apikey=([^&]+)/.exec(url) || [])[1] || '');
+        if (key && !keysUsed.includes(key)) keysUsed.push(key);
+        if (key && key === keysUsed[0]) {
+          return new Response('Invalid API KEY', { status: 401 });
+        }
+        return new Response(JSON.stringify([row]), { status: 200 });
+      }) as typeof fetch;
+      const env = {
+        DISCLOSURE_LATENCY_WATCH_ENABLED: 'true',
+        FMP_LATENCY_API_KEY: 'dead-key',
+        FMP_LATENCY_API_KEY_2: 'live-key',
+        CONFIG_KV: {
+          get: async (k: string) => kv.get(k) ?? null,
+          put: async (k: string, v: string) => {
+            kv.set(k, v);
+          },
+        },
+        DB: {
+          prepare() {
+            return {
+              bind() { return this; },
+              async all() { return { results: [] }; },
+              async first() { return null; },
+              async run() { return { success: true, meta: { changes: 0 } }; },
+            };
+          },
+        },
+      } as never;
+      const now = new Date('2026-08-05T15:00:00.000Z');
+      const result = await runDisclosureLatencyProbe(env, now, fetchImpl, {
+        force: true,
+        providers: ['fmp'],
+      });
+      expect(new Set(keysUsed)).toEqual(new Set(['dead-key', 'live-key']));
+      expect(result.errors).toEqual([]);
+      expect(result.fetchedRows).toBeGreaterThan(0);
+      const failedFirst = keysUsed[0] === 'dead-key';
+      expect(await isFmpSlotHttp429(env, failedFirst ? '1' : '2', now)).toBe(true);
+      // The unauthorized key must not win the next selection.
+      const next = await selectFmpLatencyKey(env, now, { force: true });
+      expect(next?.apiKey).toBe(failedFirst ? 'live-key' : 'dead-key');
     });
 
     it('retries the other FMP free-tier key in the same cycle after HTTP 429', async () => {
@@ -896,7 +966,7 @@ describe('tradeLatency', () => {
       expect(fmp?.operationalStatus).toBe('running');
       // RapidAPI path default OFF (no house/senate/executive disclosure feed).
       expect(rapid?.operationalStatus).toBe('off');
-      expect(rapid?.reason).toMatch(/executive-latest/i);
+      expect(rapid?.reason).toMatch(/404/);
       expect(fmp?.configured).toBe(true);
       expect(rapid?.configured).toBe(true);
       expect(listFmpLatencyPathRegistry().map((p) => p.pathId).sort()).toEqual(['rapidapi', 'stable']);
@@ -912,7 +982,13 @@ describe('tradeLatency', () => {
       } as never;
       const pathStatuses = await getDisclosureLatencyProviderStatuses(withRapid);
       expect(pathStatuses.find((s) => s.id === 'fmp')?.operationalStatus).toBe('running');
-      expect(pathStatuses.find((s) => s.id === 'fmp_rapidapi')?.operationalStatus).toBe('running');
+      // Opt-in does not turn RapidAPI into a congress probe.
+      expect(pathStatuses.find((s) => s.id === 'fmp_rapidapi')?.operationalStatus).toBe('off');
+      expect(pathStatuses.find((s) => s.id === 'fmp_rapidapi')?.reason).toMatch(/404/);
+      const rapidOnly = { ...env, FMP_LATENCY_PATHS: 'rapidapi' } as never;
+      const rapidOnlyStatuses = await getDisclosureLatencyProviderStatuses(rapidOnly);
+      expect(rapidOnlyStatuses.find((s) => s.id === 'fmp')?.operationalStatus).toBe('running');
+      expect(rapidOnlyStatuses.find((s) => s.id === 'fmp_rapidapi')?.operationalStatus).toBe('off');
     });
 
     it('skips FMP HTTP when probe is explicitly OFF even if watch is force-run', async () => {

@@ -688,7 +688,11 @@ function fmpHttp429DayKey(slot: FmpLatencyKeySlot, now = new Date()): string {
   return `fmp-latency:http429:key${slot}:` + now.toISOString().slice(0, 10);
 }
 
-/** Mark a free-tier key as FMP-bandwidth-exhausted for the UTC day. */
+/**
+ * Mark a free-tier key unusable for the rest of the UTC day.
+ * Used for FMP 429 (bandwidth cap) and for 401/403 (unauthorized / wrong plan)
+ * so the other key keeps winning selection instead of the dead one.
+ */
 export async function markFmpSlotHttp429(
   env: Env,
   slot: FmpLatencyKeySlot,
@@ -1167,7 +1171,7 @@ async function resolveFmpLatencyKeyMaterial(
 export async function selectFmpLatencyKey(
   env: Env,
   now: Date = new Date(),
-  opts: { force?: boolean; schedule?: ProbeScheduleConfig } = {},
+  opts: { force?: boolean; schedule?: ProbeScheduleConfig; peek?: boolean } = {},
 ): Promise<FmpLatencyKeySelection | null> {
   const cap = await fmpLatencyDailyCap(env);
   const schedule = opts.schedule ?? latencyScheduleConfig(env);
@@ -1225,6 +1229,9 @@ export async function selectFmpLatencyKey(
   if (!candidates.length) return null;
   // Stable order for rotation (slot 1 then 2); round-robin among eligible.
   candidates.sort((a, b) => a.slot.localeCompare(b.slot));
+  // peek: path eligibility must not advance the key rotator. The probe
+  // itself is the only caller that spends a rotation tick.
+  if (opts.peek) return candidates[0]!;
   const pickedSlot = await selectRotatedAvenue(
     env,
     'fmp-key',
@@ -1234,13 +1241,15 @@ export async function selectFmpLatencyKey(
 }
 
 /**
- * Among enabled FMP paths present in the requested provider list, pick exactly
- * one path for this probe cycle (round-robin). Returns null when no path is
- * eligible (probe off / filtered out of FMP_LATENCY_PATHS / not requested).
+ * Congress disclosure probes use the stable host only.
  *
- * RapidAPI is only eligible when a marketplace key is present
- * (`FMP_RAPIDAPI_KEY` or shared `RAPIDAPI_KEY`) AND its daily budget remains —
- * never authenticated with free-tier FMP_LATENCY_* keys (ST pattern).
+ * RapidAPI's FMP product authenticates, but house-latest and senate-latest
+ * return 404 (rechecked 2026-09-04; executive-latest is not an OGE feed).
+ * Rotating a cycle onto that host would skip a working stable probe. A
+ * request that names `fmp_rapidapi` still resolves to `stable` when a
+ * free-tier key can spend — RapidAPI does not replace those probes.
+ * Returns null when the master switch is off, FMP was not requested, or
+ * every free-tier key is capped / marked failed for the UTC day.
  */
 export async function selectFmpLatencyPathForCycle(
   env: Env,
@@ -1248,35 +1257,11 @@ export async function selectFmpLatencyPathForCycle(
   opts: { force?: boolean } = {},
 ): Promise<FmpLatencyPathId | null> {
   if (!(await isFmpProbeEnabled(env))) return null;
-  const enabled = await enabledFmpPathIds(env);
-  const candidates: FmpLatencyPathId[] = [];
-  for (const path of FMP_LATENCY_PATHS) {
-    if (!enabled.has(path.pathId)) continue;
-    if (!requestedProviderIds.includes(path.providerId)) continue;
-    if (path.pathId === 'rapidapi') {
-      const rapidKey = await resolveFmpRapidApiKey(env);
-      if (!rapidKey) continue;
-      // Skip RapidAPI this cycle when its independent daily budget/spacing is exhausted.
-      const rapidBudget = await selectLatencySourceProbe(env, 'fmp_rapidapi', new Date(), {
-        force: opts.force,
-      });
-      if (!rapidBudget && !opts.force) continue;
-      // force still needs remaining budget (cap), only bypasses spacing.
-      if (!rapidBudget && opts.force) {
-        const cap = await latencySourceDailyCap(env, 'fmp_rapidapi');
-        const used = await getLatencySourceUsed(env, 'fmp_rapidapi');
-        if (cap - used < FMP_LATENCY_CALLS_PER_RUN) continue;
-      }
-    } else if (path.pathId === 'stable') {
-      // Free-tier dual keys only on stable host.
-      const keySel = await selectFmpLatencyKey(env, new Date(), { force: opts.force });
-      if (!keySel) continue;
-    }
-    candidates.push(path.pathId);
-  }
-  if (!candidates.length) return null;
-  const picked = await selectRotatedAvenue(env, 'fmp-path', candidates);
-  return (picked as FmpLatencyPathId | null) ?? null;
+  const wantsCongressProbe =
+    requestedProviderIds.includes('fmp') || requestedProviderIds.includes('fmp_rapidapi');
+  if (!wantsCongressProbe) return null;
+  const keySel = await selectFmpLatencyKey(env, new Date(), { force: opts.force, peek: true });
+  return keySel ? 'stable' : null;
 }
 
 /**
@@ -1415,7 +1400,7 @@ const PROVIDERS: ProviderDefinition[] = [
     timestampKind: 'monitor',
     fmpPathId: 'stable',
     reason:
-      'FMP stable host (financialmodelingprep.com). Default ON for CT latency when keys present; set FMP_LATENCY_PROBE_ENABLED=false to disable. Dual free-tier keys (FMP_LATENCY_API_KEY + _2, or FMP_API_KEY as slot-2 fallback) rotate for ~2× capacity — no known per-IP limit. RapidAPI path is opt-in only (congress endpoints not on RapidAPI product as of 2026-08). No provider first-seen timestamp; monitor first-observed is used.',
+      'FMP stable host (financialmodelingprep.com) house-latest + senate-latest. Default ON for CT latency when a free-tier key is present; set FMP_LATENCY_PROBE_ENABLED=false to disable. Dual keys (FMP_LATENCY_API_KEY + FMP_LATENCY_API_KEY_2, or FMP_API_KEY as slot-2 fallback) fail over: a 429, daily cap, or 401/403 on one key leaves the other probing. RapidAPI is not a congress disclosure path (those routes 404). No provider first-seen timestamp; monitor first-observed is used.',
     fetchRows: (apiKey, max, fetchImpl, pace, opts) =>
       fetchFmpRows(apiKey, max, fetchImpl, pace, {
         baseUrl: opts?.baseUrl ?? FMP_LATENCY_PATHS[0]!.defaultBaseUrl,
@@ -1433,7 +1418,7 @@ const PROVIDERS: ProviderDefinition[] = [
     timestampKind: 'monitor',
     fmpPathId: 'rapidapi',
     reason:
-      'FMP via RapidAPI (FMP_RAPIDAPI_KEY or shared RAPIDAPI_KEY). OPT-IN only: marketplace auth works but house/senate-latest 404 and executive-latest is not an OGE feed (400, same as company key-executives; FMP stable executive-latest 404). Rechecked 2026-09-04. Default FMP_LATENCY_PATHS=stable. Ticker enrichment stays with Socratic.Trade.',
+      'Not a congress disclosure probe. RapidAPI FMP house-latest and senate-latest return HTTP 404 (rechecked 2026-09-04); executive-latest is not an OGE feed. Listing rapidapi in FMP_LATENCY_PATHS does not spend marketplace quota on those routes and does not replace the stable dual-key probes. Ticker enrichment stays with Socratic.Trade.',
     fetchRows: (apiKey, max, fetchImpl, pace, opts) =>
       fetchFmpRows(apiKey, max, fetchImpl, pace, {
         baseUrl: opts?.baseUrl ?? FMP_LATENCY_PATHS[1]!.defaultBaseUrl,
@@ -1513,11 +1498,11 @@ export async function isFmpProbeEnabled(env: Env): Promise<boolean> {
 }
 
 /**
- * Which FMP paths are eligible when the master probe switch is on.
- * Default **stable only** — RapidAPI FMP marketplace product does not expose
- * house/senate-latest (HTTP 404; key auth still works for /v3/profile etc.).
- * Opt in with FMP_LATENCY_PATHS=stable,rapidapi; when both are set the probe
- * loop rotates (one path per cycle). Empty/invalid config falls back to stable.
+ * Which FMP paths the operator listed. Congress disclosure probes do **not**
+ * honor `rapidapi` here: house/senate-latest 404 on that product, so selecting
+ * it would skip a stable cycle. `selectFmpLatencyPathForCycle` always returns
+ * `stable` when a free-tier key can spend. Empty/invalid config falls back to
+ * stable. RapidAPI stays in the registry so status can explain the skip.
  */
 export async function enabledFmpPathIds(env: Env): Promise<Set<FmpLatencyPathId>> {
   const envx = env as EnvWithWatch;
@@ -2288,23 +2273,24 @@ async function resolveProviderSecret(env: Env, provider: ProviderDefinition): Pr
 async function providerStatus(env: Env, provider: ProviderDefinition): Promise<DisclosureLatencyProviderStatus> {
   const configured = provider.secretNames.length === 0 || Boolean(await resolveProviderSecret(env, provider));
   const fmpProbeOn = isFmpFamilyProvider(provider.id) ? await isFmpProbeEnabled(env) : true;
-  const paths = isFmpFamilyProvider(provider.id) ? await enabledFmpPathIds(env) : null;
-  const pathEnabled =
-    !provider.fmpPathId || !paths ? true : paths.has(provider.fmpPathId);
   const requested = provider.supportsDirectLatest
     ? await requestedProviderIds(env as EnvWithWatch)
     : null;
 
   let operationalStatus: LatencySourceStatus = 'unknown';
   let reason = provider.reason;
-  if (isFmpFamilyProvider(provider.id) && (!fmpProbeOn || !pathEnabled)) {
-    // Intentional disable — grey OFF, not red stopped.
+  if (provider.fmpPathId === 'rapidapi') {
+    // Grey OFF even when FMP_LATENCY_PATHS lists rapidapi. Those congress
+    // routes 404, so this lane must not look "running" or replace stable.
     operationalStatus = 'off';
-    reason = !fmpProbeOn
-      ? 'OFF: FMP_LATENCY_PROBE_ENABLED is false/off (explicit disable)'
-      : provider.fmpPathId === 'rapidapi'
-        ? 'OFF: FMP path "rapidapi" not in FMP_LATENCY_PATHS — RapidAPI has no house/senate-latest (404) and no OGE/executive-latest (400/404, rechecked 2026-09-04). Dual free-tier keys on stable are the congress probe. Ticker enrichment stays with Socratic.Trade.'
-        : `OFF: FMP path "${provider.fmpPathId}" not in FMP_LATENCY_PATHS`;
+    reason =
+      'OFF: RapidAPI FMP has no house/senate-latest (HTTP 404) and no OGE executive feed (rechecked 2026-09-04). Stable dual-key probes are the congress disclosure lane. Marketplace quota is not spent on these routes.';
+  } else if (isFmpFamilyProvider(provider.id) && !fmpProbeOn) {
+    // Intentional disable — grey OFF, not red stopped.
+    // Stable stays eligible when the probe is on even if FMP_LATENCY_PATHS
+    // omitted it (a rapidapi-only list must not silence house/senate).
+    operationalStatus = 'off';
+    reason = 'OFF: FMP_LATENCY_PROBE_ENABLED is false/off (explicit disable)';
   } else if (requested && !requested.includes(provider.id)) {
     // Filtered out of the probe set — the documented way to retire a
     // provider (e.g. a dropped subscription) without deleting its key or
@@ -4052,8 +4038,11 @@ async function runProviderProbe(
         } catch (err) {
           fetchErr = err as Error;
           const msg = fetchErr.message || '';
+          // 429 = FMP bandwidth cap. 401/403 = key unauthorized or wrong plan.
+          // Either way this key must not silence the other free-tier key.
           const is429 = /FMP_HTTP_429|HTTP_429/.test(msg);
-          if (!is429 || !isFmpStable || !fmpSelection) break;
+          const isUnauthorized = /FMP_HTTP_(401|403)|HTTP_(401|403)/.test(msg);
+          if ((!is429 && !isUnauthorized) || !isFmpStable || !fmpSelection) break;
           await markFmpSlotHttp429(env, fmpSelection.slot, now);
           if (attempt === 0) {
             const retry = await selectFmpLatencyKey(env, now, { force: true, schedule });
@@ -4064,7 +4053,9 @@ async function runProviderProbe(
               continue;
             }
           }
-          if (!usedResidentialProxy) {
+          // A bad key is not an IP block. The residential proxy is only a
+          // last try after both free-tier keys are bandwidth-capped (429).
+          if (is429 && !usedResidentialProxy) {
             const proxyUrl = resolveResidentialProxyUrl(envx);
             if (proxyUrl) {
               currentFetch = createProxiedFetch(proxyUrl, fetchImpl);
@@ -4313,12 +4304,17 @@ export async function runDisclosureLatencyProbe(
       console.warn('trade latency observation re-hash failed:', (err as Error).message);
     }
   }
-  // One FMP avenue per cycle (stable XOR rapidapi). Same pattern applies to
-  // any multi-path family: selectRotatedAvenue / selectFmpLatencyPathForCycle.
+  // Congress disclosures are stable-host only. RapidAPI is recorded as OFF
+  // and never fetched. If the request names only fmp_rapidapi, still run the
+  // stable probe so that label cannot silence house/senate.
   const selectedFmpPathId = await selectFmpLatencyPathForCycle(env, requested, {
     force: opts.force,
   });
-  for (const providerId of requested) {
+  const probeIds = [...requested];
+  if (selectedFmpPathId === 'stable' && !probeIds.includes('fmp')) {
+    probeIds.unshift('fmp');
+  }
+  for (const providerId of probeIds) {
     runs.push(
       await runProviderProbe(env, definition(providerId), now, effectiveFetch, max, {
         force: opts.force,

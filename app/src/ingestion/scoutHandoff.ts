@@ -508,22 +508,17 @@ export async function eligibleHandoffProviders(env: Env): Promise<Set<LatencyPro
   try {
     // Dynamic import keeps scoutHandoff free of heavy tradeLatency cycles in tests
     // that only mock CONFIG_KV/DB.
-    const { isFmpProbeEnabled, enabledFmpPathIds } = await import('./tradeLatency.ts');
+    const { isFmpProbeEnabled } = await import('./tradeLatency.ts');
     if (!(await isFmpProbeEnabled(env))) {
       eligible.delete('fmp');
       return eligible;
     }
-    const paths = await enabledFmpPathIds(env);
-    if (paths.has('rapidapi')) eligible.add('fmp_rapidapi');
-    // stable is the default fmp provider id
-    if (!paths.has('stable') && !paths.has('rapidapi')) {
-      // empty set after parse → treat as stable-only (matches enabledFmpPathIds default)
-    }
-    if (!paths.has('stable') && paths.has('rapidapi')) {
-      eligible.delete('fmp');
-    }
+    // fmp_rapidapi is never a handoff target: congress routes 404 on that
+    // product, so a scout cover would not observe disclosures. Stable `fmp`
+    // stays eligible whenever the probe switch is on, including a
+    // rapidapi-only FMP_LATENCY_PATHS value.
   } catch {
-    // On import/env failure keep fmp eligible; never force rapidapi.
+    // On import/env failure keep fmp eligible; never add rapidapi.
   }
   return eligible;
 }
@@ -553,7 +548,7 @@ export async function buildScoutPlan(env: Env, now: Date = new Date()): Promise<
     `Server probes first. Scout covers a provider only after ${LATENCY_SCOUT_CONSECUTIVE_ERRORS} successive server errors (not silence alone).`,
     'Scout success fills observations; server success clears needScout and reclaims the lane.',
     'When covering FMP, prefer the secondary free-tier key (FMP_LATENCY_API_KEY_2 / FMP_API_KEY) so the server primary is not double-spent.',
-    'fmp_rapidapi is eligible for handoff only when FMP_LATENCY_PATHS includes rapidapi.',
+    'fmp_rapidapi is never handed off: RapidAPI house/senate-latest 404, so it cannot cover the stable congress probes.',
     'Filing storage is Cloudflare R2 (RAW_FILES), not Backblaze.',
   ];
   if (latencyNeedScout.length) {

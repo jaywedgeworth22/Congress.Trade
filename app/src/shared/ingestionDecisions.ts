@@ -7,6 +7,7 @@ export type IngestionDecisionAction =
   | 'confirmed'
   | 'manual'
   | 'rejected'
+  | 'reopened_after_reject'
   | 'unpublished'
   | 'auto_retry_requested'
   | 'agreement_published'

@@ -40,6 +40,7 @@ import {
   resolveDailyLaneDeadlineMs,
   runDailyLane,
   type DailyLaneCron,
+  frequentLaneLogLine,
 } from '../cronLanes.ts';
 
 async function makeEnv(): Promise<{ env: Env; client: ReturnType<typeof createClient> }> {
@@ -154,5 +155,19 @@ describe('resolveDailyLaneDeadlineMs', () => {
     // Below the 10s floor → default; above the 30min ceiling → clamped.
     expect(resolveDailyLaneDeadlineMs({ CT_DAILY_LANE_DEADLINE_MS: '5000' })).toBe(600_000);
     expect(resolveDailyLaneDeadlineMs({ CT_DAILY_LANE_DEADLINE_MS: '99999999' })).toBe(1_800_000);
+  });
+});
+
+describe('frequentLaneLogLine', () => {
+  it('stays quiet for normal tick results and logs only runner outcome markers', () => {
+    expect(frequentLaneLogLine('latency-probe', { status: { plan: { lanes: [] }, result: null }, durationMs: 40 })).toBeNull();
+    expect(frequentLaneLogLine('latency-price-snapshots', { status: { scheduled: 0, liveCaptured: 0 }, durationMs: 12 })).toBeNull();
+    expect(frequentLaneLogLine('latency-probe', { status: 'stamped', durationMs: 5 })).toBeNull();
+    expect(frequentLaneLogLine('latency-probe', { status: 'aborted', durationMs: 120000 }))
+      .toBe('frequent lane latency-probe aborted in 120000ms');
+    expect(frequentLaneLogLine('latency-probe', { status: 'skipped-overlap', durationMs: 3 }))
+      .toBe('frequent lane latency-probe skipped-overlap in 3ms');
+    expect(frequentLaneLogLine('latency-probe', { status: 'error', durationMs: 9 }))
+      .toBe('frequent lane latency-probe error in 9ms');
   });
 });
