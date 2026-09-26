@@ -6,7 +6,8 @@
  * bookkeeping on success, and the incremental fetch window that stops the price
  * refresh from re-downloading each ticker's entire multi-year history every pass.
  *
- * FMP is never selected for prices (latency keys only) — tests use Massive.
+ * EOD history is Socratic.Trade only. The peer mock records into h.* so the
+ * bookkeeping assertions stay stable. MASSIVE/FMP keys must not be called.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -88,19 +89,21 @@ const p = vi.hoisted(() => ({
 }));
 vi.mock('../peer', () => ({
   buildPeerPriceClient: () => ({
-    eodHistory: async (symbol: string) => {
+    eodHistory: async (symbol: string, from?: string, to?: string) => {
       order.log.push(`peer:eod:${symbol}`);
       p.eodCalls.push({ symbol });
-      const err = p.errors.get(symbol);
+      h.eodCalls.push({ symbol, from: from ?? '', to: to ?? '' });
+      const err = p.errors.get(symbol) ?? h.errors.get(symbol);
       if (err) throw new Error(err);
-      return p.responses.get(symbol) ?? [];
+      return p.responses.get(symbol) ?? h.responses.get(symbol) ?? [];
     },
-    spxHistory: async () => {
+    spxHistory: async (from?: string, to?: string) => {
       order.log.push('peer:spx');
       p.eodCalls.push({ symbol: 'SPY' });
-      const err = p.errors.get('SPY');
+      h.eodCalls.push({ symbol: 'SPY', from: from ?? '', to: to ?? '' });
+      const err = p.errors.get('SPY') ?? h.errors.get('SPY');
       if (err) throw new Error(err);
-      return p.responses.get('SPY') ?? [];
+      return p.responses.get('SPY') ?? h.responses.get('SPY') ?? [];
     },
   }),
 }));
@@ -129,8 +132,11 @@ beforeEach(async () => {
   close = opened.close;
   env = {
     DB: opened.d1,
-    // FMP free keys are latency-only — price refresh uses Massive (or peer/tiingo).
+    // Prices come from Socratic.Trade. Vendor keys must not change the client.
+    APP_B_IMPORT_URL: 'https://socratic.trade',
+    APP_B_INGEST_TOKEN: 'test-peer-token',
     MASSIVE_API_KEY: 'test-massive-key',
+    FMP_API_KEY: 'test-fmp-key',
     PRICE_PROVIDER: 'massive',
     CONFIG_KV: { get: async () => null, put: async () => {} },
   } as unknown as Env;
@@ -439,83 +445,64 @@ describe('runPriceRefresh — incremental fetch window (Fix 3)', () => {
   });
 });
 
-describe('runPriceRefresh — unmetered provider (massive): 429 is not run-fatal', () => {
-  // PRICE_PROVIDER=massive with a key → unmetered plan (fmpBudgeted === false).
-  function useMassive(): void {
-    const envx = env as unknown as Record<string, string>;
-    envx.PRICE_PROVIDER = 'massive';
-    envx.MASSIVE_API_KEY = 'test-massive-key';
-  }
-
+describe('runPriceRefresh — Socratic peer: 429 is not run-fatal', () => {
   it('skips a 429ing ticker and keeps pricing the rest of the run (no abort)', async () => {
-    useMassive();
-    seedTrade('t20', 'RATE1', '2026-01-05'); // oldest-traded → attempted first
+    seedTrade('t20', 'RATE1', '2026-01-05');
     seedTrade('t21', 'OK2', '2026-01-06');
-    // A 429 that persisted past the client's own bounded retries (./retry429.ts).
-    m.errors.set('RATE1', 'MASSIVE_HTTP_429');
-    m.responses.set('OK2', [{ date: '2026-07-11', close: 42 }]);
+    h.errors.set('RATE1', 'PEER_HTTP_429');
+    h.responses.set('OK2', [{ date: '2026-07-11', close: 42 }]);
 
     const res = await runPriceRefresh(env, { max: 10 });
 
     expect(res.aborted).toBe(false);
     expect(res.errors.some((e) => e.includes('RATE1') && e.includes('429'))).toBe(true);
-    // The failing ticker was skipped without a negative-cache write...
     expect(srRow('RATE1')).toBeUndefined();
-    // ...and the run kept draining the backlog instead of aborting.
     expect(srRow('OK2')?.current_price).toBe(42);
     expect(res.tickersPriced).toBe(1);
+    expect(m.eodCalls).toEqual([]);
   });
 
   it('does not abort when the SPX fetch 429s — the ticker loop still runs', async () => {
-    useMassive();
     seedTrade('t22', 'OK3', '2026-01-05');
-    m.errors.set('SPY', 'MASSIVE_HTTP_429');
-    m.responses.set('OK3', [{ date: '2026-07-11', close: 7 }]);
+    h.errors.set('SPY', 'PEER_HTTP_429');
+    h.responses.set('OK3', [{ date: '2026-07-11', close: 7 }]);
 
     const res = await runPriceRefresh(env, { max: 10 });
 
     expect(res.aborted).toBe(false);
     expect(res.errors.some((e) => e.startsWith('spx:'))).toBe(true);
     expect(srRow('OK3')?.current_price).toBe(7);
+    expect(m.eodCalls).toEqual([]);
   });
 
-  it('still aborts on 403 (broken key/plan) even for an unmetered provider', async () => {
-    useMassive();
+  it('still aborts on 403 (broken peer token/plan)', async () => {
     seedTrade('t23', 'AAA3', '2026-01-05');
-    m.errors.set('SPY', 'MASSIVE_HTTP_403');
+    h.errors.set('SPY', 'PEER_HTTP_403');
 
     const res = await runPriceRefresh(env, { max: 10 });
 
     expect(res.aborted).toBe(true);
-    expect(m.eodCalls.some((c) => c.symbol === 'AAA3')).toBe(false);
+    expect(h.eodCalls.some((c) => c.symbol === 'AAA3')).toBe(false);
+    expect(m.eodCalls).toEqual([]);
     expect(srRow('AAA3')).toBeUndefined();
   });
 
-  it('still aborts mid-loop on a per-ticker 403 for an unmetered provider', async () => {
-    useMassive();
-    seedTrade('t24', 'FIRST4', '2026-01-05'); // oldest-traded → attempted first
+  it('still aborts mid-loop on a per-ticker 403', async () => {
+    seedTrade('t24', 'FIRST4', '2026-01-05');
     seedTrade('t25', 'NEVER4', '2026-01-06');
-    m.errors.set('FIRST4', 'MASSIVE_HTTP_403');
+    h.errors.set('FIRST4', 'PEER_HTTP_403');
 
     const res = await runPriceRefresh(env, { max: 10 });
 
     expect(res.aborted).toBe(true);
-    expect(m.eodCalls.some((c) => c.symbol === 'NEVER4')).toBe(false);
+    expect(h.eodCalls.some((c) => c.symbol === 'NEVER4')).toBe(false);
+    expect(m.eodCalls).toEqual([]);
     expect(srRow('NEVER4')).toBeUndefined();
   });
 });
 
-describe('runPriceRefresh — PRICE_PROVIDER=peer: Massive is last-resort, not first', () => {
-  function usePeerPrimary(): void {
-    const envx = env as unknown as Record<string, string>;
-    envx.PRICE_PROVIDER = 'peer';
-    envx.APP_B_IMPORT_URL = 'https://socratictrade.com';
-    envx.APP_B_INGEST_TOKEN = 'test-peer-token';
-    envx.MASSIVE_API_KEY = 'test-massive-key';
-  }
-
-  it('does not call Massive first (or at all) when peer returns history', async () => {
-    usePeerPrimary();
+describe('runPriceRefresh — vendor keys are not a price fallback', () => {
+  it('prices from the peer and never calls Massive when both are configured', async () => {
     const d1 = daysAgo(1);
     seedTrade('t-peer-1', 'AAPL', '2026-01-05');
     p.responses.set('SPY', [{ date: d1, close: 500 }]);
@@ -530,27 +517,23 @@ describe('runPriceRefresh — PRICE_PROVIDER=peer: Massive is last-resort, not f
     expect(m.eodCalls).toEqual([]);
     expect(order.log[0]).toBe('peer:spx');
     expect(order.log.some((c) => c.startsWith('massive:'))).toBe(false);
-    expect(order.log.filter((c) => c.startsWith('peer:')).length).toBeGreaterThan(0);
   });
 
-  it('calls Massive only after an empty peer series', async () => {
-    usePeerPrimary();
-    const d1 = daysAgo(1);
+  it('does not call Massive when the peer series is empty', async () => {
     seedTrade('t-peer-2', 'MSFT', '2026-01-05');
-    p.responses.set('SPY', [{ date: d1, close: 500 }]);
-    // Peer has no MSFT bars → last-resort Massive.
-    m.responses.set('MSFT', [{ date: d1, close: 410 }]);
+    p.responses.set('SPY', [{ date: daysAgo(1), close: 500 }]);
+    m.responses.set('MSFT', [{ date: daysAgo(1), close: 410 }]);
 
     const res = await runPriceRefresh(env, { max: 10 });
 
-    expect(res.tickersPriced).toBe(1);
-    expect(srRow('MSFT')?.current_price).toBe(410);
-    const msftOrder = order.log.filter((c) => c.endsWith(':MSFT'));
-    expect(msftOrder).toEqual(['peer:eod:MSFT', 'massive:eod:MSFT']);
+    expect(res.tickersPriced).toBe(0);
+    expect(srRow('MSFT')?.current_price ?? null).toBeNull();
+    expect(srRow('MSFT')?.price_unavailable).toBe(1);
+    expect(m.eodCalls).toEqual([]);
+    expect(order.log.filter((c) => c.endsWith(':MSFT'))).toEqual(['peer:eod:MSFT']);
   });
 
   it('aborts on peer 401 and never calls Massive', async () => {
-    usePeerPrimary();
     seedTrade('t-peer-3', 'NVDA', '2026-01-05');
     p.errors.set('SPY', 'PEER_HTTP_401');
     m.responses.set('NVDA', [{ date: daysAgo(1), close: 100 }]);
@@ -561,5 +544,21 @@ describe('runPriceRefresh — PRICE_PROVIDER=peer: Massive is last-resort, not f
     expect(m.eodCalls).toEqual([]);
     expect(order.log.some((c) => c.startsWith('massive:'))).toBe(false);
     expect(srRow('NVDA')).toBeUndefined();
+  });
+
+  it('no-ops when the peer is not configured, even if FMP and Massive keys are set', async () => {
+    const envx = env as unknown as Record<string, string | undefined>;
+    delete envx.APP_B_IMPORT_URL;
+    delete envx.APP_B_INGEST_TOKEN;
+    seedTrade('t-peer-4', 'IBM', '2026-01-05');
+    h.responses.set('IBM', [{ date: daysAgo(1), close: 10 }]);
+
+    const res = await runPriceRefresh(env, { max: 10 });
+
+    expect(res.tickersPriced).toBe(0);
+    expect(res.fmpCalls).toBe(0);
+    expect(h.eodCalls).toEqual([]);
+    expect(m.eodCalls).toEqual([]);
+    expect(srRow('IBM')).toBeUndefined();
   });
 });

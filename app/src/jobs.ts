@@ -4,18 +4,15 @@
  *
  * Once-a-day background jobs, fired from the cron handler. Gated by a KV date
  * stamp so they run on the first cron tick of each UTC day (and not again that
- * day, even though the watcher cron fires every minute). Both jobs are budgeted
- * and key-gated, so this is a no-op without an FMP key beyond the free SEC pass.
- *
- * If FMP calls fail with key/plan errors (401/402/403/429) — i.e. the paid tier
- * stopped working — we email an admin alert (throttled). See alerts/notify.ts.
+ * day, even though the watcher cron fires every minute). Enrichment and prices
+ * read Socratic.Trade; they do not spend FMP. A peer auth failure
+ * (SOCRATIC_HTTP_401/403 or PEER_HTTP_401/403) emails an admin alert.
  */
 
 import type { Env } from './shared/types.ts';
 import { run, all } from './shared/db.ts';
-import { runEnrichment, getDailyUsed, DEFAULT_DAILY_CAP } from './enrichment/service.ts';
+import { runEnrichment } from './enrichment/service.ts';
 import { runPriceRefresh } from './prices/service.ts';
-import { hasFmpTierFailure } from './shared/fmpStatus.ts';
 import { notifyAdmin } from './alerts/notify.ts';
 import { shareWithPeer, type PeerShareInput } from './share/outbound.ts';
 import { runFreshnessCheck } from './share/freshness.ts';
@@ -24,7 +21,6 @@ import { runCommitteeSync } from './enrichment/committeeSync.ts';
 import { runIdentitySync } from './enrichment/identitySync.ts';
 import { runBulkSnapshot } from './export/snapshot.ts';
 import { resolveSecrets } from './secrets/infisical.ts';
-import { recordMeasuredThirdPartyUsage } from './shared/thirdPartyTelemetry.ts';
 import { isD1RowBudgetExceeded } from './shared/d1Budget.ts';
 import { runR2UsageSummary } from './shared/r2Usage.ts';
 import { backfillCurrentPricesFromEod } from './prices/service.ts';
@@ -185,48 +181,6 @@ export const RETENTION_MAX_ROWS_PER_RUN = 40_000;
 export const RETENTION_DELETE_BATCH = 500;
 /** Batches per table per daily run: caps one pass at 10k rows/table. */
 export const RETENTION_MAX_BATCHES_PER_TABLE = 20;
-
-// --- Price-refresh budget floor vs enrichment ------------------------------
-// runEnrichment and runPriceRefresh share one daily FMP call counter (see
-// getDailyUsed/addDailyUsed in enrichment/service.ts). Enrichment runs FIRST
-// each day, and `remainingBudget` has no ceiling of its own beyond the day's
-// cap — so a large enrichment backlog (a long tail of newly-traded tickers
-// missing sector/market-cap) can legitimately consume the ENTIRE remaining
-// budget, leaving runPriceRefresh with 0. Prices then silently stop updating
-// for the rest of the day while enrichment happily keeps backfilling company
-// profiles. Reserving a floor here — by capping enrichment's own `max` opt —
-// guarantees price refresh always gets at least a slice of today's budget.
-
-/** Fraction of the day's FMP cap reserved for price refresh before enrichment
- *  is allowed to spend the rest. 20% is deliberately generous: on the
- *  configured paid-tier cap (FMP_DAILY_CALL_CAP, e.g. 5000) the reserved floor
- *  is far more than price refresh's typical daily need (one SPX call + a
- *  bounded backlog), while on the free-tier DEFAULT_DAILY_CAP fallback (230)
- *  it still leaves enrichment a workable ~184-call share. */
-export const PRICE_REFRESH_BUDGET_FLOOR_FRACTION = 0.2;
-
-/**
- * How many more FMP calls enrichment may spend this run, so at least
- * PRICE_REFRESH_BUDGET_FLOOR_FRACTION of today's remaining cap survives for
- * runPriceRefresh right after it. Returns `undefined` (no cap — prior
- * behavior) when no FMP key is configured: without a key, enrichment's
- * SEC-only pass and price refresh (if it even has a usable provider) don't
- * actually share the FMP budget, so there is no contention to guard against,
- * and capping it here would just needlessly shrink the free/keyless scan
- * limit (see runEnrichment's own `hasFmp ? fmpBudget : ... : 200` default).
- */
-async function enrichmentBudgetFloorMax(
-  env: Env,
-  fmpApiKey: string | undefined,
-  fmpDailyCallCap: string | undefined,
-): Promise<number | undefined> {
-  if (!fmpApiKey) return undefined;
-  const cap = parseInt(fmpDailyCallCap || '', 10) || DEFAULT_DAILY_CAP;
-  const usedBefore = await getDailyUsed(env);
-  const remainingToday = Math.max(0, cap - usedBefore);
-  const priceRefreshFloor = Math.min(remainingToday, Math.ceil(cap * PRICE_REFRESH_BUDGET_FLOOR_FRACTION));
-  return Math.max(0, remainingToday - priceRefreshFloor);
-}
 
 /**
  * Delete expired rows from the operational tables above. Best-effort: a
@@ -439,12 +393,8 @@ export async function maybeRunDailyMarketDataJobs(
   }
 
   const errors: string[] = [];
-  let hadFmpKey = false;
-  let fmpDailyCap: number | null = null;
-  let enrichmentFmpCalls = 0;
-  let priceProviderCalls = 0;
   const share: PeerShareInput = {};
-  // Resolve provider-pacing + usage-monitor telemetry vars together (Infisical-backed,
+  // Resolve pacing + usage-monitor telemetry vars together (Infisical-backed,
   // falling back to the wrangler.toml env var whenever a name isn't set in Infisical)
   // so the whole daily run only pays for one resolveSecrets round trip.
   const secrets = await resolveSecrets(env, [
@@ -454,27 +404,18 @@ export async function maybeRunDailyMarketDataJobs(
     'USAGE_MONITOR_INGEST_URL',
     'USAGE_MONITOR_INGEST_TOKEN',
     'USAGE_MONITOR_ENVIRONMENT',
-    'PRICE_PROVIDER',
-    'FMP_API_KEY',
-    'FMP_DAILY_CALL_CAP',
     // R2 usage summary + Pushover delivery — folded into this one round trip.
     'CLOUDFLARE_ACCOUNT_ID',
     'CLOUDFLARE_R2_ANALYTICS_TOKEN',
     'PUSHOVER_APP_TOKEN',
     'PUSHOVER_USER_KEY',
   ]);
-  // Paid FMP tiers are rate-limited per MINUTE (Starter ~300/min), not per day —
-  // so pace calls to use that headroom without tripping 429s. Configurable via
-  // FMP_MAX_PER_MINUTE; unset = no pacing (prior behavior). The per-day ceiling
-  // is FMP_DAILY_CALL_CAP (raise it on a paid plan so enrichment isn't throttled).
+  // Local burst limit for the Socratic profile walk. Not an FMP budget.
   const maxPerMinute = parseInt(secrets.FMP_MAX_PER_MINUTE || '', 10) || undefined;
-  // SEC EDGAR has its own, separate fair-access pacer (not the FMP budget above)
-  // — configurable via EDGAR_MAX_PER_MINUTE, unset = no pacing.
+  // SEC EDGAR has its own fair-access pacer — configurable via
+  // EDGAR_MAX_PER_MINUTE, unset = no pacing.
   const edgarMaxPerMinute = parseInt(secrets.EDGAR_MAX_PER_MINUTE || '', 10) || undefined;
-  // Reserve a slice of today's shared FMP budget for price refresh before
-  // enrichment (which runs first) is allowed to spend the rest — see
-  // enrichmentBudgetFloorMax above.
-  const enrichmentMax = await enrichmentBudgetFloorMax(env, secrets.FMP_API_KEY, secrets.FMP_DAILY_CALL_CAP);
+  // Enrichment does not spend FMP, so there is no shared day-cap to reserve.
 
   try {
     // Time-sliced: stop picking up new candidates after enrichmentDeadlineMs
@@ -483,13 +424,9 @@ export async function maybeRunDailyMarketDataJobs(
     const r = await runEnrichment(env, {
       maxPerMinute,
       edgarMaxPerMinute,
-      max: enrichmentMax,
       signal: opts.signal,
       deadlineMs: opts.enrichmentDeadlineMs ?? 4 * 60_000,
     });
-    hadFmpKey = hadFmpKey || r.hasFmpKey;
-    fmpDailyCap = r.dailyCap;
-    enrichmentFmpCalls = r.fmpCalls;
     errors.push(...r.errors);
     share.refs = r.shareRefs;
   } catch (err) {
@@ -509,8 +446,6 @@ export async function maybeRunDailyMarketDataJobs(
   }
   try {
     const r = await runPriceRefresh(env, { maxPerMinute });
-    hadFmpKey = hadFmpKey || r.hasFmpKey;
-    priceProviderCalls = r.fmpCalls;
     errors.push(...r.errors);
     share.prices = r.sharePrices;
     share.spx = r.shareSpx;
@@ -532,43 +467,20 @@ export async function maybeRunDailyMarketDataJobs(
     console.warn('peer share error:', (err as Error).message);
   }
 
-  // Individual FMP attempts are emitted by trackedFetch. Only report the plan
-  // ceiling here; emitting the cumulative daily counter again would double-count
-  // calls in Usage Monitor.
-  if (fmpDailyCap != null) {
-    await recordMeasuredThirdPartyUsage(env, {
-      provider: 'fmp',
-      service: 'market-data',
-      operation: 'daily-call-limit',
-      metricType: 'limit',
-      quantity: fmpDailyCap,
-      unit: 'call',
-      billingMode: 'actual',
-      confidence: 'actual',
-      metadata: {
-        job: 'daily-refresh',
-        fmpCallsThisRun: enrichmentFmpCalls + priceProviderCalls,
-        priceProvider: (secrets.PRICE_PROVIDER || 'fmp').toLowerCase(),
-        errors: errors.length,
-      },
-    });
-  }
-
-  // Only alert when a key is configured (so we don't email about an intentional
-  // free/SEC-only setup) and the failures are key/plan-level, not "no data".
-  if (hadFmpKey && hasFmpTierFailure(errors)) {
-    const sample = errors.filter((e) => /FMP_HTTP_/.test(e)).slice(0, 5).join('\n');
+  // Peer auth/plan failures mean ST is not supplying profiles or prices.
+  // FMP is not a fallback for either.
+  if (errors.some((e) => /(?:SOCRATIC|PEER)_HTTP_(401|402|403)/.test(e))) {
+    const sample = errors.filter((e) => /(?:SOCRATIC|PEER)_HTTP_/.test(e)).slice(0, 5).join('\n');
     await notifyAdmin(env, {
-      dedupeKey: 'fmp-tier-failure',
-      subject: 'Congress.Trade ⚠️ FMP data refresh is failing',
+      dedupeKey: 'socratic-peer-auth',
+      subject: 'Congress.Trade ⚠️ Socratic.Trade market data is failing',
       text:
-        "Today's FMP enrichment / price refresh hit key/plan errors (401/402/403/429).\n" +
-        'This usually means the FMP API key is invalid, the paid plan lapsed, or you are being\n' +
-        'rate-limited (effectively back on the free tier). Sector / market-cap / price data will\n' +
-        'stop updating until it is fixed.\n\n' +
+        "Today's enrichment / price refresh hit Socratic.Trade auth or plan errors.\n" +
+        'Profiles, quotes, and EOD prices come from Socratic.Trade. FMP is latency probes only\n' +
+        'and is not used to fill this gap.\n\n' +
         'Sample errors:\n' +
         sample +
-        '\n\nCheck your FMP plan + the FMP_API_KEY secret. The job retries automatically each day;\n' +
+        '\n\nCheck APP_B_IMPORT_URL and APP_B_INGEST_TOKEN. The job retries automatically each day;\n' +
         "you'll get at most one of these alerts every 12 hours.",
     });
   }
@@ -591,13 +503,10 @@ export async function maybeRunDailyMarketDataJobs(
 }
 
 /**
- * Hourly lane — enrichment drain. Time-sliced FMP/SEC enrichment with NO
- * daily date stamp: the daily FMP call cap and the un-enriched candidate
- * predicates self-limit total spend, so firing hourly simply drains the
- * backlog in ~8-minute slices instead of one midnight marathon that can
- * starve everything behind it. Once the day's market-data lane has run
- * (price refresh done), the 20% price-refresh budget floor no longer applies.
- * Each run's freshly enriched refs are shared to the peer (delta only).
+ * Hourly lane — enrichment drain. Time-sliced Socratic.Trade + SEC enrichment
+ * with NO daily date stamp. Candidate predicates self-limit the backlog, so
+ * firing hourly drains it in ~8-minute slices. Each run's freshly enriched
+ * refs are shared back to the peer (delta only). There is no FMP day-cap floor.
  */
 export const HOURLY_ENRICHMENT_SLICE_MAX = 1200;
 export const HOURLY_ENRICHMENT_SLICE_DEADLINE_MS = 8 * 60_000;
@@ -619,27 +528,10 @@ export async function runHourlyEnrichmentSlice(
   const secrets = await resolveSecrets(env, [
     'FMP_MAX_PER_MINUTE',
     'EDGAR_MAX_PER_MINUTE',
-    'FMP_API_KEY',
-    'FMP_DAILY_CALL_CAP',
   ]);
   const maxPerMinute = parseInt(secrets.FMP_MAX_PER_MINUTE || '', 10) || undefined;
   const edgarMaxPerMinute = parseInt(secrets.EDGAR_MAX_PER_MINUTE || '', 10) || undefined;
-  // The 20% floor protects the daily price refresh only until it has run;
-  // afterwards the full remaining budget is available to the drain.
-  let priceRefreshDone = false;
-  try {
-    priceRefreshDone =
-      (await env.CONFIG_KV.get(LANE_KEY_PREFIX + 'market-data')) === day;
-  } catch {
-    priceRefreshDone = false;
-  }
-  const floorMax = priceRefreshDone
-    ? undefined
-    : await enrichmentBudgetFloorMax(env, secrets.FMP_API_KEY, secrets.FMP_DAILY_CALL_CAP);
-  const max = Math.max(
-    0,
-    Math.min(floorMax ?? Number.MAX_SAFE_INTEGER, opts.max ?? HOURLY_ENRICHMENT_SLICE_MAX),
-  );
+  const max = Math.max(0, Math.min(opts.max ?? HOURLY_ENRICHMENT_SLICE_MAX, HOURLY_ENRICHMENT_SLICE_MAX));
   const empty: HourlyEnrichmentResult = {
     scanned: 0, enriched: 0, fmpCalls: 0, budgetRemaining: 0, remainingBacklog: false,
   };
@@ -667,7 +559,8 @@ export async function runHourlyEnrichmentSlice(
     budgetRemaining: r.budgetRemaining,
     // Heuristic for observability: a slice that hit its caps probably left
     // backlog for the next hourly window.
-    remainingBacklog: r.scanned >= max || r.budgetRemaining <= 0,
+    // There is no FMP day-cap on this lane. A full slice is the backlog signal.
+    remainingBacklog: r.scanned >= max,
   };
 }
 
