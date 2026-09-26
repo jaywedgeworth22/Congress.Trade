@@ -445,8 +445,8 @@ describe('runPriceRefresh — incremental fetch window (Fix 3)', () => {
   });
 });
 
-describe('runPriceRefresh — Socratic peer: 429 is not run-fatal', () => {
-  it('skips a 429ing ticker and keeps pricing the rest of the run (no abort)', async () => {
+describe('runPriceRefresh — Socratic peer: 429 is run-fatal', () => {
+  it('aborts on a per-ticker 429 so later tickers are not walked', async () => {
     seedTrade('t20', 'RATE1', '2026-01-05');
     seedTrade('t21', 'OK2', '2026-01-06');
     h.errors.set('RATE1', 'PEER_HTTP_429');
@@ -454,24 +454,26 @@ describe('runPriceRefresh — Socratic peer: 429 is not run-fatal', () => {
 
     const res = await runPriceRefresh(env, { max: 10 });
 
-    expect(res.aborted).toBe(false);
+    expect(res.aborted).toBe(true);
     expect(res.errors.some((e) => e.includes('RATE1') && e.includes('429'))).toBe(true);
     expect(srRow('RATE1')).toBeUndefined();
-    expect(srRow('OK2')?.current_price).toBe(42);
-    expect(res.tickersPriced).toBe(1);
+    expect(srRow('OK2')).toBeUndefined();
+    expect(h.eodCalls.some((c) => c.symbol === 'OK2')).toBe(false);
+    expect(res.tickersPriced).toBe(0);
     expect(m.eodCalls).toEqual([]);
   });
 
-  it('does not abort when the SPX fetch 429s — the ticker loop still runs', async () => {
+  it('aborts when the SPX fetch 429s — the ticker loop does not run', async () => {
     seedTrade('t22', 'OK3', '2026-01-05');
     h.errors.set('SPY', 'PEER_HTTP_429');
     h.responses.set('OK3', [{ date: '2026-07-11', close: 7 }]);
 
     const res = await runPriceRefresh(env, { max: 10 });
 
-    expect(res.aborted).toBe(false);
-    expect(res.errors.some((e) => e.startsWith('spx:'))).toBe(true);
-    expect(srRow('OK3')?.current_price).toBe(7);
+    expect(res.aborted).toBe(true);
+    expect(res.errors.some((e) => e.startsWith('spx:') && e.includes('429'))).toBe(true);
+    expect(h.eodCalls.some((c) => c.symbol === 'OK3')).toBe(false);
+    expect(srRow('OK3')).toBeUndefined();
     expect(m.eodCalls).toEqual([]);
   });
 

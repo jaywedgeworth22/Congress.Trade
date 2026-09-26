@@ -298,6 +298,33 @@ describe('maybeRunDailyJobs secret resolution', () => {
         expect.objectContaining({ dedupeKey: 'socratic-peer-auth' }),
       );
     });
+
+    it('alerts when Socratic / peer reads hit HTTP 429 rate-limit', async () => {
+      const env = fakeEnv();
+      mocks.runEnrichment.mockResolvedValue({
+        hasFmpKey: false,
+        dailyCap: 0,
+        fmpCalls: 0,
+        errors: [],
+        shareRefs: [],
+        scanned: 0,
+        enriched: 0,
+      });
+      mocks.runPriceRefresh.mockResolvedValue({
+        aborted: true,
+        tickersPriced: 0,
+        errors: ['spx: PEER_HTTP_429'],
+        sharePrices: [],
+        shareSpx: [],
+      });
+
+      await maybeRunDailyJobs(env, new Date('2026-07-10T00:00:00Z'));
+
+      expect(mocks.notifyAdmin).toHaveBeenCalledWith(
+        env,
+        expect.objectContaining({ dedupeKey: 'socratic-peer-auth' }),
+      );
+    });
   });
 });
 

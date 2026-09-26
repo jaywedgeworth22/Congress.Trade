@@ -111,18 +111,18 @@ function pricePlan(env: EnvX): PricePlan | null {
  */
 const FATAL_PRICE_PROVIDER_ERROR = /_HTTP_(401|402|403)$/;
 /**
- * 429 is fatal ONLY for the metered FMP budget: there, every guaranteed-fail
- * retry still burns the shared daily meter, so the run aborts to protect it.
- * Massive/Tiingo are unmetered — their 429s are per-minute windows (usually a
- * shared key saturated by sibling apps) that clear on their own, and the clients
- * already retried them with backoff (./retry429.ts), so a 429 that still escapes
- * skips just that one call instead of aborting the whole run.
+ * 429 is always run-fatal on the current peer-only EOD path.  Price refresh
+ * talks only to Socratic.Trade (`fmpBudgeted` is always false); a rate-limited
+ * peer would otherwise keep walking ~thousands of tickers with the same failure.
+ * Auth/plan 401/402/403 stay fatal via FATAL_PRICE_PROVIDER_ERROR.  The
+ * `fmpBudgeted` parameter is retained for call-site compatibility but no longer
+ * gates 429 — there is no metered FMP price client on this path anymore.
  */
 const RATE_LIMIT_PROVIDER_ERROR = /_HTTP_429$/;
-function isFatalPriceProviderError(e: unknown, fmpBudgeted: boolean): boolean {
+function isFatalPriceProviderError(e: unknown, _fmpBudgeted: boolean): boolean {
   const message = e instanceof Error ? e.message : String(e ?? '');
   if (FATAL_PRICE_PROVIDER_ERROR.test(message)) return true;
-  return fmpBudgeted && RATE_LIMIT_PROVIDER_ERROR.test(message);
+  return RATE_LIMIT_PROVIDER_ERROR.test(message);
 }
 
 function isoDaysAgo(days: number, from = new Date()): string {
@@ -205,11 +205,10 @@ export interface PriceRefreshResult {
   budgetRemaining: number;
   dryRun: boolean;
   errors: string[];
-  /** True when an auth/plan error (401/402/403 — or 429 for the metered FMP
-   *  budget only) stopped the run early — see isFatalPriceProviderError.
-   *  Remaining un-attempted tickers are left untouched for the next run rather
-   *  than burning the rest of the budget on calls guaranteed to fail
-   *  identically. */
+  /** True when an auth/plan/rate-limit error (401/402/403/429) stopped the run
+   *  early — see isFatalPriceProviderError.  Peer EOD is the only price path,
+   *  so a 429 aborts rather than walking the full ticker list.  Remaining
+   *  un-attempted tickers are left untouched for the next run. */
   aborted: boolean;
   /** What THIS run actually fetched (for the App B outbound push — our delta only). */
   shareSpx: Close[];
@@ -410,14 +409,12 @@ export async function runPriceRefresh(
     }
   } catch (e) {
     result.errors.push('spx: ' + (e as Error).message);
-    // Auth/plan failure (or 429 under the metered FMP budget): every subsequent
-    // call this run (SPX or any ticker) shares the same key/plan and would fail
-    // identically, so abort the whole run rather than burning the rest of the
-    // day's budget on calls that are guaranteed to fail. Remaining tickers are
-    // left untouched for the next run — no negative-cache writes, no partial
-    // state. For unmetered providers a 429 is NOT fatal (see
-    // RATE_LIMIT_PROVIDER_ERROR): the per-minute window clears on its own, so
-    // only the SPX refresh is skipped and the ticker loop still runs.
+    // Auth/plan/rate-limit failure: every subsequent call this run (SPX or any
+    // ticker) would fail the same way, so abort rather than walking the rest of
+    // the ticker list.  Remaining tickers are left untouched for the next run —
+    // no negative-cache writes, no partial state.  Peer EOD treats 429 as fatal
+    // (see RATE_LIMIT_PROVIDER_ERROR) so a rate-limited Socratic.Trade cannot
+    // burn thousands of identical retries in one refresh.
     if (isFatalPriceProviderError(e, fmpBudgeted)) result.aborted = true;
   }
 
@@ -473,11 +470,10 @@ export async function runPriceRefresh(
     } catch (e) {
       result.errors.push(ticker + ': ' + (e as Error).message);
       if (isFatalPriceProviderError(e, fmpBudgeted)) {
-        // Same key/plan will fail identically for every remaining ticker —
-        // abort the whole run instead of spending the rest of the budget on
-        // calls that cannot succeed. Tickers not yet reached this run are
-        // left completely untouched (no negative-cache write) for next time.
-        // (Unmetered-provider 429s never reach here — non-fatal, skip only.)
+        // Same auth/plan/rate-limit will fail identically for every remaining
+        // ticker — abort the whole run instead of walking thousands of peers
+        // that cannot succeed.  Tickers not yet reached this run are left
+        // completely untouched (no negative-cache write) for next time.
         result.aborted = true;
         break;
       }

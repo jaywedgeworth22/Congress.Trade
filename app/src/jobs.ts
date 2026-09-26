@@ -5,8 +5,9 @@
  * Once-a-day background jobs, fired from the cron handler. Gated by a KV date
  * stamp so they run on the first cron tick of each UTC day (and not again that
  * day, even though the watcher cron fires every minute). Enrichment and prices
- * read Socratic.Trade; they do not spend FMP. A peer auth failure
- * (SOCRATIC_HTTP_401/403 or PEER_HTTP_401/403) emails an admin alert.
+ * read Socratic.Trade; they do not spend FMP. A peer auth / plan / rate-limit
+ * failure (SOCRATIC_HTTP_401/402/403/429 or PEER_HTTP_401/402/403/429) emails
+ * an admin alert.
  */
 
 import type { Env } from './shared/types.ts';
@@ -467,20 +468,21 @@ export async function maybeRunDailyMarketDataJobs(
     console.warn('peer share error:', (err as Error).message);
   }
 
-  // Peer auth/plan failures mean ST is not supplying profiles or prices.
-  // FMP is not a fallback for either.
-  if (errors.some((e) => /(?:SOCRATIC|PEER)_HTTP_(401|402|403)/.test(e))) {
-    const sample = errors.filter((e) => /(?:SOCRATIC|PEER)_HTTP_/.test(e)).slice(0, 5).join('\n');
+  // Peer auth / plan / rate-limit failures mean ST is not supplying profiles or prices.
+  // FMP is not a fallback for either.  Include 429 so a rate-limited peer does not
+  // silently burn the whole ticker walk without an operator alert.
+  if (errors.some((e) => /(?:SOCRATIC|PEER)_HTTP_(401|402|403|429)/.test(e))) {
+    const sample = errors.filter((e) => /(?:SOCRATIC|PEER)_HTTP_(401|402|403|429)/.test(e)).slice(0, 5).join('\n');
     await notifyAdmin(env, {
       dedupeKey: 'socratic-peer-auth',
       subject: 'Congress.Trade ⚠️ Socratic.Trade market data is failing',
       text:
-        "Today's enrichment / price refresh hit Socratic.Trade auth or plan errors.\n" +
-        'Profiles, quotes, and EOD prices come from Socratic.Trade. FMP is latency probes only\n' +
+        "Today's enrichment / price refresh hit Socratic.Trade auth, plan, or rate-limit errors.\n" +
+        'Profiles, quotes, and EOD prices come from Socratic.Trade.  FMP is latency probes only\n' +
         'and is not used to fill this gap.\n\n' +
         'Sample errors:\n' +
         sample +
-        '\n\nCheck APP_B_IMPORT_URL and APP_B_INGEST_TOKEN. The job retries automatically each day;\n' +
+        '\n\nCheck APP_B_IMPORT_URL and APP_B_INGEST_TOKEN (and ST rate limits on 429).  The job retries automatically each day;\n' +
         "you'll get at most one of these alerts every 12 hours.",
     });
   }
