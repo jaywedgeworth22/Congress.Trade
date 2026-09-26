@@ -5262,9 +5262,8 @@ export function buildAdminRouter(): Hono<{ Bindings: Env }> {
   });
 
   // --- POST /fmp-senate-recovery -----------------------------------------
-  // Import at most five pages (100 rows/page) from FMP's stable Senate feed.
-  // Rows retain their real Senate report id but remain source='seed_dataset'
-  // until the official pipeline upgrades the filing and publishes primary rows.
+  // RETIRED: runFmpSenateRecovery refuses every invocation (FMP is latency-only).
+  // Route kept so operators get a clear error instead of a silent 404.
   r.post('/fmp-senate-recovery', async (c) => {
     let body: Record<string, unknown> = {};
     try {
