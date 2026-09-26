@@ -31,6 +31,7 @@ import {
   sweepStrandedFilings,
   sweepProviderOnlyReviewStubs,
   sweepAlreadyPublishedReviewRows,
+  listAlreadyPublishedReviewCandidates,
   sweepFiledDateBackfill,
   sweepOgeUndatedFilingDates,
   extractPrintedDateFromText,
@@ -388,6 +389,32 @@ describe('autonomySweeps', () => {
 
       const result = await sweepAlreadyPublishedReviewRows(env);
       expect(result.cleared).toBe(0);
+    });
+
+
+    it('closes agreement-cascade when includeAgreementCascade is set', async () => {
+      const env = makeEnv();
+      const docId = 'H-2025-8220844-close';
+      await insertFiling({ doc_id: docId, ingest_status: 'error', doc_kind: 'scanned_pdf', first_seen_at: new Date().toISOString() });
+      await insertOpenReview(docId, 'agreement_cascade_unresolved');
+      await insertLiveTx(docId, 'local_mac');
+      await insertPublishDecision(docId);
+
+      const preview = await listAlreadyPublishedReviewCandidates(env, { includeAgreementCascade: true });
+      expect(preview.some((c) => c.docId === docId)).toBe(true);
+
+      const result = await sweepAlreadyPublishedReviewRows(env, { includeAgreementCascade: true });
+      expect(result.cleared).toBe(1);
+      expect(result.filingsUpdated).toBe(1);
+      const row = await d1.prepare(
+        `SELECT resolved, resolution_reason FROM review_queue WHERE doc_id = ?`,
+      ).bind(docId).first<{ resolved: number; resolution_reason: string }>();
+      expect(row?.resolved).toBe(1);
+      expect(row?.resolution_reason).toBe('reconciled_published_after_local_mac');
+      const filing = await d1.prepare(`SELECT ingest_status, error FROM filings WHERE doc_id = ?`)
+        .bind(docId).first<{ ingest_status: string; error: string | null }>();
+      expect(filing?.ingest_status).toBe('persisted');
+      expect(filing?.error).toBeNull();
     });
 
     it('leaves an agreement-cascade dispute alone even with live tx', async () => {
