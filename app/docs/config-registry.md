@@ -107,18 +107,20 @@ current Datadog account.
 - Disclosure-latency race: `DISCLOSURE_LATENCY_WATCH_ENABLED`,
   `DISCLOSURE_LATENCY_PROVIDERS`, `DISCLOSURE_LATENCY_WATCH_LIMIT`,
   legacy `FMP_DISCLOSURE_WATCH_ENABLED` / `FMP_DISCLOSURE_WATCH_LIMIT`,
-  **FMP family (default ON for CT when keys present):** `FMP_LATENCY_PROBE_ENABLED`
-  (explicit false/off disables; grey OFF), `FMP_LATENCY_PATHS` (default **`stable`**
-  only — RapidAPI FMP auth works but **house/senate-latest 404** and **no
-  OGE/executive-latest** as of 2026-09-04; opt in `stable,rapidapi` only if
-  marketplace gains those disclosure endpoints),
+  **FMP family (latency probes only; default ON for CT when keys present):**
+  `FMP_LATENCY_PROBE_ENABLED` (explicit false/off disables; grey OFF),
+  `FMP_LATENCY_PATHS` (congress probes are **stable only**. RapidAPI
+  house/senate-latest **404** as of 2026-09-04 and is not fetched even if
+  listed — it does not replace stable. Dual keys
+  `FMP_LATENCY_API_KEY` + `FMP_LATENCY_API_KEY_2` fail over on 429 / daily cap
+  / 401 / 403),
   optional `FMP_STABLE_BASE_URL` / `FMP_RAPIDAPI_BASE_URL` / `FMP_RAPIDAPI_HOST`,
   `FMP_RAPIDAPI_KEY` **or shared `RAPIDAPI_KEY`** (ST marketplace convention —
   never free-tier `FMP_LATENCY_*` on the RapidAPI host),
-  `FMP_RAPIDAPI_DAILY_CAP` (default 500 HTTP/day for RapidAPI path if enabled),
+  `FMP_RAPIDAPI_DAILY_CAP` is not spent on house/senate probes (those routes 404),
   `FMP_LATENCY_DAILY_CAP` (per free-tier key, default 235), dual free keys
-  `FMP_LATENCY_API_KEY` + `_2` (or `FMP_API_KEY` as slot-2 fallback) **rotate**
-  for ~2× capacity — no known per-IP limit on free tier,
+  `FMP_LATENCY_API_KEY` + `_2` (or `FMP_API_KEY` as slot-2 fallback) **rotate and
+  fail over** (429 / cap / 401 / 403) for ~2× capacity — no known per-IP limit,
   `UW_LATENCY_DAILY_CAP` (default 240 HTTP/day incl. deep-match),
   `QUIVER_LATENCY_DAILY_CAP` (default 360 HTTP/day; 3 calls per probe),
   `UW_DEEP_MATCH_DATES_PER_RUN` (UW deep-match date budget; default `8`).

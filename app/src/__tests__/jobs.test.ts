@@ -262,61 +262,68 @@ describe('maybeRunDailyJobs secret resolution', () => {
     expect(mocks.isD1RowBudgetExceeded).toHaveBeenCalledTimes(2);
   });
 
-  describe('price-refresh budget floor vs enrichment', () => {
-    // enrichment and price refresh share one daily FMP call counter; enrichment
-    // runs first and (absent a cap) would happily spend the entire remaining
-    // budget, leaving price refresh with 0. jobs.ts must reserve a floor by
-    // capping enrichment's own `max` opt before calling it.
-    it('caps enrichment max to reserve 20% of the daily cap for price refresh, when an FMP key is configured', async () => {
+  describe('enrichment is not capped by an FMP day budget', () => {
+    it('does not pass an FMP budget max when an FMP key is configured', async () => {
       const env = fakeEnv();
       mocks.resolveSecrets.mockResolvedValue({
         FMP_API_KEY: 'test-key',
         FMP_DAILY_CALL_CAP: '1000',
       });
-      mocks.getDailyUsed.mockResolvedValue(100);
 
       await maybeRunDailyJobs(env, new Date('2026-07-10T00:00:00Z'));
 
-      // cap=1000, used=100 -> remaining=900; floor=ceil(1000*0.2)=200;
-      // enrichment max = 900 - 200 = 700.
-      expect(mocks.runEnrichment).toHaveBeenCalledWith(env, expect.objectContaining({ max: 700 }));
-    });
-
-    it('does not cap enrichment max when no FMP key is configured (no shared-budget contention to guard)', async () => {
-      const env = fakeEnv();
-      mocks.resolveSecrets.mockResolvedValue({ FMP_DAILY_CALL_CAP: '1000' }); // no FMP_API_KEY
-      mocks.getDailyUsed.mockResolvedValue(100);
-
-      await maybeRunDailyJobs(env, new Date('2026-07-10T00:00:00Z'));
-
-      expect(mocks.runEnrichment).toHaveBeenCalledWith(env, expect.objectContaining({ max: undefined }));
+      expect(mocks.runEnrichment).toHaveBeenCalledWith(
+        env,
+        expect.not.objectContaining({ max: expect.any(Number) }),
+      );
       expect(mocks.getDailyUsed).not.toHaveBeenCalled();
     });
 
-    it('falls back to DEFAULT_DAILY_CAP (230) when FMP_DAILY_CALL_CAP is unset', async () => {
+    it('alerts when Socratic profile or price reads fail auth', async () => {
       const env = fakeEnv();
-      mocks.resolveSecrets.mockResolvedValue({ FMP_API_KEY: 'test-key' });
-      mocks.getDailyUsed.mockResolvedValue(0);
+      mocks.runEnrichment.mockResolvedValue({
+        hasFmpKey: false,
+        dailyCap: 0,
+        fmpCalls: 0,
+        errors: ['AAPL socratic: SOCRATIC_HTTP_401'],
+        shareRefs: [],
+        scanned: 1,
+        enriched: 0,
+      });
 
       await maybeRunDailyJobs(env, new Date('2026-07-10T00:00:00Z'));
 
-      // cap=230 (default), used=0 -> remaining=230; floor=ceil(230*0.2)=46;
-      // enrichment max = 230 - 46 = 184.
-      expect(mocks.runEnrichment).toHaveBeenCalledWith(env, expect.objectContaining({ max: 184 }));
+      expect(mocks.notifyAdmin).toHaveBeenCalledWith(
+        env,
+        expect.objectContaining({ dedupeKey: 'socratic-peer-auth' }),
+      );
     });
 
-    it('never reserves more than what remains today (floor clamped, never negative max)', async () => {
+    it('alerts when Socratic / peer reads hit HTTP 429 rate-limit', async () => {
       const env = fakeEnv();
-      mocks.resolveSecrets.mockResolvedValue({
-        FMP_API_KEY: 'test-key',
-        FMP_DAILY_CALL_CAP: '1000',
+      mocks.runEnrichment.mockResolvedValue({
+        hasFmpKey: false,
+        dailyCap: 0,
+        fmpCalls: 0,
+        errors: [],
+        shareRefs: [],
+        scanned: 0,
+        enriched: 0,
       });
-      // Only 50 calls left today — less than the 20% (200) floor would otherwise be.
-      mocks.getDailyUsed.mockResolvedValue(950);
+      mocks.runPriceRefresh.mockResolvedValue({
+        aborted: true,
+        tickersPriced: 0,
+        errors: ['spx: PEER_HTTP_429'],
+        sharePrices: [],
+        shareSpx: [],
+      });
 
       await maybeRunDailyJobs(env, new Date('2026-07-10T00:00:00Z'));
 
-      expect(mocks.runEnrichment).toHaveBeenCalledWith(env, expect.objectContaining({ max: 0 }));
+      expect(mocks.notifyAdmin).toHaveBeenCalledWith(
+        env,
+        expect.objectContaining({ dedupeKey: 'socratic-peer-auth' }),
+      );
     });
   });
 });
@@ -495,58 +502,15 @@ describe('runHourlyEnrichmentSlice', () => {
     );
   });
 
-  it('drops the 20% price-refresh floor once the market-data lane has succeeded today (stamp-on-success)', async () => {
+  it('uses the slice cap even when an FMP key and a spent day counter are present', async () => {
     mocks.resolveSecrets.mockResolvedValue({ FMP_API_KEY: 'k', FMP_DAILY_CALL_CAP: '1000' });
-    mocks.getDailyUsed.mockResolvedValue(100);
-    // The stamp-on-success semantic reads `jobs:daily:lastok:market-data`
-    // (the lane only stamps after it actually completes). Seeding the
-    // legacy `lastdate` key must NOT drop the floor.
-    const dayStr = DAY.toISOString().slice(0, 10);
-    const kv = new Map([
-      ['jobs:daily:lastdate:market-data', dayStr], // legacy key — should be ignored now
-      ['jobs:daily:lastok:market-data', dayStr],   // current key — drops the floor
-    ]);
-    await runHourlyEnrichmentSlice(sliceEnv(kv), DAY);
-    // No floor after price refresh ran → full slice cap; the 900-call
-    // remaining budget still bounds spend inside runEnrichment itself.
+    mocks.getDailyUsed.mockResolvedValue(950);
+    await runHourlyEnrichmentSlice(sliceEnv(), DAY);
+    expect(mocks.getDailyUsed).not.toHaveBeenCalled();
     expect(mocks.runEnrichment).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ max: HOURLY_ENRICHMENT_SLICE_MAX }),
     );
-  });
-
-  it('keeps the 20% floor on the legacy lastdate stamp alone (regression guard for the stamp rename)', async () => {
-    mocks.resolveSecrets.mockResolvedValue({ FMP_API_KEY: 'k', FMP_DAILY_CALL_CAP: '1000' });
-    mocks.getDailyUsed.mockResolvedValue(100);
-    // Legacy key seeded but the new lastok key is missing → the floor MUST
-    // stay in place, because the market-data lane hasn't actually
-    // completed yet (would have written the lastok stamp).
-    const kv = new Map([['jobs:daily:lastdate:market-data', DAY.toISOString().slice(0, 10)]]);
-    await runHourlyEnrichmentSlice(sliceEnv(kv), DAY);
-    // remaining=900; floor=200 → max=700.
-    expect(mocks.runEnrichment).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ max: 700 }),
-    );
-  });
-
-  it('keeps the 20% floor while price refresh has not run yet', async () => {
-    mocks.resolveSecrets.mockResolvedValue({ FMP_API_KEY: 'k', FMP_DAILY_CALL_CAP: '1000' });
-    mocks.getDailyUsed.mockResolvedValue(100);
-    await runHourlyEnrichmentSlice(sliceEnv(), DAY);
-    // remaining=900; floor=200 → max=700.
-    expect(mocks.runEnrichment).toHaveBeenCalledWith(
-      expect.anything(),
-      expect.objectContaining({ max: 700 }),
-    );
-  });
-
-  it('returns early without calling enrichment when the floor leaves no budget', async () => {
-    mocks.resolveSecrets.mockResolvedValue({ FMP_API_KEY: 'k', FMP_DAILY_CALL_CAP: '1000' });
-    mocks.getDailyUsed.mockResolvedValue(950); // remaining 50 < 200 floor → max 0
-    const r = await runHourlyEnrichmentSlice(sliceEnv(), DAY);
-    expect(mocks.runEnrichment).not.toHaveBeenCalled();
-    expect(r.scanned).toBe(0);
   });
 
   it('shares freshly enriched refs to the peer (delta only)', async () => {

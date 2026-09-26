@@ -8928,7 +8928,7 @@ function loadMarketCoverage() {
         coverageCard('Trade Market Caps', t.marketCap, t.tickered, t.marketCapPctOfTickered, 'Tickered trades with cap or cap bucket.') +
         coverageCard('Asset Coverage', a.marketCap, a.total, a.marketCapPct, 'Distinct traded assets with cap coverage.') +
       '</div>';
-      var summary = '<p class="note">Pending enrichment assets: <strong>' + esc(pending) + '</strong> · Pending price assets: <strong>' + esc(prices) + '</strong> · FMP calls today: <strong>' + esc(data.fmpCallsToday || 0) + '</strong> · Keyed provider configured: <strong>' + esc(data.hasKeyedEnrichmentProvider ? 'Yes' : 'No') + '</strong></p>';
+      var summary = '<p class="note">Pending enrichment assets: <strong>' + esc(pending) + '</strong> · Pending price assets: <strong>' + esc(prices) + '</strong> · Socratic.Trade configured: <strong>' + esc(data.hasKeyedEnrichmentProvider ? 'Yes' : 'No') + '</strong></p>';
       var rows = samples.length
         ? samples.map(function (s) {
             return '<tr class="row"><td><span class="tkr">' + esc(s.ticker) + '</span></td>' +
